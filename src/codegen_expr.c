@@ -6008,8 +6008,45 @@ void codegen_expr(Expr* expr) {
             break;
         }
         case EXPR_LAMBDA: {
-            lambda_ref_counter++;
-            int lid = lambda_ref_counter;
+            // Bind this reference to its body by AST POINTER, not by a
+            // positional counter.
+            //
+            // There used to be two counters: lambda_id_counter, advanced while
+            // SCANNING for bodies, and lambda_ref_counter, advanced while
+            // EMITTING references. They only agree if scan order equals
+            // emission order, and with an imported module it does not: merged
+            // module statements are appended to the end of prog->stmts (so a
+            // module lambda scans LAST, high id) while module bodies are
+            // emitted before the main file's functions (so it emits FIRST, low
+            // id). The orders are inverted, so a module lambda and a main-file
+            // lambda would silently bind to each other's bodies -- a wrong
+            // answer at exit 0, which is worse than the dangling-symbol
+            // compile error it also caused.
+            //
+            // The definition side is already keyed by pointer:
+            // scan_expr_for_lambdas stores `ast = expr` and the body emitter
+            // walks lambda_functions[i].ast. Look the id up through that and
+            // the whole positional-counter class disappears.
+            int lid = -1;
+            for (int i = 0; i < lambda_count; i++) {
+                if (lambda_functions[i].ast == expr) { lid = lambda_functions[i].id; break; }
+            }
+            if (lid < 0) {
+                // This lambda was never scanned, so no body will be emitted for
+                // it. Previously this emitted a reference to a nonexistent
+                // __lambda_N and left the failure to the C compiler, naming a
+                // symbol absent from the user's source. Fail here instead, where
+                // we still know it is our bug and not theirs.
+                fprintf(stderr, "Internal codegen error: lambda at line %d was never registered, "
+                                "so no body will be emitted for it.\n", expr->token.line);
+                // Emit a name that cannot compile and that says why, so the
+                // failure is attributable even if this stderr line is lost in a
+                // build log. Previously an unregistered lambda emitted a
+                // plausible-looking __lambda_N and the C compiler complained
+                // about a symbol the user never wrote.
+                emit("__wyn_unregistered_lambda_line_%d", expr->token.line);
+                break;
+            }
             // Check if this lambda is a closure (returned from function)
             bool is_closure_lambda = false;
             for (int i = 0; i < lambda_count; i++) {
