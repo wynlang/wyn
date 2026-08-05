@@ -784,6 +784,25 @@ void register_int_array_var(const char* name) {
     WYN_ENSURE_CAP(int_array_var_names, int_array_var_count, int_array_var_cap);
     int_array_var_names[int_array_var_count++] = strdup(name);
 }
+// Forget the [int]-array locals at a function boundary, exactly as
+// reset_array_vars / reset_float_vars / reset_sb_vars do for their tables.
+//
+// This table is keyed on the variable NAME only and is consulted to pick the C
+// representation (WynIntArray vs WynArray) and the matching accessors. Without a
+// reset it accumulated every [int] local in the translation unit, so
+//
+//     fn a() { var xs: [int] = [1,2,3]; xs.len() }
+//     fn b() { var xs = ["a","b"];      xs.len() }
+//
+// made b()'s STRING array emit WynIntArray code: "initializing 'WynArray' with
+// an expression of incompatible type 'WynIntArray'", surfacing as a bare
+// "internal codegen error". Order-dependent -- swap the two functions and it
+// compiles. Same leak and same fix as the three tables that already reset; this
+// is the fourth of that family to bite.
+void reset_int_array_vars(void) {
+    for (int i = 0; i < int_array_var_count; i++) free(int_array_var_names[i]);
+    int_array_var_count = 0;
+}
 int is_int_array_var(const char* name) {
     for (int i = 0; i < int_array_var_count; i++) {
         if (strcmp(int_array_var_names[i], name) == 0) return 1;

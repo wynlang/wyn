@@ -365,6 +365,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_lambda_interp_test.sh
 	@echo "=== Running struct-array return-type test ==="
 	@WYN=./wyn bash tests/errors/run_struct_array_return_test.sh
+	@echo "=== Running int-array var-leak test ==="
+	@WYN=./wyn bash tests/errors/run_int_array_var_leak_test.sh
 	@echo "=== Running mut-self mutation test ==="
 	@WYN=./wyn bash tests/errors/run_mut_self_test.sh
 	@echo "=== Running shadowed-string retain test ==="
