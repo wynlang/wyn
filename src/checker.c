@@ -794,23 +794,25 @@ static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
                     return struct_type;
                 }
             } else if (field_type_expr->type == EXPR_ARRAY) {
-                // Array type [ElementType]
+                // Array field `f: [T]`. Route through the one element-type
+                // authority (resolve_array_elem_annotation) instead of a partial
+                // inline copy: the old copy only knew `int` and `string` and
+                // turned everything else - including `float` and `bool` - into a
+                // TYPE_STRUCT, so every read of `s.f[i]` emitted
+                // array_get_struct (segfault) and every write/push was rejected
+                // with "Cannot store float in array of struct".
                 Type* array_type = make_type(TYPE_ARRAY);
                 if (field_type_expr->array.count > 0) {
                     Expr* elem_type_expr = field_type_expr->array.elements[0];
-                    if (elem_type_expr->type == EXPR_IDENT) {
-                        Token elem_type_name = elem_type_expr->token;
-                        if (elem_type_name.length == 3 && memcmp(elem_type_name.start, "int", 3) == 0) {
-                            array_type->array_type.element_type = builtin_int;
-                        } else if (elem_type_name.length == 6 && memcmp(elem_type_name.start, "string", 6) == 0) {
-                            array_type->array_type.element_type = builtin_string;
-                        } else {
-                            // User-defined element type
-                            Type* elem_struct_type = make_type(TYPE_STRUCT);
-                            elem_struct_type->struct_type.name = elem_type_name;
-                            array_type->array_type.element_type = elem_struct_type;
-                        }
+                    Type* elem = resolve_array_elem_annotation(elem_type_expr);
+                    if (!elem && elem_type_expr->type == EXPR_IDENT) {
+                        // Unrecognized bare name (e.g. a struct declared in an
+                        // imported module that find_struct_definition can't see):
+                        // keep the historical by-name struct fallback.
+                        elem = make_type(TYPE_STRUCT);
+                        elem->struct_type.name = elem_type_expr->token;
                     }
+                    array_type->array_type.element_type = elem;
                 }
                 return array_type;
             } else if ((field_type_expr->type == EXPR_OPTIONAL_TYPE) ||
