@@ -1613,6 +1613,48 @@ static int lambda_ref_counter = 0;
 static bool in_return_lambda = false;
 Program* current_program = NULL;
 
+// Does this struct/impl method take `mut self`?
+//
+// The call site needs to know, because a mut receiver is passed by POINTER: the
+// definition emits `Counter_bump(Counter *self)` so the call must emit
+// `Counter_bump(&c)`. Previously nothing asked the question and the call passed
+// the struct by value, so every mutation went to a copy and was discarded --
+// silently, since the parser recorded the modifier and the checker honoured it.
+//
+// Searches both `struct T { fn ... }` bodies and `impl T { ... }` blocks, in the
+// same order and by the same matching as lookup_struct_method_return_type above.
+bool struct_method_takes_mut_self(const char* struct_name, const char* method_name) {
+    if (!current_program || !struct_name || !method_name) return false;
+    size_t sn_len = strlen(struct_name), mn_len = strlen(method_name);
+    for (int i = 0; i < current_program->count; i++) {
+        Stmt* st = current_program->stmts[i];
+        FnStmt** methods = NULL; int method_count = 0;
+        if (st->type == STMT_STRUCT) {
+            if (st->struct_decl.name.length != (int)sn_len ||
+                memcmp(st->struct_decl.name.start, struct_name, sn_len) != 0) continue;
+            methods = st->struct_decl.methods; method_count = st->struct_decl.method_count;
+        } else if (st->type == STMT_IMPL) {
+            if (st->impl.type_name.length != (int)sn_len ||
+                memcmp(st->impl.type_name.start, struct_name, sn_len) != 0) continue;
+            methods = st->impl.methods; method_count = st->impl.method_count;
+        } else {
+            continue;
+        }
+        for (int j = 0; j < method_count; j++) {
+            FnStmt* m = methods[j];
+            if (!m || m->name.length != (int)mn_len ||
+                memcmp(m->name.start, method_name, mn_len) != 0) continue;
+            // The receiver is parameter 0 and is spelled `self`.
+            if (m->param_count > 0 && m->param_mutable && m->param_mutable[0] &&
+                m->params[0].length == 4 && memcmp(m->params[0].start, "self", 4) == 0) {
+                return true;
+            }
+            return false;
+        }
+    }
+    return false;
+}
+
 // Look up a struct method's return type string ("float", "string", "int", etc.)
 const char* lookup_struct_method_return_type(const char* struct_name, const char* method_name) {
     if (!current_program) return NULL;

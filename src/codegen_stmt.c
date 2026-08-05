@@ -4222,7 +4222,17 @@ void codegen_stmt(Stmt* stmt) {
                         }
                     }
                     
-                    emit("%s %.*s", param_type, method->params[j].length, method->params[j].start);
+                    // A `mut` parameter -- including `mut self` -- is passed by
+                    // POINTER, or the callee mutates a copy and the caller never
+                    // sees it. This emitter was the only one of five that did not
+                    // read param_mutable (compare codegen_stmt.c:178, :363, :3141
+                    // and codegen_program.c:1188), so `impl T { fn bump(mut self) }`
+                    // silently discarded every mutation: the parser recorded the
+                    // modifier and the checker honoured it, so `wyn check` was
+                    // clean and the program merely printed the wrong number.
+                    bool _m_is_mut = method->param_mutable && method->param_mutable[j];
+                    emit("%s %s%.*s", param_type, _m_is_mut ? "*" : "",
+                         method->params[j].length, method->params[j].start);
                 }
                 emit(") {\n");
                 push_scope();
@@ -4238,6 +4248,34 @@ void codegen_stmt(Stmt* stmt) {
                     snprintf(_impl_self_ty, sizeof(_impl_self_ty), "%.*s",
                              stmt->impl.type_name.length, stmt->impl.type_name.start);
                     register_struct_var("self", _impl_self_ty);
+                    // Clear first: this loop emits every method of the impl block
+                    // and previously never reset the parameter registry, so a
+                    // `mut self` registered by one method stayed registered for
+                    // the next -- making a NON-mut `fn get(self)` emit (*self).n
+                    // against a by-value parameter.
+                    extern void clear_parameters(void);
+                    clear_parameters();
+                    // Register each `mut` parameter as such, so field access in the
+                    // body emits (*p).f rather than (p).f. Without this the
+                    // signature says `Counter *self` while the body still writes
+                    // `(self).n`, which does not compile.
+                    extern void register_parameter_typed(const char*, const char*, bool);
+                    for (int _mp = 0; _mp < method->param_count; _mp++) {
+                        if (!(method->param_mutable && method->param_mutable[_mp])) continue;
+                        char _mpn[256]; token_to_cstr(_mpn, sizeof(_mpn), method->params[_mp]);
+                        const char* _mpt = NULL;
+                        char _mptb[64] = {0};
+                        if (method->param_types[_mp] &&
+                            method->param_types[_mp]->type == EXPR_IDENT) {
+                            token_to_cstr(_mptb, sizeof(_mptb), method->param_types[_mp]->token);
+                            _mpt = _mptb;
+                        } else if (strcmp(_mpn, "self") == 0) {
+                            // `mut self` carries no written type annotation; its type
+                            // is the impl's receiver.
+                            _mpt = _impl_self_ty;
+                        }
+                        register_parameter_typed(_mpn, _mpt, true);
+                    }
                 }
                 codegen_stmt(method->body);
                 wyn_struct_var_truncate(_impl_sv_depth);
