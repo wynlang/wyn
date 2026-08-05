@@ -363,6 +363,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_lambda_interp_test.sh
 	@echo "=== Running struct-array return-type test ==="
 	@WYN=./wyn bash tests/errors/run_struct_array_return_test.sh
+	@echo "=== Running pub-declaration parse test ==="
+	@WYN=./wyn bash tests/errors/run_pub_decl_test.sh
 	@echo "=== Running enum-value representation test ==="
 	@WYN=./wyn bash tests/errors/run_enum_value_repr_test.sh
 	@echo "=== Running handle-in-array-literal test ==="
