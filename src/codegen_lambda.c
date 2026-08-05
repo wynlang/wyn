@@ -127,6 +127,22 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
                 }
             }
             break;
+        case STMT_EXPORT:
+            // Unwrap `export fn` / `export var`. A selective import
+            // (`import { f } from m`) merges the module's statement in as a
+            // STMT_EXPORT wrapper, so without this arm the wrapped body fell to
+            // `default: break` and any lambda inside it was never registered.
+            // The sibling scanner in this file (veto_scan_stmt) has always
+            // unwrapped its wrapper cases; this one simply never did.
+            if (stmt->export.stmt) {
+                Stmt* _inner = stmt->export.stmt;
+                if (_inner->type == STMT_FN) {
+                    scan_stmt_for_lambdas(_inner->fn.body);
+                } else {
+                    scan_stmt_for_lambdas(_inner);
+                }
+            }
+            break;
         default:
             break;
     }

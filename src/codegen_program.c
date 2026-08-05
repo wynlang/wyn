@@ -355,6 +355,38 @@ void codegen_program(Program* prog) {
     // PASS 1: Pre-scan to collect all lambdas
     // We need to emit lambda functions before they're used
     // So we do a quick scan to find and generate them first
+
+    // Module function bodies first, because that is the order they are EMITTED
+    // in (the STMT_IMPORT case emits every loaded module's functions before the
+    // main file's are generated). Scanning them here is what makes a lambda
+    // inside an imported module work at all: a whole-module `import m` does not
+    // merge module fns into prog->stmts, so this loop is the only chance to see
+    // them, and without it `nums.filter((n) => n > 1)` in a module emitted a
+    // reference to a body that was never generated. That withdrew the entire
+    // higher-order toolkit (.map/.filter/...) from all multi-file Wyn code.
+    //
+    // Walk the registry in index order and unwrap STMT_EXPORT exactly as the
+    // emitter does, so scan order and emission order cannot drift apart.
+    {
+        extern int get_module_count(void);
+        extern void* get_module_entry_at(int index);
+        int _mc = get_module_count();
+        for (int m = 0; m < _mc; m++) {
+            ModuleEntry* mod = (ModuleEntry*)get_module_entry_at(m);
+            if (!mod || !mod->ast) continue;
+            for (int i = 0; i < mod->ast->count; i++) {
+                Stmt* s = mod->ast->stmts[i];
+                if (s && s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+                if (!s) continue;
+                if (s->type == STMT_FN) {
+                    scan_for_lambdas(s->fn.body);
+                } else {
+                    scan_stmt_for_lambdas(s);
+                }
+            }
+        }
+    }
+
     for (int i = 0; i < prog->count; i++) {
         if (prog->stmts[i]->type == STMT_FN) {
             scan_for_lambdas(prog->stmts[i]->fn.body);

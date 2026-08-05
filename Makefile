@@ -279,6 +279,8 @@ test: wyn
 	@WYN=./wyn bash tests/bindgen/run_bindgen_test.sh
 	@echo "=== Running module struct-array return test ==="
 	@WYN=./wyn bash tests/module_tests/run_struct_array_return_test.sh
+	@echo "=== Running lambda-in-imported-module test ==="
+	@WYN=./wyn bash tests/module_tests/run_lambda_in_module_test.sh
 	@echo "=== Running src/ module-layout resolution test ==="
 	@WYN=./wyn bash tests/module_tests/run_src_layout_test.sh
 	@echo "=== Running module extern-fn naming test ==="
