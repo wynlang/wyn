@@ -1269,7 +1269,12 @@ void codegen_program(Program* prog) {
                         }
                     }
                     
-                    emit("%s %.*s", param_type, method->params[k].length, method->params[k].start);
+                    // Must agree with the definition emitter in codegen_stmt.c:
+                    // a `mut` param (including `mut self`) takes a pointer. A
+                    // prototype that disagrees with its definition is a C error.
+                    bool _fd_is_mut = method->param_mutable && method->param_mutable[k];
+                    emit("%s %s%.*s", param_type, _fd_is_mut ? "*" : "",
+                         method->params[k].length, method->params[k].start);
                 }
                 emit(");\n");
             }

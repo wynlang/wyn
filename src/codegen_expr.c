@@ -2415,6 +2415,14 @@ void codegen_expr(Expr* expr) {
                 if (_svt) {
                     Token method = expr->method_call.method;
                     emit("%s_%.*s(", _svt, method.length, method.start);
+                    // A `mut self` receiver is passed by pointer -- the definition
+                    // emits `Counter_bump(Counter *self)`, so take the address here
+                    // or the callee mutates a copy and the caller sees nothing.
+                    {
+                        extern bool struct_method_takes_mut_self(const char*, const char*);
+                        char _mn[128]; token_to_cstr(_mn, sizeof(_mn), method);
+                        if (struct_method_takes_mut_self(_svt, _mn)) emit("&");
+                    }
                     codegen_expr(expr->method_call.object);
                     for (int i = 0; i < expr->method_call.arg_count; i++) {
                         emit(", "); codegen_expr(expr->method_call.args[i]);
@@ -2450,9 +2458,20 @@ void codegen_expr(Expr* expr) {
                     if (strcmp(_tn, _on) == 0) is_static_call = true;
                 }
                 
-                emit("%.*s_%.*s(", type_name.length, type_name.start, 
+                emit("%.*s_%.*s(", type_name.length, type_name.start,
                      method.length, method.start);
                 if (!is_static_call) {
+                    // A `mut self` receiver is passed by pointer -- the definition
+                    // emits `Counter_bump(Counter *self)`, so take the address or
+                    // the callee mutates a copy and the caller sees nothing. That
+                    // was the visible half of the `mut self` defect: two calls to
+                    // `bump()` left the value at 1, with a clean `wyn check`.
+                    {
+                        extern bool struct_method_takes_mut_self(const char*, const char*);
+                        char _mst[128]; token_to_cstr(_mst, sizeof(_mst), type_name);
+                        char _msm[128]; token_to_cstr(_msm, sizeof(_msm), method);
+                        if (struct_method_takes_mut_self(_mst, _msm)) emit("&");
+                    }
                     codegen_expr(expr->method_call.object);
                     if (expr->method_call.arg_count > 0) emit(", ");
                 }
