@@ -4922,6 +4922,14 @@ void codegen_stmt(Stmt* stmt) {
                         }
                         
                         // Second: emit constants and variables
+                        // Module globals whose initializer is not a constant
+                        // expression (array literals, HashMap.new(), ...) are
+                        // declared in the loop below and initialized in a
+                        // constructor emitted after it. Mirrors the deferred-init
+                        // machinery codegen_program.c already uses for the main
+                        // file's globals.
+                        VarStmt* _mg_init_stmts[64];
+                        int _mg_init_count = 0;
                         for (int i = 0; i < mod->ast->count; i++) {
                             Stmt* s = mod->ast->stmts[i];
                             // Unwrap export for constants and variables
@@ -4962,7 +4970,17 @@ void codegen_stmt(Stmt* stmt) {
                                         codegen_expr(var_stmt->init);
                                         emit(";\n");
                                     } else if (var_stmt->init->type == EXPR_ARRAY) {
+                                        // Declare now, initialize in the module
+                                        // constructor below. An array literal is not a
+                                        // constant expression, so it cannot be written
+                                        // at file scope -- but until that constructor
+                                        // existed the initializer was simply DROPPED
+                                        // and `var items = ["seed"]` in a module gave
+                                        // the importer an empty array. Silently: len()
+                                        // returned 0, wyn check was clean, and with
+                                        // structs it segfaulted.
                                         emit("WynArray %s_%.*s;\n", c_mod_name, var_stmt->name.length, var_stmt->name.start);
+                                        if (_mg_init_count < 64) _mg_init_stmts[_mg_init_count++] = var_stmt;
                                     } else if (var_stmt->init->type == EXPR_CALL || var_stmt->init->type == EXPR_METHOD_CALL) {
                                         // HashMap.new() etc - defer init
                                         if (var_stmt->init->expr_type && var_stmt->init->expr_type->kind == TYPE_MAP) {
@@ -4970,6 +4988,7 @@ void codegen_stmt(Stmt* stmt) {
                                         } else {
                                             emit("long long %s_%.*s;\n", c_mod_name, var_stmt->name.length, var_stmt->name.start);
                                         }
+                                        if (_mg_init_count < 64) _mg_init_stmts[_mg_init_count++] = var_stmt;
                                     } else {
                                         emit("long long %s_%.*s = ", c_mod_name, var_stmt->name.length, var_stmt->name.start);
                                         codegen_expr(var_stmt->init);
@@ -4980,7 +4999,23 @@ void codegen_stmt(Stmt* stmt) {
                                 }
                             }
                         }
-                        
+
+                        // Initialize the deferred module globals. A constructor
+                        // rather than a call from wyn_main, to match how
+                        // __wyn_init_globals orders the main file's globals and so
+                        // that it still runs in library/test mode where there is no
+                        // wyn_main to call it from.
+                        if (_mg_init_count > 0) {
+                            emit("__attribute__((constructor)) static void __wyn_init_%s_globals(void) {\n", c_mod_name);
+                            for (int _mi = 0; _mi < _mg_init_count; _mi++) {
+                                VarStmt* v = _mg_init_stmts[_mi];
+                                emit("    %s_%.*s = ", c_mod_name, v->name.length, v->name.start);
+                                codegen_expr(v->init);
+                                emit(";\n");
+                            }
+                            emit("}\n");
+                        }
+
                         // Third: emit functions
                         for (int i = 0; i < mod->ast->count; i++) {
                             Stmt* s = mod->ast->stmts[i];
