@@ -171,6 +171,7 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     { extern void reset_borrowed_string_locals(void); reset_borrowed_string_locals(); }
     { extern void reset_float_vars(void); reset_float_vars(); }
     { extern void reset_array_vars(void); reset_array_vars(); }
+    { extern void reset_int_array_vars(void); reset_int_array_vars(); }
     { extern void reset_sb_vars(void); reset_sb_vars(); }
     { extern void reset_array_scope(void); reset_array_scope(); } { extern void reset_hashmap_scope(void); reset_hashmap_scope(); } { extern void reset_closure_scope(void); reset_closure_scope(); }
     for (int i = 0; i < fn_stmt->fn.param_count; i++) {
@@ -3196,6 +3197,7 @@ void codegen_stmt(Stmt* stmt) {
             { extern void reset_borrowed_string_locals(void); reset_borrowed_string_locals(); }
             { extern void reset_float_vars(void); reset_float_vars(); }
             { extern void reset_array_vars(void); reset_array_vars(); }
+    { extern void reset_int_array_vars(void); reset_int_array_vars(); }
             { extern void reset_sb_vars(void); reset_sb_vars(); }
             { extern void reset_array_scope(void); reset_array_scope(); } { extern void reset_hashmap_scope(void); reset_hashmap_scope(); } { extern void reset_closure_scope(void); reset_closure_scope(); }
             for (int i = 0; i < stmt->fn.param_count; i++) {
