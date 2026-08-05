@@ -552,6 +552,24 @@ void codegen_stmt(Stmt* stmt) {
             const char* c_type = "long long";
             bool is_already_const = false;  // Track if type already has const
             bool needs_arc_management = false;
+            // The C name this declaration actually emits, decided once by the
+            // branches below and reused by anything downstream that must name
+            // the new variable (currently the string RC retain).
+            //
+            // It is NOT the same as the Wyn source token: it carries the
+            // wynfn_ prefix for a name that collides with a C keyword, and a
+            // __N suffix when this declaration shadows an enclosing one. The
+            // retain used to print the raw source token, so for a shadowed
+            // string var it emitted `wyn_rc_retain(key)` in the window between
+            // `#undef key` and `#define key key__1` -- where the bare name
+            // refers to the OUTER key (already released) rather than to the new
+            // key__1, which then never got retained at all.
+            //
+            // It must be filled by assignment from the deciding branch, not
+            // recomputed later: get_shadow_suffix() MUTATES (it advances the
+            // shadow counter on every hit), so asking it a second time returns
+            // __2 for a variable that was declared as __1.
+            char _decl_cname[512]; _decl_cname[0] = '\0';
             
             // Check for explicit type annotation first
             if (stmt->var.type) {
@@ -2121,9 +2139,11 @@ void codegen_stmt(Stmt* stmt) {
                 if (_ss > 0) {
                     emit("#undef %s\n", _vn);
                     emit("const %s %s__%d = ", c_type, _vn, _ss);
+                    snprintf(_decl_cname, sizeof(_decl_cname), "%s__%d", _vn, _ss);
                     // We'll add the #define after the initializer
                 } else {
                     emit("const %s %s = ", c_type, _vn);
+                    snprintf(_decl_cname, sizeof(_decl_cname), "%s", _vn);
                 }
             } else {
                 char _vn[512]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
@@ -2135,8 +2155,10 @@ void codegen_stmt(Stmt* stmt) {
                 if (_ss > 0) {
                     emit("#undef %s\n", _vn);
                     emit("%s %s__%d = ", c_type, _vn, _ss);
+                    snprintf(_decl_cname, sizeof(_decl_cname), "%s__%d", _vn, _ss);
                 } else {
                     emit("%s %s = ", c_type, _vn);
+                    snprintf(_decl_cname, sizeof(_decl_cname), "%s", _vn);
                 }
             }
             
@@ -2202,8 +2224,23 @@ void codegen_stmt(Stmt* stmt) {
                         extern void unregister_string_var(const char*);
                         unregister_string_var(_ivn);
                     } else {
-                        // Copy: source is still live or from outer scope - retain
-                        emit("wyn_rc_retain(%.*s);\n", stmt->var.name.length, stmt->var.name.start);
+                        // Copy: source is still live or from outer scope - retain.
+                        // Retain the name this declaration actually emitted, not
+                        // the raw source token: at this point a shadowing
+                        // declaration has emitted `#undef key` but not yet
+                        // `#define key key__1`, so the bare token names the
+                        // OUTER key -- which has already been released -- while
+                        // the new key__1 goes unretained.
+                        if (_decl_cname[0]) {
+                            emit("wyn_rc_retain(%s);\n", _decl_cname);
+                        } else {
+                            // No branch above decided a name (e.g. an
+                            // already-const declaration). Fall back to the
+                            // source token, as before. Token.start is not
+                            // NUL-terminated, hence %.*s.
+                            emit("wyn_rc_retain(%.*s);\n",
+                                 stmt->var.name.length, stmt->var.name.start);
+                        }
                     }
                 }
             }
