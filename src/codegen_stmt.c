@@ -569,7 +569,11 @@ void codegen_stmt(Stmt* stmt) {
             // recomputed later: get_shadow_suffix() MUTATES (it advances the
             // shadow counter on every hit), so asking it a second time returns
             // __2 for a variable that was declared as __1.
-            char _decl_cname[512]; _decl_cname[0] = '\0';
+            // Sized to hold the widest _vn (512) plus a "__%d" suffix, so the
+            // shadow form cannot be truncated. gcc's -Wformat-truncation flags a
+            // 512-byte target here; clang does not, which is precisely the class
+            // of difference that has to be caught on both toolchains.
+            char _decl_cname[512 + 16]; _decl_cname[0] = '\0';
             
             // Check for explicit type annotation first
             if (stmt->var.type) {
@@ -2218,6 +2222,27 @@ void codegen_stmt(Stmt* stmt) {
                     bool _source_is_outer = false;
                     for (int _ri = 0; _ri < string_var_releasable_count; _ri++) {
                         if (strcmp(string_var_releasable[_ri], _ivn) == 0) { _source_is_outer = true; break; }
+                    }
+                    // A module-level GLOBAL is never safe to move from, however
+                    // dead it looks here. var_is_live_after only reads the
+                    // current block, so it cannot see the assignment in another
+                    // function that will overwrite (and release) the global --
+                    // and after a move this copy holds the only pointer while
+                    // owning no reference:
+                    //
+                    //     r = retval        // move: no retain emitted
+                    //     retval = ""       // releases the buffer r points at
+                    //     return r          // dangling
+                    //
+                    // which returned an empty string rather than crashing, i.e.
+                    // silently. This is why registering string globals looked
+                    // like it "corrupted the interpreter": WynJS hands values
+                    // between functions through exactly this pattern (its
+                    // retval/throwval/tv globals), and 9 of 33 suites failed
+                    // with `undefined`.
+                    if (!_source_is_outer) {
+                        extern int is_string_global(const char*);
+                        if (is_string_global(_ivn)) _source_is_outer = true;
                     }
                     if (!_source_is_outer && current_block_stmts && !var_is_live_after(current_block_stmts, current_block_count, current_stmt_idx, _ivn)) {
                         // Move: source is dead after this in same scope
