@@ -87,6 +87,14 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
             break;
         case STMT_FOR:
             if (stmt->for_stmt.array_expr) scan_expr_for_lambdas(stmt->for_stmt.array_expr);
+            // A RANGE loop (`for i in 0..f((n) => n + 1)`) is desugared by the
+            // parser into init/condition/increment, so the bound expressions live
+            // there and NOT in array_expr - which is why scanning only array_expr
+            // and body missed a lambda in a range bound. The desugared `init` is a
+            // STMT_VAR holding the start expression; the end lands in `condition`.
+            if (stmt->for_stmt.init) scan_stmt_for_lambdas(stmt->for_stmt.init);
+            if (stmt->for_stmt.condition) scan_expr_for_lambdas(stmt->for_stmt.condition);
+            if (stmt->for_stmt.increment) scan_expr_for_lambdas(stmt->for_stmt.increment);
             if (stmt->for_stmt.body) scan_stmt_for_lambdas(stmt->for_stmt.body);
             break;
         case STMT_SPAWN:
@@ -346,6 +354,16 @@ static void scan_expr_for_lambdas(Expr* expr) {
                 }
             }
             break;
+        case EXPR_HASHMAP_LITERAL:
+        case EXPR_HASHSET_LITERAL:
+            // A `{"k": v}` / `{a, b}` literal stores its parts in `array.elements`
+            // (for the hashmap: key at even index, value at odd), so it shares the
+            // EXPR_ARRAY walk below. These are DISTINCT kinds from EXPR_MAP - the
+            // `map { }` form - and neither is covered by veto_scan_expr, so the
+            // thirty-kind sibling walker was not a complete reference either:
+            //     var m = {"a": apply((n) => n + 7)}   // ICE'd
+            // Fallthrough is deliberate.
+            /* fallthrough */
         case EXPR_ARRAY:
             for (int i = 0; i < expr->array.count; i++) {
                 scan_expr_for_lambdas(expr->array.elements[i]);
@@ -398,6 +416,96 @@ static void scan_expr_for_lambdas(Expr* expr) {
             // a reference to `__lambda_2` while only `__lambda_1` existed - the failure
             // surfaced on a different line than the code that caused it.
             scan_expr_for_lambdas(expr->unary.operand);
+            break;
+        // The REST of the expression grammar. The three arms above were each added
+        // as an individual fix for one reported shape, and EXPR_UNARY's note that
+        // this is "a family rather than three accidents" was right - but the arms
+        // kept being added one at a time, leaving a whitelist of ten kinds out of
+        // ~45. Every unlisted kind hides a lambda the same way: no id, no emitted
+        // body, and a surrounding expression that still emits a call to it.
+        //
+        // These arms are taken from veto_scan_expr in this same file, which has
+        // always walked thirty kinds - the traversal was already written correctly
+        // next door. Kept in that function's order so the two can be diffed.
+        //
+        // What is deliberately left on `default:` is now only: the literals
+        // (IDENT/INT/FLOAT/STRING/BOOL/CHAR/NONE), the type-expression kinds
+        // (FN_TYPE/OPTIONAL_TYPE/RESULT_TYPE/UNION_TYPE/PATTERN - types, not
+        // values), and SPREAD/DESTRUCTURE/CHANNEL, which carry no child Expr at
+        // all (they sit with the literals in memory.c's free_expr). None can hold
+        // a lambda. That list plus the arms above is the WHOLE ExprType enum, so
+        // adding a new expression kind to the grammar is the only way to reopen
+        // this hole - check this switch when you do.
+        case EXPR_INDEX:
+            scan_expr_for_lambdas(expr->index.array);
+            scan_expr_for_lambdas(expr->index.index);
+            break;
+        case EXPR_INDEX_ASSIGN:
+            scan_expr_for_lambdas(expr->index_assign.object);
+            scan_expr_for_lambdas(expr->index_assign.index);
+            scan_expr_for_lambdas(expr->index_assign.value);
+            break;
+        case EXPR_ASSIGN:
+            scan_expr_for_lambdas(expr->assign.value);
+            break;
+        case EXPR_FIELD_ACCESS:
+            scan_expr_for_lambdas(expr->field_access.object);
+            break;
+        case EXPR_FIELD_ASSIGN:
+            scan_expr_for_lambdas(expr->field_assign.object);
+            scan_expr_for_lambdas(expr->field_assign.value);
+            break;
+        case EXPR_TERNARY:
+            scan_expr_for_lambdas(expr->ternary.condition);
+            scan_expr_for_lambdas(expr->ternary.then_expr);
+            scan_expr_for_lambdas(expr->ternary.else_expr);
+            break;
+        case EXPR_IF_EXPR:
+            scan_expr_for_lambdas(expr->if_expr.condition);
+            scan_expr_for_lambdas(expr->if_expr.then_expr);
+            scan_expr_for_lambdas(expr->if_expr.else_expr);
+            break;
+        case EXPR_RANGE:
+            scan_expr_for_lambdas(expr->range.start);
+            scan_expr_for_lambdas(expr->range.end);
+            break;
+        case EXPR_TUPLE:
+            for (int i = 0; i < expr->tuple.count; i++)
+                scan_expr_for_lambdas(expr->tuple.elements[i]);
+            break;
+        case EXPR_TUPLE_INDEX:
+            scan_expr_for_lambdas(expr->tuple_index.tuple);
+            break;
+        case EXPR_MAP:
+            for (int i = 0; i < expr->map.count; i++) {
+                scan_expr_for_lambdas(expr->map.keys[i]);
+                scan_expr_for_lambdas(expr->map.values[i]);
+            }
+            break;
+        case EXPR_SOME: case EXPR_OK: case EXPR_ERR:
+            scan_expr_for_lambdas(expr->option.value);
+            break;
+        case EXPR_TRY:
+            scan_expr_for_lambdas(expr->try_expr.value);
+            break;
+        case EXPR_OPT_CHAIN:
+            scan_expr_for_lambdas(expr->opt_chain.object);
+            break;
+        case EXPR_MATCH:
+            scan_expr_for_lambdas(expr->match.value);
+            for (int i = 0; i < expr->match.arm_count; i++)
+                scan_expr_for_lambdas(expr->match.arms[i].result);
+            break;
+        case EXPR_BLOCK:
+            for (int i = 0; i < expr->block.stmt_count; i++)
+                scan_stmt_for_lambdas(expr->block.stmts[i]);
+            scan_expr_for_lambdas(expr->block.result);
+            break;
+        case EXPR_LIST_COMP:
+            scan_expr_for_lambdas(expr->list_comp.iter_start);
+            scan_expr_for_lambdas(expr->list_comp.iter_end);
+            scan_expr_for_lambdas(expr->list_comp.body);
+            scan_expr_for_lambdas(expr->list_comp.condition);
             break;
         default:
             break;
