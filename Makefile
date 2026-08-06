@@ -299,6 +299,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_cc_err_isolation_test.sh
 	@echo "=== Running unresolved-import abort test ==="
 	@WYN=./wyn bash tests/errors/run_unresolved_import_test.sh
+	@echo "=== Running for-in-string check-time rejection test ==="
+	@WYN=./wyn bash tests/errors/run_for_in_string_test.sh
 	@echo "=== Running run-cache import-staleness test ==="
 	@WYN=./wyn bash tests/errors/run_run_cache_imports_test.sh
 	@echo "=== Running --release link/parity test ==="
