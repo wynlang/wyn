@@ -176,6 +176,64 @@ static void collect_idents(Expr* expr, char idents[][64], int* count, int max) {
     // Interpolation segments reference outer vars too - "${n}" inside a lambda
     // used to skip capture collection entirely (C error: undeclared 'n').
     else if (expr->type == EXPR_STRING_INTERP) { for (int i = 0; i < expr->string_interp.count; i++) collect_idents(expr->string_interp.expressions[i], idents, count, max); }
+    // The REST of the grammar. Same root cause as #279 one function over: a walker
+    // that must enumerate every expression kind, listing only nine. A kind missing
+    // here HIDES a captured variable - it gets no env-struct field, while the body
+    // still emits a use of it, so the generated C failed with
+    // "use of undeclared identifier 'c'". The EXPR_STRING_INTERP arm above was
+    // added for precisely this reason once already.
+    //
+    // WHICH ARMS ARE PROVEN, precisely - the walk is exhaustive by design (that is
+    // the #279 lesson: a partial whitelist rots), but not every arm has a live
+    // repro, and saying otherwise is how a stale claim gets believed later:
+    //
+    //   * MUTATION-VERIFIED, each with a case in tests/regression/
+    //     test_lambda_capture_exprs.wyn that compiles WITHOUT a capture and ICE'd
+    //     WITH one: TERNARY, FIELD_ACCESS, ARRAY, TUPLE_INDEX, STRUCT_INIT, MATCH,
+    //     INDEX_ASSIGN. That asymmetry is what pins the fault on THIS walker rather
+    //     than on a miscompile of the surrounding expression.
+    //   * BLOCKED BY A SEPARATE DEFECT, so untestable here but correct once it is
+    //     fixed: SOME/OK/ERR and AWAIT. A lambda whose body is `Some(...)` or
+    //     `await ...` ICEs on unmodified dev with NO capture at all.
+    //   * COMPLETENESS ONLY, no repro found: FIELD_ASSIGN, HASHMAP/HASHSET_LITERAL,
+    //     TUPLE, MAP, INDEX, RANGE, TRY, OPT_CHAIN, LAMBDA. `ys[idx]` in particular
+    //     already worked before this change, so INDEX reaches idents by some other
+    //     path; the arm is kept for uniformity, not because it fixes a known bug.
+    //
+    // THE CAP IS UNCHANGED AND STILL LOW. The caller passes max=32 and filters into
+    // a captured_vars[16][64], so a lambda with MORE THAN 16 captures is an ICE -
+    // measured: 16 works, 17 does not. That ceiling is identical before and after
+    // this change (verified against an unmodified binary): widening the walk finds
+    // the captures that were being missed, it does not raise how many can be held.
+    // Growing those arrays is a separate change with its own risk, deliberately not
+    // bundled here.
+    else if (expr->type == EXPR_TERNARY) { collect_idents(expr->ternary.condition, idents, count, max); collect_idents(expr->ternary.then_expr, idents, count, max); collect_idents(expr->ternary.else_expr, idents, count, max); }
+    // The OBJECT is the ident to capture (`h` in `h.v`); the field name is a
+    // token on the node, not a sub-expression, so there is nothing else to walk.
+    else if (expr->type == EXPR_FIELD_ACCESS) { collect_idents(expr->field_access.object, idents, count, max); }
+    else if (expr->type == EXPR_FIELD_ASSIGN) { collect_idents(expr->field_assign.object, idents, count, max); collect_idents(expr->field_assign.value, idents, count, max); }
+    else if (expr->type == EXPR_ARRAY || expr->type == EXPR_HASHMAP_LITERAL ||
+             expr->type == EXPR_HASHSET_LITERAL) { for (int i = 0; i < expr->array.count; i++) collect_idents(expr->array.elements[i], idents, count, max); }
+    else if (expr->type == EXPR_TUPLE) { for (int i = 0; i < expr->tuple.count; i++) collect_idents(expr->tuple.elements[i], idents, count, max); }
+    else if (expr->type == EXPR_TUPLE_INDEX) { collect_idents(expr->tuple_index.tuple, idents, count, max); }
+    else if (expr->type == EXPR_STRUCT_INIT) { for (int i = 0; i < expr->struct_init.field_count; i++) collect_idents(expr->struct_init.field_values[i], idents, count, max); }
+    else if (expr->type == EXPR_MAP) { for (int i = 0; i < expr->map.count; i++) { collect_idents(expr->map.keys[i], idents, count, max); collect_idents(expr->map.values[i], idents, count, max); } }
+    else if (expr->type == EXPR_INDEX) { collect_idents(expr->index.array, idents, count, max); collect_idents(expr->index.index, idents, count, max); }
+    else if (expr->type == EXPR_INDEX_ASSIGN) { collect_idents(expr->index_assign.object, idents, count, max); collect_idents(expr->index_assign.index, idents, count, max); collect_idents(expr->index_assign.value, idents, count, max); }
+    else if (expr->type == EXPR_RANGE) { collect_idents(expr->range.start, idents, count, max); collect_idents(expr->range.end, idents, count, max); }
+    else if (expr->type == EXPR_SOME || expr->type == EXPR_OK || expr->type == EXPR_ERR) { collect_idents(expr->option.value, idents, count, max); }
+    else if (expr->type == EXPR_TRY) { collect_idents(expr->try_expr.value, idents, count, max); }
+    else if (expr->type == EXPR_OPT_CHAIN) { collect_idents(expr->opt_chain.object, idents, count, max); }
+    else if (expr->type == EXPR_AWAIT) { collect_idents(expr->await.expr, idents, count, max); }
+    // ARM RESULTS ONLY, deliberately - never `arms[i].pattern`. A pattern-bound
+    // name (`Some(x) => x + c`) is a binding LOCAL to the arm, not an outer
+    // variable; collecting it would declare a bogus env field named after it and
+    // shadow the real binding. Same reason lambda params are filtered by the
+    // caller rather than skipped here.
+    else if (expr->type == EXPR_MATCH) { collect_idents(expr->match.value, idents, count, max); for (int i = 0; i < expr->match.arm_count; i++) collect_idents(expr->match.arms[i].result, idents, count, max); }
+    // A NESTED lambda's body can reference the outer lambda's captures, so the
+    // outer must capture them too in order to pass them down.
+    else if (expr->type == EXPR_LAMBDA) { collect_idents(expr->lambda.body, idents, count, max); }
 }
 static void scan_expr_for_lambdas(Expr* expr) {
     if (!expr) return;

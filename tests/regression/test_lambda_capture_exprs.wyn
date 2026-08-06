@@ -1,0 +1,105 @@
+// Feature: a variable captured by a lambda is FOUND wherever it appears in the
+// body, not only in the nine expression kinds `collect_idents` happened to list.
+//
+// collect_idents walks a lambda body to decide which outer variables the lambda
+// captures; each one becomes a field in the generated env struct. A kind it does
+// not descend into hides the reference, so the variable is never captured, never
+// declared in the env -- and the emitted body still USES it:
+//
+//     t.wyn.c:9:31: error: use of undeclared identifier 'c'
+//
+// surfaced to the user only as "compilation failed (internal codegen error)".
+//
+// This is the SAME root cause as #279 one function over: an AST walker that must
+// enumerate every expression kind, listing only some. #279 fixed
+// scan_expr_for_lambdas (10 of ~45 kinds); this one had 9. The file's own
+// EXPR_STRING_INTERP arm was added for exactly this reason once already --
+// "${n}" inside a lambda skipped capture collection entirely.
+//
+// Each case below works WITHOUT a capture and failed WITH one, which is what
+// isolates this from a plain miscompile of the surrounding kind. Verified
+// individually against an unmodified dev binary.
+struct Holder { v: int }
+
+fn main() -> int {
+    xs = [1, 2]
+
+    // EXPR_TERNARY -- the capture sits in a branch of `? :`.
+    var c1 = 5
+    var r1 = xs.map((n) => true ? n + c1 : 0)
+    println("${r1[0]}")
+
+    // EXPR_FIELD_ACCESS -- the walk must reach the OBJECT of a field access. Uses
+    // a captured INDEX into a struct array rather than a captured struct, because
+    // capturing a struct BY VALUE is a separate pre-existing defect: the env
+    // emitter types every capture slot `long long`, so `__cap_1_h = h` fails with
+    // "assigning to 'long long' from incompatible type 'Holder'". That reproduces
+    // on unmodified dev through EXPR_BINARY -- an expression kind this walker
+    // already handled -- so it is not this fix's concern. Verified, not assumed.
+    hs = [Holder { v: 7 }, Holder { v: 8 }]
+    var idx = 1
+    var r2 = xs.map((n) => n + hs[idx].v)
+    println("${r2[0]}")
+
+    // EXPR_MATCH -- the capture is used in an arm RESULT. Only results are
+    // walked, never the patterns: a pattern-bound name is a lambda-local
+    // binding, and collecting it would declare a bogus env field for it.
+    var c3 = 9
+    var r3 = xs.map((n) => match n { 1 => c3, _ => 0 })
+    println("${r3[0]}")
+
+    // EXPR_ARRAY -- the capture as an array element.
+    var c4 = 6
+    var r4 = xs.map((n) => [c4, n][0])
+    println("${r4[0]}")
+
+    // EXPR_STRUCT_INIT -- the capture as a field VALUE.
+    var c5 = 8
+    var r5 = xs.map((n) => Holder { v: c5 }.v)
+    println("${r5[0]}")
+
+    // EXPR_TUPLE / EXPR_TUPLE_INDEX -- the capture inside a tuple.
+    var c6 = 3
+    var r6 = xs.map((n) => (c6, n).0)
+    println("${r6[0]}")
+
+    // EXPR_INDEX_ASSIGN -- the capture as the INDEX of an assignment target,
+    // inside a block-bodied lambda.
+    slots = [0, 0]
+    var ci = 1
+    var r7b = xs.map((n) => { slots[ci] = n; return n })
+    println("${r7b[0]}")
+
+    // CONTROL: the kinds that already worked must keep working, in the same
+    // function so a shared-state regression in the ident table shows up.
+    var c7 = 4
+    var r7 = xs.map((n) => n + c7)                    // EXPR_BINARY
+    println("${r7[0]}")
+    var r8 = xs.map((n) => if n > 0 { c7 } else { 0 }) // EXPR_IF_EXPR
+    println("${r8[0]}")
+    // NOT ASSERTED: `xs.map((n) => "v=${c7}")` -- a STRING-returning lambda with an
+    // interpolated capture yields an empty element. Pre-existing and unrelated:
+    // it prints empty on unmodified dev too, so this walker is not the cause.
+    // Logged rather than folded in. The interp arm is still exercised below, in an
+    // int-returning lambda, which is what this fix governs.
+    var r9 = xs.map((n) => n + "${c7}".len())          // EXPR_STRING_INTERP
+    println("${r9[0]}")
+
+    // CONTROL: a lambda PARAMETER is not a capture. If the widened walk started
+    // treating every collected ident as an outer variable, `n` would be declared
+    // in the env struct and shadow the real parameter.
+    var r10 = xs.map((n) => n * 100)
+    println("${r10[1]}")
+    return 0
+}
+// EXPECT: 6
+// EXPECT: 9
+// EXPECT: 9
+// EXPECT: 6
+// EXPECT: 8
+// EXPECT: 3
+// EXPECT: 1
+// EXPECT: 5
+// EXPECT: 4
+// EXPECT: 2
+// EXPECT: 200
