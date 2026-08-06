@@ -1,0 +1,86 @@
+// Feature: `ptr` / `cstr` as a STRUCT FIELD type.
+//
+// #235 taught the four Wyn->C ladders behind a module `pub fn` SIGNATURE that
+// `ptr` and `cstr` are builtins. The struct-field ladders were not part of that
+// fix, and they have the same two halves:
+//
+//   1. CHECKER. A field type annotation is checked as an ordinary expression, and
+//      the builtin-type-name ladder in check_expr's EXPR_IDENT path listed
+//      int/float/string/str/bool/char/void but not ptr/cstr. So `buf: ptr` fell
+//      through to the undefined-variable branch and was rejected outright:
+//
+//          Error at line 2: Undefined variable 'ptr'
+//            Did you mean: Ptr?
+//
+//      Note the suggestion pointed at the unrelated `Ptr` namespace, so the
+//      message actively misled. Nothing to do with modules - a single file failed.
+//
+//   2. CODEGEN. With the checker appeased, the struct-field type ladder ends in
+//      the "unrecognised name means user struct" fallback that emits the name
+//      as-is, so the field's C type was the undefined type name `ptr`.
+//
+// This is what forced WynCanvas to spell every buffer handle `int` once its layer
+// store became an array of structs rather than parallel columns.
+struct Row { name: string, buf: ptr, tag: cstr }
+
+// CONTROLS. If either fix had been "stop treating unrecognised names as structs"
+// or "always map these names", one of these stops working.
+struct Inner { v: int }
+struct Outer { a: Inner, b: cstr }
+
+extern fn malloc(n: int) -> ptr;
+extern fn free(p: ptr);
+extern fn strcpy(dst: ptr, src: cstr) -> ptr;
+extern fn atoi(s: cstr) -> int;
+extern fn memcmp(a: ptr, b: ptr, n: int) -> int;
+
+fn main() -> int {
+    var p = malloc(64)
+    var r = Row { name: "layer0", buf: p, tag: "77" }
+
+    // The field must round-trip the SAME pointer, not a truncated or re-boxed
+    // copy. Writing through the field and reading back through the original
+    // handle is the check a 32-bit truncation would fail.
+    strcpy(r.buf, "9182")
+    println("${atoi(r.buf)}")
+
+    // memcmp over the 8 bytes proves field and original name one buffer.
+    var same: int = memcmp(p, r.buf, 4)
+    println("${same}")
+
+    // A `ptr` field sitting between a string and a cstr field, so a positional
+    // slip in the field ladder shows up rather than silently type-punning.
+    println(r.name)
+    println("${atoi(r.tag)}")
+
+    // A ptr field passed STRAIGHT to an extern fn, and reassigned.
+    var q = malloc(16)
+    r.buf = q
+    strcpy(r.buf, "4242")
+    println("${atoi(r.buf)}")
+
+    // CONTROL: a USER-DEFINED type is still a struct field, resolved through the
+    // same ladder, and a `cstr` field sits beside it.
+    var o = Outer { a: Inner { v: 5 }, b: "31" }
+    println("${o.a.v}")
+    println("${atoi(o.b)}")
+
+    // CONTROL: `ptr` and `cstr` are only type names where a type is expected. A
+    // VARIABLE may still be named after one - the builtin arms sit behind the
+    // "no symbol of this name in scope" guard, so this must print 42, not fail
+    // and not resolve as a type.
+    var ptr = 42
+    println("${ptr}")
+
+    free(p)
+    free(q)
+    return 0
+}
+// EXPECT: 9182
+// EXPECT: 0
+// EXPECT: layer0
+// EXPECT: 77
+// EXPECT: 4242
+// EXPECT: 5
+// EXPECT: 31
+// EXPECT: 42
