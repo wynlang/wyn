@@ -932,6 +932,11 @@ void pop_string_scope_and_release(void) {
     FILE* out = codegen_get_output();
     if (out) {
         for (int i = saved; i < string_var_count; i++) {
+            // A BORROWED local (`var v = xs[i]`) never took a reference, so releasing it
+            // at scope exit decrements someone else's count. Skip it - the array it
+            // points into owns the value and frees it in its own time.
+            extern int is_borrowed_string_local(const char*);
+            if (is_borrowed_string_local(string_var_names[i])) continue;
             char _cn[288];
             fprintf(out, "wyn_rc_release(%s); ", emit_c_var_name(_cn, sizeof _cn, string_var_names[i]));
         }
