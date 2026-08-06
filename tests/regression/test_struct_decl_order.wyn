@@ -1,0 +1,58 @@
+// Feature: a struct may name a struct declared LATER in the file.
+//
+// Struct typedefs were emitted in SOURCE order. A struct-typed field embeds that struct
+// by value, so C needs the field's typedef to exist already:
+//
+//     struct A { b: B }      // emitted first
+//     struct B { v: int }    // ...so this typedef came too late
+//
+// gave `error: unknown type name 'B'` AFTER `wyn check` reported no errors - the v1.21
+// soundness rule (a program that checks must build), and the message named a C type the
+// user never wrote. Reordering the declarations by hand fixed it, so the language appeared
+// to have a declare-before-use rule that nothing documents and no diagnostic mentions.
+//
+// Now emitted in DEPENDENCY order. A topological order always exists because the checker
+// already rejects a struct containing its own type and any mutually-recursive cycle (both
+// are infinite-size by value), so the field graph is a DAG by the time codegen runs.
+// Anything the pass cannot order keeps its source position, so it can only REORDER what
+// already worked.
+//
+// This is the "S2" item from internal-docs/PLAN_v1.21.md.
+
+// The reported shape: the user is named before the type it contains.
+struct Outer { inner: Inner, tag: string }
+struct Inner { v: int }
+
+// A longer chain, declared entirely backwards - one level of reordering is not enough.
+struct L1 { l2: L2 }
+struct L2 { l3: L3 }
+struct L3 { n: int }
+
+// An OPTIONAL forward field: `Later?` needs OptionLater, which embeds Later, so both the
+// struct and its Option family have to land after it.
+struct HasOpt { maybe: Later?, id: int }
+struct Later { w: int }
+
+// CONTROL: correctly-ordered declarations must be unaffected - dependency order has to
+// agree with source order when source order was already valid.
+struct First { n: int }
+struct Second { f: First }
+
+fn main() -> int {
+    var o = Outer { inner: Inner { v: 3 }, tag: "t" }
+    println("${o.inner.v}${o.tag}")
+
+    var chain = L1 { l2: L2 { l3: L3 { n: 7 } } }
+    println("${chain.l2.l3.n}")
+
+    var h = HasOpt { maybe: Some(Later { w: 5 }), id: 1 }
+    match h.maybe { Some(x) => println("${x.w}${h.id}"), None => println("none") }
+
+    var s = Second { f: First { n: 9 } }
+    println("${s.f.n}")
+    return 0
+}
+// EXPECT: 3t
+// EXPECT: 7
+// EXPECT: 51
+// EXPECT: 9

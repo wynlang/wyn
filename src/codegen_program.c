@@ -442,8 +442,68 @@ void codegen_program(Program* prog) {
         }
     }
 
-    // Generate all structs, enums, and type aliases first
-    for (int i = 0; i < prog->count; i++) {
+    // Generate all structs, enums, and type aliases first.
+    //
+    // IN DEPENDENCY ORDER, not source order. A struct field of struct type embeds that
+    // struct BY VALUE, so C needs the field's typedef to already exist:
+    //
+    //     struct A { b: B }      // emitted first, in source order
+    //     struct B { v: int }    // ...so this typedef came too late
+    //
+    // gave `error: unknown type name 'B'` AFTER passing `wyn check` - the v1.21 soundness
+    // rule (what checks must build), and the failure named a C type the user never wrote.
+    // Declaring B first worked, so the language appeared to have a declare-before-use rule
+    // that nothing documents and no diagnostic mentions.
+    //
+    // A topological order always exists: the checker already rejects a struct containing
+    // its own type and any mutually-recursive cycle (both are infinite-size by value), so
+    // the field graph is a DAG by the time we get here. `emit_order` is that order;
+    // anything whose dependencies cannot be resolved (an unknown name, a non-struct field)
+    // keeps its source position, so this can only ever REORDER what already worked.
+    int* emit_order = malloc(sizeof(int) * (prog->count > 0 ? prog->count : 1));
+    int emit_order_count = 0;
+    {
+        char* placed = calloc(prog->count > 0 ? prog->count : 1, 1);
+        // Repeated passes: place a declaration once every struct-typed field it names has
+        // been placed. O(n^2) on the number of type declarations, which is tiny, and it
+        // terminates because the graph is acyclic - the final sweep below is the backstop
+        // if that assumption is ever violated.
+        for (int pass = 0; pass < prog->count + 1 && emit_order_count < prog->count; pass++) {
+            int placed_this_pass = 0;
+            for (int i = 0; i < prog->count; i++) {
+                if (placed[i]) continue;
+                Stmt* s = prog->stmts[i];
+                if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+                bool ready = true;
+                if (s->type == STMT_STRUCT) {
+                    for (int f = 0; f < s->struct_decl.field_count && ready; f++) {
+                        Expr* ft = s->struct_decl.field_types[f];
+                        if (ft && ft->type == EXPR_OPTIONAL_TYPE) ft = ft->optional_type.inner_type;
+                        if (!ft || ft->type != EXPR_IDENT) continue;
+                        // Find a LATER struct declaration of this field's type. Only a
+                        // not-yet-placed one can block us.
+                        for (int j = 0; j < prog->count; j++) {
+                            if (j == i || placed[j]) continue;
+                            Stmt* o = prog->stmts[j];
+                            if (o->type == STMT_EXPORT && o->export.stmt) o = o->export.stmt;
+                            if (o->type != STMT_STRUCT) continue;
+                            if (o->struct_decl.name.length == ft->token.length &&
+                                memcmp(o->struct_decl.name.start, ft->token.start,
+                                       ft->token.length) == 0) { ready = false; break; }
+                        }
+                    }
+                }
+                if (ready) { emit_order[emit_order_count++] = i; placed[i] = 1; placed_this_pass++; }
+            }
+            if (placed_this_pass == 0) break;   // no progress: fall through to the sweep
+        }
+        // Backstop: anything still unplaced keeps its source order, so a graph this pass
+        // cannot order emits exactly as it did before rather than being dropped.
+        for (int i = 0; i < prog->count; i++) if (!placed[i]) emit_order[emit_order_count++] = i;
+        free(placed);
+    }
+    for (int oi = 0; oi < emit_order_count; oi++) {
+        int i = emit_order[oi];
         Stmt* s = prog->stmts[i];
         // Unwrap export
         if (s->type == STMT_EXPORT && s->export.stmt) {
@@ -490,6 +550,7 @@ void codegen_program(Program* prog) {
             }
         }
     }
+    free(emit_order);
 
     // Emit monomorphic Option<Struct> families for any user struct used as `S?`
     // (registered by the checker as it resolved the optionals). These can't live
