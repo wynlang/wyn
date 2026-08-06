@@ -1,0 +1,66 @@
+// Feature: `for x in <string>` is rejected AT CHECK TIME with an actionable message,
+// instead of passing `wyn check` and dying as a bare "internal codegen error".
+//
+// Codegen's for-in fallthrough assigns the iterable to a `WynArray` unconditionally, so
+// a string produced invalid C:
+//
+//     var s = "a\nb"
+//     for c in s { println(c) }      ->  ✓ no errors, then: internal codegen error
+//
+// That is the exact v1.21 soundness rule this violates -- a program that passes
+// `wyn check` must build -- and the failure named neither the line's problem nor a fix.
+//
+// DELIBERATELY REJECTED RATHER THAN GIVEN A MEANING. Iterating a string could
+// reasonably yield characters, bytes, or grapheme clusters; picking one silently would
+// smuggle a language decision in as a bug fix. `.split("")` already spells "by
+// character" explicitly, and the case that found this wanted lines, not characters:
+// `for f in File::walk_dir(dir)` -- where `File::walk_dir` returns ONE newline-joined
+// string, not an array, so the loop needed `.split("\n")` all along.
+//
+// This file is the POSITIVE half: every form the error message suggests must work, and
+// every other iterable must be unaffected. The rejection itself is checked by
+// tests/regression/run_for_in_string_test.sh, because a check-time error means the
+// program does not run and so cannot print an EXPECT line.
+
+fn lines() -> string { return "l1\nl2" }
+
+fn main() -> int {
+    // SUGGESTION 1: one character at a time.
+    var s = "abc"
+    for ch in s.split("") { println(ch) }
+
+    // SUGGESTION 2: one line at a time - the shape the reported case needed.
+    for ln in lines().split("\n") { println(ln) }
+
+    // SUGGESTION 3: by index.
+    for i in 0..s.len() { println("${i}") }
+
+    // CONTROLS: the iterables that were always valid must still be, since the check
+    // sits in the same branch that types an array's element.
+    xs = ["p", "q"]
+    for x in xs { println(x) }
+
+    ns = [7, 8]
+    for n in ns { println("${n}") }
+
+    var m = {"k": 1}
+    for k in m { println(k) }
+
+    for i in 0..2 { println("r${i}") }
+    return 0
+}
+// EXPECT: a
+// EXPECT: b
+// EXPECT: c
+// EXPECT: l1
+// EXPECT: l2
+// EXPECT: 0
+// EXPECT: 1
+// EXPECT: 2
+// EXPECT: p
+// EXPECT: q
+// EXPECT: 7
+// EXPECT: 8
+// EXPECT: k
+// EXPECT: r0
+// EXPECT: r1

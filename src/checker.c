@@ -5556,6 +5556,32 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                         add_symbol(&for_scope, stmt->for_stmt.loop_var, builtin_string, false);
                     }
                 } else {
+                    // A STRING is not iterable. Codegen's for-in fallthrough assigns
+                    // the iterable to a `WynArray` unconditionally, so `for c in s`
+                    // emitted invalid C and died as a bare "internal codegen error"
+                    // AFTER passing `wyn check` - the v1.21 soundness rule is that a
+                    // program which checks must build.
+                    //
+                    // Rejected here rather than given a meaning: iterating a string
+                    // could reasonably yield characters, bytes, or grapheme clusters,
+                    // and silently picking one would be a language decision smuggled
+                    // in as a bug fix. `.split("")` already spells "by character"
+                    // explicitly, and splitting on a separator is what the reported
+                    // case actually wanted (`for f in File::walk_dir(d).split("\n")`).
+                    if (array_type && array_type->kind == TYPE_STRING) {
+                        fprintf(stderr,
+                                "\nError at line %d: cannot iterate a string directly\n",
+                                stmt->for_stmt.loop_var.line);
+                        show_source_line(stmt->for_stmt.loop_var.line);
+                        fprintf(stderr,
+                                "  \033[34mHelp:\033[0m be explicit about the unit:\n"
+                                "    for %.*s in s.split(\"\") { ... }      // one character at a time\n"
+                                "    for %.*s in s.split(\"\\n\") { ... }    // one line at a time\n"
+                                "    for i in 0..s.len() { ... }         // by index\n",
+                                stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start,
+                                stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start);
+                        had_error = true;
+                    }
                     add_symbol(&for_scope, stmt->for_stmt.loop_var, elem_type, false);
                     // Add index variable for indexed iteration: for i, v in arr
                     if (stmt->for_stmt.has_index) {
