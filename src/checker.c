@@ -782,6 +782,17 @@ static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
                     return builtin_bool;
                 } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
                     return builtin_float;
+                } else if (type_name.length == 3 && memcmp(type_name.start, "ptr", 3) == 0) {
+                    // The FFI pointer family, ahead of the user-struct fallback
+                    // below for the same reason as everywhere else: these are
+                    // BUILTINS. `ptr` is itself TYPE_STRUCT (named "void*"), so a
+                    // `ptr` field happened to survive the fallback; `cstr` did
+                    // not - it resolved to a struct named "cstr", and passing the
+                    // field to an `extern fn atoi(s: cstr)` was rejected with
+                    // "Expected string, got struct".
+                    return builtin_ptr;
+                } else if (type_name.length == 4 && memcmp(type_name.start, "cstr", 4) == 0) {
+                    return builtin_string;
                 } else {
                     // Check if it's an enum type
                     Symbol* type_symbol = find_symbol(global_scope, type_name);
@@ -1670,6 +1681,22 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             if (expr->token.length == 4 && memcmp(expr->token.start, "void", 4) == 0) {
                 expr->expr_type = builtin_void;
                 return builtin_void;
+            }
+            // The FFI pointer family. Missing here, a type annotation naming
+            // `ptr`/`cstr` in a position that is checked as an EXPRESSION - a
+            // STRUCT FIELD is the one that bites - fell through to the
+            // undefined-variable branch and was rejected outright, with a
+            // "Did you mean: Ptr?" pointing at the unrelated Ptr namespace:
+            //   struct Row { buf: ptr }  ->  Error: Undefined variable 'ptr'
+            // #235 fixed the same omission in the four ladders behind a module
+            // pub fn signature; field types were not in that fix's scope.
+            if (expr->token.length == 3 && memcmp(expr->token.start, "ptr", 3) == 0) {
+                expr->expr_type = builtin_ptr;
+                return builtin_ptr;
+            }
+            if (expr->token.length == 4 && memcmp(expr->token.start, "cstr", 4) == 0) {
+                expr->expr_type = builtin_string;
+                return builtin_string;
             }
             }
 

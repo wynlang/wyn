@@ -3581,6 +3581,12 @@ void codegen_stmt(Stmt* stmt) {
                             c_type = "const char*"; // Always use simple strings for now
                         } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
                             c_type = "bool";
+                        } else if (wyn_ffi_ptr_c_type(type_name)) {
+                            // `ptr`/`cstr` are BUILTINS, so they must be consulted
+                            // BEFORE the user-struct fallback below - otherwise a
+                            // `buf: ptr` field emitted the undefined C type name
+                            // `ptr`. Same omission #235 fixed for signatures.
+                            c_type = wyn_ffi_ptr_c_type(type_name);
                         } else {
                             // Custom struct type - use the type name as-is
                             static char custom_type[64]; token_to_cstr(custom_type, sizeof(custom_type), type_name);
