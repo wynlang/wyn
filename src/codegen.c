@@ -1204,6 +1204,21 @@ void reset_borrowed_string_locals(void) {
     borrowed_string_local_count = 0;
 }
 
+// A borrow ENDS when the var is assigned a value of its own: from that point it holds a
+// retained reference and behaves like any owned local. Needed because the first
+// assignment over a borrow must skip the release-old (the callee never owned the
+// borrowed value) while every LATER assignment must perform it, or the retained value
+// leaks. Without this the two cases could not be told apart by name alone.
+void unregister_borrowed_string_local(const char* name) {
+    for (int i = 0; i < borrowed_string_local_count; i++) {
+        if (strcmp(borrowed_string_locals[i], name) == 0) {
+            free(borrowed_string_locals[i]);
+            borrowed_string_locals[i] = borrowed_string_locals[--borrowed_string_local_count];
+            return;
+        }
+    }
+}
+
 // True while emitting the body of a function whose Wyn return type is `string`
 // (C signature `const char*`/`char*`). Gates the retain-on-return emission.
 bool current_fn_returns_string = false;

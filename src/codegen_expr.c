@@ -4696,6 +4696,32 @@ void codegen_expr(Expr* expr) {
                 extern int is_string_var(const char*);
                 if (is_string_var(target_name)) _rc_string_assign = true;
             }
+            // Is the target currently holding a BORROWED reference? `var base = path`
+            // aliases a parameter the callee does not own, and that is already recorded
+            // (see the borrow tracking at the string var-decl in codegen_stmt.c). The
+            // release-old below would then decrement a count this function never
+            // incremented, corrupting the CALLER's string:
+            //
+            //     fn shorten(path: string) -> string {
+            //         var base = path                       // borrows the parameter
+            //         var parts = path.split("/")
+            //         if parts.len() > 0 { base = parts[...] }   // released `path`!
+            //         return base
+            //     }
+            //
+            // The damage lands in the caller, so it reads as an unrelated later value
+            // going empty - in the case that found this, an accumulator built in a
+            // sibling loop. Skip the release for the FIRST assignment over a borrow;
+            // afterwards the var holds a retained value and is no longer a borrow.
+            bool _rc_target_borrowed = false;
+            {
+                extern int is_borrowed_string_local(const char*);
+                extern void unregister_borrowed_string_local(const char*);
+                if (is_borrowed_string_local(target_name)) {
+                    _rc_target_borrowed = true;
+                    unregister_borrowed_string_local(target_name);
+                }
+            }
             if (_rc_string_assign) {
                 Expr* rhs = expr->assign.value;
                 bool rhs_is_fresh = (rhs->type == EXPR_BINARY || rhs->type == EXPR_CALL ||
@@ -4705,12 +4731,20 @@ void codegen_expr(Expr* expr) {
                     // If concat reused the buffer (same pointer), don't release
                     emit("({ const char* __rc_tmp = ");
                     codegen_expr(expr->assign.value);
-                    emit("; if (__rc_tmp != %s) { wyn_rc_release(%s); } %s = __rc_tmp; })", target_name, target_name, target_name);
+                    if (_rc_target_borrowed) {
+                        emit("; %s = __rc_tmp; })", target_name);
+                    } else {
+                        emit("; if (__rc_tmp != %s) { wyn_rc_release(%s); } %s = __rc_tmp; })", target_name, target_name, target_name);
+                    }
                 } else {
                     // Shared reference: retain new, release old
                     emit("({ const char* __rc_tmp = ");
                     codegen_expr(expr->assign.value);
-                    emit("; wyn_rc_retain(__rc_tmp); wyn_rc_release(%s); %s = __rc_tmp; })", target_name, target_name);
+                    if (_rc_target_borrowed) {
+                        emit("; wyn_rc_retain(__rc_tmp); %s = __rc_tmp; })", target_name);
+                    } else {
+                        emit("; wyn_rc_retain(__rc_tmp); wyn_rc_release(%s); %s = __rc_tmp; })", target_name, target_name);
+                    }
                 }
                 break;
             }
