@@ -3197,7 +3197,15 @@ void codegen_stmt(Stmt* stmt) {
                                 char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
                                 extern int is_known_struct(const char*);
                 extern int is_known_type_name(const char*);
+                                extern int is_enum_type(const char*);
+                                extern int is_data_enum_type(const char*);
                                 if (is_known_struct(_stn)) { snprintf(_opbuf2, sizeof(_opbuf2), "Option%s", _stn); param_type = _opbuf2; }
+                                // A PLAIN enum parameter (`c: Code?`) is OptionInt — what
+                                // the CALLER passes. Leaving the boxed WynOptional*
+                                // default gave "passing 'OptionInt' to parameter of
+                                // incompatible type 'WynOptional *'".
+                                else if (is_enum_type(_stn) && !is_data_enum_type(_stn))
+                                    param_type = "OptionInt";
                             }
                         }
                         // Register the param as an Option-family var so a match on it
@@ -3711,6 +3719,8 @@ void codegen_stmt(Stmt* stmt) {
                                 char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
                                 extern int is_known_struct(const char*);
                 extern int is_known_type_name(const char*);
+                                extern int is_enum_type(const char*);
+                                extern int is_data_enum_type(const char*);
                                 if (is_known_struct(_stn)) {
                                     // Ensure the Option<Struct> family typedef is emitted.
                                     extern void register_option_struct(const char*);
@@ -3718,6 +3728,11 @@ void codegen_stmt(Stmt* stmt) {
                                     static char _osf[128];
                                     snprintf(_osf, sizeof(_osf), "Option%s", _stn);
                                     c_type = _osf;
+                                } else if (is_enum_type(_stn) && !is_data_enum_type(_stn)) {
+                                    // A PLAIN enum field (`tag: Code?`) is OptionInt —
+                                    // the family Some()/None and the match both use. The
+                                    // boxed WynOptional* declaration disagreed with both.
+                                    c_type = "OptionInt";
                                 } else {
                                     c_type = "WynOptional*";
                                 }

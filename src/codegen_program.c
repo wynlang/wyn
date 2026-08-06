@@ -1272,7 +1272,14 @@ void codegen_program(Program* prog) {
                             else {
                                 char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
                                 extern int is_known_struct(const char*);
+                                extern int is_enum_type(const char*);
+                                extern int is_data_enum_type(const char*);
                                 if (is_known_struct(_stn)) { snprintf(_opbuf, sizeof(_opbuf), "Option%s", _stn); param_type = _opbuf; }
+                                // A PLAIN enum param is OptionInt — must match the
+                                // definition in codegen_stmt or the forward declaration
+                                // emits "conflicting types for '<fn>'".
+                                else if (is_enum_type(_stn) && !is_data_enum_type(_stn))
+                                    param_type = "OptionInt";
                             }
                         }
                     }

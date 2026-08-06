@@ -630,6 +630,18 @@ static EnumStmt* find_enum_definition(Token enum_name) {
     return NULL;
 }
 
+// True when `enum_name` names a DATA-carrying enum (at least one variant has a
+// payload, e.g. `Circle(float)`). The distinction matters wherever an enum is
+// lowered: a PLAIN enum is an `int` in C (so its Option family is `OptionInt`),
+// while a data-carrying enum is a C *struct* and needs the struct treatment.
+static bool enum_name_is_data_enum(Token enum_name) {
+    EnumStmt* e = find_enum_definition(enum_name);
+    if (!e || !e->variant_type_counts) return false;
+    for (int v = 0; v < e->variant_count; v++)
+        if (e->variant_type_counts[v] > 0) return true;
+    return false;
+}
+
 // Find the enum that declares a variant named `variant` (searching the current
 // program and loaded modules), returning its EnumStmt and, via *out_vi, the
 // variant index. Used to resolve a BARE (unqualified) enum constructor call
@@ -848,10 +860,22 @@ static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
                     else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) fam = "OptionFloat";
                     else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) fam = "OptionBool";
                     else {
-                        // Struct?: reuse the registered Option<Struct> family symbol.
-                        char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
-                        static char _famb[128]; snprintf(_famb, sizeof(_famb), "Option%s", _stn);
-                        fam = _famb;
+                        // A PLAIN enum payload's family is OptionInt (an enum is an int
+                        // in C) — there is no `Option<Enum>` family symbol to find, so
+                        // building the name `OptionCode` made the lookup below MISS and
+                        // return NULL, which the caller reads as "struct 'H' has no
+                        // field 'tag'". A data-carrying enum is a C struct, so it keeps
+                        // the by-name path below.
+                        Symbol* _es = find_symbol(global_scope, t);
+                        if (_es && _es->type && _es->type->kind == TYPE_ENUM &&
+                            !enum_name_is_data_enum(t)) {
+                            fam = "OptionInt";
+                        } else {
+                            // Struct?: reuse the registered Option<Struct> family symbol.
+                            char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
+                            static char _famb[128]; snprintf(_famb, sizeof(_famb), "Option%s", _stn);
+                            fam = _famb;
+                        }
                     }
                 }
                 if (fam) {
@@ -4785,6 +4809,16 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 // `Struct?` -> the monomorphic Option<Struct> family (lazily made).
                 Type* opt_type = register_option_struct_family(inner_type);
                 if (opt_type) { expr->expr_type = opt_type; return opt_type; }
+            } else if (inner_type->kind == TYPE_ENUM &&
+                       !enum_name_is_data_enum(inner_type->name)) {
+                // `Enum?` -> OptionInt: a PLAIN enum is an int in C, and OptionInt is
+                // what `Some(Code::X)`/`None` actually produce. Falling through to the
+                // generic TYPE_OPTIONAL below made a `c: Code?` PARAMETER reject its own
+                // argument ("Expected: optional (Option<T>) / Got: struct (struct)").
+                // A data-carrying enum is a C struct, so it keeps the generic fallback.
+                Token oi_name = {TOKEN_IDENT, "OptionInt", 9, 0};
+                Symbol* sym = find_symbol(scope, oi_name);
+                if (sym) { expr->expr_type = sym->type; return sym->type; }
             }
 
             // Fallback: generic optional type

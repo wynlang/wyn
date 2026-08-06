@@ -1478,7 +1478,16 @@ int get_struct_field_option_family(const char* struct_name, const char* field_na
             else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) snprintf(out, outsz, "OptionFloat");
             else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) snprintf(out, outsz, "OptionBool");
             else { char _stn[96]; snprintf(_stn, sizeof(_stn), "%.*s", t.length, t.start);
-                   snprintf(out, outsz, "Option%s", _stn); }
+                   // A PLAIN enum payload's family is OptionInt (an enum is an int in
+                   // C). Naming it `Option<Enum>` emitted `OptionCode_Some(...)`, a
+                   // family that is never defined ("unknown method 'OptionCode.Some'").
+                   // A data-carrying enum is a C struct, so it keeps the by-name form.
+                   extern int is_enum_type(const char*);
+                   extern int is_data_enum_type(const char*);
+                   if (is_enum_type(_stn) && !is_data_enum_type(_stn))
+                       snprintf(out, outsz, "OptionInt");
+                   else
+                       snprintf(out, outsz, "Option%s", _stn); }
             return 1;
         }
         return 0;
