@@ -1047,11 +1047,22 @@ void codegen_program(Program* prog) {
                         else {
                             char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
                             extern int is_known_struct(const char*);
+                            extern int is_enum_type(const char*);
+                            extern int is_data_enum_type(const char*);
                             if (is_known_struct(_stn)) {
                                 static char _osfd[128];
                                 snprintf(_osfd, sizeof(_osfd), "Option%s", _stn);
                                 return_type = _osfd;
-                            } else return_type = "WynOptional*";
+                            }
+                            // `-> Enum?` -> OptionInt, matching the definition in
+                            // codegen_stmt: a PLAIN enum is an int in C. Must agree or
+                            // the forward decl emits "conflicting types for '<fn>'".
+                            // A DATA-carrying enum is a C struct, not an int, so it is
+                            // excluded here and keeps the boxed fallback (it does not
+                            // work in this position either way - tracked separately).
+                            else if (is_enum_type(_stn) && !is_data_enum_type(_stn))
+                                return_type = "OptionInt";
+                            else return_type = "WynOptional*";
                         }
                     } else {
                         return_type = "WynOptional*";

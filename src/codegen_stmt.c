@@ -597,6 +597,17 @@ void codegen_stmt(Stmt* stmt) {
                         char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner->token);
                         static char _osann[128]; snprintf(_osann, sizeof(_osann), "Option%s", _stn);
                         c_type = _osann;
+                    } else if (inner && inner->type == EXPR_IDENT &&
+                               ({ char _etn[96]; token_to_cstr(_etn, sizeof(_etn), inner->token);
+                                  extern int is_enum_type(const char*);
+                                  extern int is_data_enum_type(const char*);
+                                  is_enum_type(_etn) && !is_data_enum_type(_etn); })) {
+                        // `var v: Enum? = ...` -> OptionInt, the family Some()/None
+                        // already produce for a PLAIN enum payload (which is an int in
+                        // C). The boxed WynOptional* fallback disagreed with the
+                        // initializer. A DATA-carrying enum is a C struct, so it is
+                        // excluded and keeps the fallback.
+                        c_type = "OptionInt";
                     } else {
                         c_type = "WynOptional*";
                         needs_arc_management = true;
@@ -2962,11 +2973,25 @@ void codegen_stmt(Stmt* stmt) {
                             char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
                             extern int is_known_struct(const char*);
                 extern int is_known_type_name(const char*);
+                            extern int is_enum_type(const char*);
+                            extern int is_data_enum_type(const char*);
                             if (is_known_struct(_stn)) {
                                 static char _ostrt[128];
                                 snprintf(_ostrt, sizeof(_ostrt), "Option%s", _stn);
                                 return_type = _ostrt;
-                            } else return_type = "WynOptional*";
+                            }
+                            // `-> Enum?` -> OptionInt: a PLAIN enum IS an int in C, and
+                            // that is already what `Some(Code::X)`/`None` lower to.
+                            // Falling through to the boxed WynOptional* made the
+                            // signature disagree with both the body and the callers
+                            // ("returning 'OptionInt' from a function with incompatible
+                            // result type 'WynOptional *'").
+                            // A DATA-carrying enum lowers to a C STRUCT, so OptionInt
+                            // would be wrong for it; it keeps the boxed fallback (that
+                            // position is broken independently - tracked separately).
+                            else if (is_enum_type(_stn) && !is_data_enum_type(_stn))
+                                return_type = "OptionInt";
+                            else return_type = "WynOptional*";
                         }
                     } else {
                         return_type = "WynOptional*";
