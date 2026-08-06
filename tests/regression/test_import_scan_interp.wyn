@@ -1,0 +1,62 @@
+// Feature: the raw-source import scanners skip a string literal INCLUDING its
+// `${...}` interpolation, so import-looking text inside a nested string is not read
+// as a real import.
+//
+// Both scanners in module.c (preload_imports and scan_import_mtimes) skipped a string
+// by running from the opening quote to the next quote of the same kind. For an
+// INTERPOLATED string that is wrong, because the interpolation can contain a string:
+//
+//     println("${id("import zzz")}")
+//
+// The naive skip stops at the quote that OPENS the nested literal, so everything after
+// it is scanned as though it were code. The nested string's `import zzz` was then read
+// as a real import statement and the build died with
+//
+//     Error: Module 'zzz' not found
+//     Compilation failed: an import could not be resolved
+//
+// naming a module that appears nowhere in the program -- so the message actively
+// misdirects. A plain (non-interpolated) string was already handled, which is why this
+// survived: `var s = "import zzz"` works, and only the nested form fails.
+//
+// Found by writing an app that recognises import lines, where import text inside a
+// string is the NORMAL input, not a contrived case.
+import mathx
+
+fn id(s: string) -> string { return s }
+fn tail_token(s: string) -> string {
+    var t = s.trim()
+    var toks = t.split(" ")
+    if toks.len() < 1 { return "" }
+    return toks[toks.len() - 1]
+}
+
+fn main() -> int {
+    // The failing shape: a nested string literal, inside an interpolation, whose
+    // content looks like a selective import. `utils` does not exist as a module.
+    println("${id("import { a, b } from utils")}")
+
+    // The bare form, likewise nested.
+    println("${id("import zzz")}")
+
+    // Import text AFTER a nested string in the same interpolation - this is what
+    // proves the skip RESYNCHRONISES rather than merely swallowing more.
+    println("${id("a")} import qqq")
+
+    // Escaped quotes inside the nested string must not end it early.
+    println("${id("import \"quoted\" nope")}")
+
+    // A real function doing the app's job: pull the module name off an import line.
+    println("${tail_token("import { x } from parser")}")
+
+    // CONTROL: a REAL import still resolves and is still usable. If the fix had made
+    // the scanner skip too much, this module would go unfound.
+    println("${mathx.add(20, 3)}")
+    return 0
+}
+// EXPECT: import { a, b } from utils
+// EXPECT: import zzz
+// EXPECT: a import qqq
+// EXPECT: import "quoted" nope
+// EXPECT: parser
+// EXPECT: 23
