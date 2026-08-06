@@ -64,6 +64,45 @@ static void note_module_mtime(const char* path) {
     }
 }
 
+// Skip one string literal, INCLUDING any `${...}` interpolation that nests quotes.
+//
+// `p` must point at the opening quote; returns the character just past the closing one.
+//
+// Both raw-source import scanners in this file skipped `"..."` by running to the next
+// quote of the same kind. That is wrong for an interpolated string, because the
+// interpolation can contain a string of its own:
+//
+//     println("${id("import zzz")}")
+//
+// The naive skip ends at the quote that OPENS the nested literal, so everything from
+// there on is scanned as if it were code - and `import zzz` inside the nested string was
+// read as a real import statement, failing the build with "Module 'zzz' not found" for a
+// module that appears nowhere in the program. Found by writing an app whose whole job is
+// to recognise import lines, so import text inside a string is its NORMAL input.
+//
+// Tracking `${...}` depth is enough: inside an interpolation a quote opens a nested
+// string, which is skipped by the same rule, recursively.
+static const char* skip_string_literal(const char* p) {
+    char quote = *p;
+    p++;                                  // past the opening quote
+    int interp_depth = 0;
+    while (*p) {
+        if (*p == '\\' && *(p + 1)) { p += 2; continue; }   // escape: skip the pair
+        if (*p == '$' && *(p + 1) == '{') { interp_depth++; p += 2; continue; }
+        if (interp_depth > 0) {
+            if (*p == '}') { interp_depth--; p++; continue; }
+            // A quote inside `${...}` opens a nested literal - recurse, so its own
+            // interpolations and escapes are handled by exactly this logic.
+            if (*p == '"' || *p == '\'') { p = skip_string_literal(p); continue; }
+            p++;
+            continue;
+        }
+        if (*p == quote) { p++; return p; }                 // the real closing quote
+        p++;
+    }
+    return p;                                               // unterminated: at the NUL
+}
+
 // Newest mtime among the modules `source` imports, WITHOUT loading them.
 //
 // The `wyn run` cache decision happens before preload_imports, so it cannot use the
@@ -87,13 +126,8 @@ time_t scan_import_mtimes(const char* source) {
         if (in_line_comment && *p == '\n') { in_line_comment = false; p++; continue; }
         if (in_comment || in_line_comment) { p++; continue; }
         // Strings, for the same reason preload_imports skips them: `test "import x"`
-        // is a test NAME, not an import.
-        if (*p == '"' || *p == '\'') {
-            char q = *p; p++;
-            while (*p && *p != q) { if (*p == '\\' && *(p+1)) p++; p++; }
-            if (*p) p++;
-            continue;
-        }
+        // is a test NAME, not an import. Interpolation-aware - see skip_string_literal.
+        if (*p == '"' || *p == '\'') { p = skip_string_literal(p); continue; }
         if (strncmp(p, "import ", 7) == 0) {
             p += 7;
             while (*p == ' ' || *p == '\t') p++;
@@ -219,16 +253,11 @@ void preload_imports(const char* source) {
         // build. It stops being cosmetic the moment an unresolved import is fatal, and
         // a test NAME describing what it tests is a completely reasonable thing to
         // write. Both quote forms, with backslash escapes honoured.
-        if (*p == '"' || *p == '\'') {
-            char quote = *p;
-            p++;
-            while (*p && *p != quote) {
-                if (*p == '\\' && *(p+1)) p++;   // skip the escaped char, not the quote
-                p++;
-            }
-            if (*p) p++;                          // consume the closing quote
-            continue;
-        }
+        //
+        // The skip is INTERPOLATION-AWARE (see skip_string_literal): running to the next
+        // quote is wrong for `"${id("import zzz")}"`, where it stops at the quote that
+        // opens the nested literal and reads the rest as code.
+        if (*p == '"' || *p == '\'') { p = skip_string_literal(p); continue; }
 
         // Look for "import " keyword
         if (strncmp(p, "import ", 7) == 0) {

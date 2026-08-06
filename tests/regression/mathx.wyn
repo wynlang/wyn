@@ -1,0 +1,5 @@
+// Fixture for test_import_scan_interp.wyn. Its only job is to be a REAL module that
+// must still resolve after the import scanners were taught to skip interpolated
+// strings - if the fix had made them skip too much, this import would go unfound and
+// the control line in that test would fail.
+pub fn add(a: int, b: int) -> int { return a + b }
