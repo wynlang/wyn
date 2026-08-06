@@ -100,8 +100,26 @@ if command -v nm >/dev/null 2>&1 && [ -f "$TMP/libmathlib.$LIBEXT" ]; then
   # anchored compare, is portable and cannot half-match.
   syms=$(nm -g "$TMP/libmathlib.$LIBEXT" 2>/dev/null | awk '$2=="T"{print $3}' || true)
   missing=""
+  # STILL a pipe race, even after the awk rewrite above: `printf | grep -q` lets grep exit
+  # at the first match and close the pipe, so printf can die on EPIPE before finishing and
+  # the pipeline reports failure for a symbol that IS present. Seen on macos-15-intel only
+  # (CI job 92644637676):
+  #     run_python_lib_test.sh: line 104: printf: write error: Broken pipe
+  #     FAIL  NOT EXPORTED: describe - static inline hid them again
+  # while the very NEXT case in the same run - python3 importing the wrapper and calling
+  # describe - passed, which is what proves the export was fine and the check was broken.
+  # Library mode links the whole runtime, so the table is large enough to make this likely.
+  #
+  # A case glob does the same anchored match with no pipe and no subprocess. Verified by
+  # mutation that it still catches a genuinely absent symbol.
   for f in add factorial describe; do
-    if ! printf '%s\n' "$syms" | grep -qxE "_?${f}"; then missing="$missing $f"; fi
+    case "
+$syms" in
+      *"
+$f"*|*"
+_$f"*) ;;
+      *) missing="$missing $f" ;;
+    esac
   done
   if [ -z "$missing" ]; then
     ok "add, factorial and describe are all exported (T) from the library"
