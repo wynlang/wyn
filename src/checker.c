@@ -1216,6 +1216,49 @@ static const char* result_err_type_name(Type* err_type) {
     }
 }
 
+// The payload type bound by a `Result` match arm. `fam_type` is the family's fake
+// struct type (named "Result<OkTag>" for a string err, "Result<OkTag>_<ErrTag>"
+// otherwise); `want_ok` selects the Ok arm's payload over the Err arm's.
+//
+// Without this, a Result arm binding defaulted to `int`: the checker then accepted
+// nonsense like `e.nope` on a struct error, and codegen could not dispatch
+// `p.msg.len()` or `c.method()` — it emitted an EMPTY receiver, surfacing as
+// "error: expected expression" or "Unknown method 'len' (no type info)".
+// Returns NULL when `fam_type` is not a Result family or the payload is unresolvable,
+// so callers keep their existing default.
+static Type* result_arm_payload_type(Type* fam_type, bool want_ok) {
+    if (!fam_type || fam_type->kind != TYPE_STRUCT) return NULL;
+    Token fam = fam_type->struct_type.name;
+    if (fam.length <= 6 || memcmp(fam.start, "Result", 6) != 0) return NULL;
+    char buf[192];
+    int len = fam.length - 6;
+    if (len <= 0 || len >= (int)sizeof(buf)) return NULL;
+    memcpy(buf, fam.start + 6, len); buf[len] = '\0';
+    // Split "<OkTag>_<ErrTag>" at the FIRST '_'. No '_' means the bare,
+    // backward-compatible family name, whose error payload is a `string`.
+    char* us = strchr(buf, '_');
+    const char* ok_tag = buf;
+    const char* err_tag = NULL;
+    if (us) { *us = '\0'; err_tag = us + 1; }
+    const char* want = want_ok ? ok_tag : err_tag;
+    if (!want_ok && !err_tag) return builtin_string;
+    if (!want || !*want) return NULL;
+    if (strcmp(want, "String") == 0) return builtin_string;
+    if (strcmp(want, "Int") == 0)    return builtin_int;
+    if (strcmp(want, "Float") == 0)  return builtin_float;
+    if (strcmp(want, "Bool") == 0)   return builtin_bool;
+    if (strcmp(want, "string") == 0) return builtin_string;
+    if (strcmp(want, "int") == 0)    return builtin_int;
+    if (strcmp(want, "float") == 0)  return builtin_float;
+    if (strcmp(want, "bool") == 0)   return builtin_bool;
+    // A user struct or enum payload.
+    Token pn = {TOKEN_IDENT, want, (int)strlen(want), 0};
+    Symbol* ps = find_symbol(global_scope, pn);
+    if (ps && ps->type && (ps->type->kind == TYPE_STRUCT || ps->type->kind == TYPE_ENUM))
+        return ps->type;
+    return NULL;
+}
+
 // Lazily register a monomorphic Result<Ok, Err> family for a user-struct ok-payload
 // (e.g. `Point`): the fake struct type symbol + the 7 member functions
 // (_Ok/_Err/_is_ok/_is_err/_unwrap/_unwrap_err/_unwrap_or), mirroring the builtin
@@ -6319,6 +6362,20 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                                 Symbol* ps = find_symbol(global_scope, payload);
                                 if (ps && ps->type && ps->type->kind == TYPE_STRUCT) bound_type = ps->type;
                             }
+                        }
+                        // Result family Ok(v)/Err(e): bind the arm variable to the real
+                        // payload type (see result_arm_payload_type). Previously only
+                        // the Option families were handled here, so every Result arm
+                        // binding was typed `int`.
+                        {
+                            // Select the arm by VARIANT NAME, not by `is_some`: the
+                            // parser sets is_some=true for any data-carrying variant
+                            // pattern, `Err(e)` included, so is_some cannot tell the
+                            // two Result arms apart. Codegen keys off the name too.
+                            Token _vn = match_case->pattern->option.variant_name;
+                            bool _is_err = (_vn.length == 3 && memcmp(_vn.start, "Err", 3) == 0);
+                            Type* _rp = result_arm_payload_type(match_value_type, !_is_err);
+                            if (_rp) bound_type = _rp;
                         }
                         if (match_value_type && match_value_type->kind == TYPE_ENUM) {
                             Token variant_name = match_case->pattern->option.variant_name;
