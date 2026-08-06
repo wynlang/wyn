@@ -1,0 +1,104 @@
+// Feature: reassigning a local that ALIASES a parameter does not release the caller's
+// string.
+//
+// `var base = path` binds a borrowed reference: the callee does not own the parameter's
+// value. The string-assignment path emitted an unconditional "release the old value"
+// before storing the new one, so the first reassignment decremented a refcount this
+// function never incremented:
+//
+//     fn shorten(path: string) -> string {
+//         var base = path                            // borrows the parameter
+//         var parts = path.split("/")
+//         if parts.len() > 0 { base = parts[...] }    // released the CALLER's string
+//         return base
+//     }
+//
+// The damage lands in the caller, not here, which is what made this so hard to see: the
+// function returns the right answer and something ELSE goes wrong later. In the program
+// that found it, a string accumulator built in a sibling loop came back empty - no crash,
+// no diagnostic, exit status 0.
+//
+// The borrow was ALREADY tracked (the same registry drives retain-on-return); the
+// assignment path simply never consulted it.
+//
+// A borrow ENDS at the first assignment: after that the var holds a retained value, so
+// later assignments must release normally or the value leaks. Both halves are asserted
+// below - the second reassignment is what would leak if the borrow were treated as
+// permanent.
+//
+// Found by writing cli-tools/depgraph, where `var base = path` then trimming it down is
+// the obvious way to write "module name from a file path".
+
+fn shorten(path: string) -> string {
+    var base = path
+    var parts = path.split("/")
+    if parts.len() > 0 { base = parts[parts.len() - 1] }
+    if base.ends_with(".wyn") { base = base.substring(0, base.len() - 4) }
+    return base
+}
+
+// Two reassignments over one borrow: the FIRST must skip the release (borrowed), the
+// SECOND must perform it (the var now owns what the first assignment gave it).
+fn twice(p: string) -> string {
+    var b = p
+    b = "${b}-one"
+    b = "${b}-two"
+    return b
+}
+
+// The borrow is only a borrow while it still holds the parameter. Assigning from another
+// borrowed local must behave the same way.
+fn chained(p: string) -> string {
+    var a = p
+    var b = a
+    b = "z"
+    return "${a}/${b}"
+}
+
+// Pull the last token off a line - a second heap-allocating split, so the reused
+// allocations that expose the over-release actually occur.
+fn last_token(line: string) -> string {
+    var t = line.trim()
+    if not t.starts_with("i ") { return "" }
+    var toks = t.split(" ")
+    return toks[toks.len() - 1].trim()
+}
+
+fn main() -> int {
+    println("${shorten("a/b/parser.wyn")}")
+    println("${twice("p")}")
+    println("${chained("q")}")
+
+    // THE SHAPE THAT CATCHES IT. Literal strings are not enough: the over-release is a
+    // refcount decrement, and it only becomes visible when the freed allocation is
+    // REUSED. That needs real heap churn on both loop levels - File::read + two splits
+    // per file - so this test writes its own input rather than using literals.
+    //
+    // Verified by mutation: with the borrow check disabled the accumulator below comes
+    // back EMPTY, while a literal-string version of the same program still passes. An
+    // earlier draft of this test used literals and was therefore vacuous.
+    File::write("bpr_a.txt", "// c\ni lexer\ni util\n")
+    File::write("bpr_b.txt", "// c\ni core\n")
+
+    for f in File::walk_dir(".").split("\n") {
+        if f == "" { continue }
+        if not f.ends_with(".txt") { continue }
+        var mod = shorten(f)                  // borrows its parameter, then reassigns
+        var edges = ""
+        for line in File::read(f).split("\n") {
+            var imp = last_token(line)
+            if imp == "" { continue }
+            if edges == "" { edges = imp } else { edges = "${edges},${imp}" }
+        }
+        println("${mod}=[${edges}]")
+    }
+
+    File::delete("bpr_a.txt")
+    File::delete("bpr_b.txt")
+    return 0
+}
+// EXPECT: parser
+// EXPECT: p-one-two
+// EXPECT: q/z
+// EXPECT: bpr_a.txt=[lexer,util]
+// EXPECT: bpr_b.txt=[core]
