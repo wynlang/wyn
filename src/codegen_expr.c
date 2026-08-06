@@ -94,8 +94,58 @@ static const char* hashmap_insert_fn_for(Expr* value_expr) {
 // after this statement, otherwise RETAIN it (the array now co-owns a reference).
 // Fresh temporaries (literals, concat results) are not tracked vars, so nothing
 // is emitted for them. Call this AFTER the push expression has been emitted.
+// Is `value` a BORROWED string - a pointer the expression does not own?
+//
+// `array_get_str` (emitted for `other[i]`) hands back a pointer INTO the source array
+// without retaining it. The two sinks that TAKE OWNERSHIP of a string - `array_push_str`
+// and indexed assignment `xs[i] = v` - store that pointer as if it were theirs, so one
+// allocation ends up with two owners and the source's `array_free` pulls it out from
+// under the destination:
+//
+//     for pair in ["a=x", "b=y"] {
+//         var parts = pair.split("=")
+//         names.push(parts[0])        // borrowed pointer stored as owned
+//     }                               // array_free(&parts) releases it
+//
+// `names` then read as garbage ("[", "") instead of "a"/"b". A SILENTLY WRONG answer
+// with exit 0, which is why it survived; ASan names it a heap-use-after-free freed by
+// array_free. Found by writing cli-tools/depgraph, where accumulating `split()` results
+// into an array is the ordinary shape.
+//
+// The retain is emitted at the two SINKS rather than at `array_get_str` itself: the read
+// appears at 16 codegen sites, most of them transient (printing, comparing) where an
+// extra reference would leak. Only a sink that keeps the pointer needs to own one.
+static bool wyn_string_expr_is_borrowed(Expr* value) {
+    if (!value) return false;
+    // Direct: `xs.push(other[i])`.
+    if (value->type == EXPR_INDEX) {
+        Type* bt = value->index.array ? value->index.array->expr_type : NULL;
+        return bt && bt->kind == TYPE_ARRAY && bt->array_type.element_type &&
+               bt->array_type.element_type->kind == TYPE_STRING;
+    }
+    // Via a local that HOLDS a borrowed element: `var v = other[i]` then
+    // `xs.push(v)`. Registered at the var-decl site in codegen_stmt.c; without this
+    // the one-line-longer spelling of the same program was still a use-after-free,
+    // which is the trap in fixing only the direct form.
+    if (value->type == EXPR_IDENT) {
+        char _n[256]; token_to_cstr(_n, sizeof(_n), value->token);
+        extern int is_borrowed_string_local(const char*);
+        return is_borrowed_string_local(_n) != 0;
+    }
+    return false;
+}
+
 static void codegen_string_push_transfer(Expr* value) {
-    if (!value || value->type != EXPR_IDENT) return;
+    if (!value) return;
+    if (wyn_string_expr_is_borrowed(value)) {
+        // Retain so the destination owns a reference of its own, balancing the
+        // source array's eventual array_free.
+        emit("; wyn_rc_retain((void*)(intptr_t)");
+        codegen_expr(value);
+        emit(")");
+        return;
+    }
+    if (value->type != EXPR_IDENT) return;
     char _pvn[256]; token_to_cstr(_pvn, sizeof(_pvn), value->token);
     extern int is_string_var(const char*);
     if (!is_string_var(_pvn)) return;
@@ -6336,6 +6386,18 @@ void codegen_expr(Expr* expr) {
                     
                     if (is_string) {
                         emit("__arr_ptr->data[__idx].type = WYN_TYPE_STRING; __arr_ptr->data[__idx].data.string_val = ");
+                        // `xs[i] = other[j]` stores a BORROWED pointer as owned - the
+                        // same ownership mismatch as array_push_str, and the other half
+                        // of the depgraph bug (`names[0] = parts[0]` in the count==0
+                        // branch). Retain so this array owns a reference of its own.
+                        // See wyn_string_expr_is_borrowed.
+                        if (wyn_string_expr_is_borrowed(expr->index_assign.value)) {
+                            emit("(const char*)({ const char* __bs = ");
+                            codegen_expr(expr->index_assign.value);
+                            emit("; wyn_rc_retain((void*)(intptr_t)__bs); __bs; })");
+                            emit("; } }");
+                            break;
+                        }
                     } else if (is_struct && struct_name.start && struct_name.length > 0) {
                         emit("__arr_ptr->data[__idx].type = WYN_TYPE_STRUCT; { ");
                         emit("%.*s __temp_struct = ", struct_name.length, struct_name.start);

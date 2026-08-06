@@ -742,6 +742,18 @@ void codegen_stmt(Stmt* stmt) {
                         register_struct_var(_dvn, _sa_buf);
                     } else if (_elt && _elt->kind == TYPE_STRING) {
                         c_type = "const char*"; is_already_const = true;
+                        // `var v = xs[i]` binds a BORROWED pointer: array_get_str reads
+                        // into the array without retaining. If the source array is then
+                        // freed (a `split()` result at scope exit is the common case)
+                        // while `v` - or anything `v` was stored into - is still live,
+                        // that is a use-after-free. Mark the var so the sinks that TAKE
+                        // ownership of a string retain it. See
+                        // wyn_string_expr_is_borrowed in codegen_expr.c.
+                        {
+                            char _bvn[256]; token_to_cstr(_bvn, sizeof(_bvn), stmt->var.name);
+                            extern void register_borrowed_string_local(const char*);
+                            register_borrowed_string_local(_bvn);
+                        }
                     } else if (_elt && _elt->kind == TYPE_FLOAT) {
                         c_type = "double";
                     } else if (_elt && _elt->kind == TYPE_BOOL) {
