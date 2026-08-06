@@ -960,12 +960,23 @@ void codegen_program(Program* prog) {
                             if (fn->return_type->call.arg_count > 0 &&
                                 fn->return_type->call.args[0]->type == EXPR_IDENT) {
                                 Token inner = fn->return_type->call.args[0]->token;
-                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
-                                    return_type = "ResultString";
-                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)
-                                    return_type = "ResultFloat";
-                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
-                                    return_type = "ResultBool";
+                                extern const char* result_family_err_suffix(Expr*);
+                                // This FORWARD DECLARATION must name the same family as
+                                // the definition (codegen_stmt) — a primitive ok payload
+                                // uses the builtin only for a string E, else its own
+                                // `Result<Tag>_<ErrTag>` family. Disagreeing here emits
+                                // "conflicting types for '<fn>'".
+                                const char* _rsuf = result_family_err_suffix(fn->return_type);
+                                const char* _rtag = NULL;
+                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)     _rtag = "String";
+                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0) _rtag = "Float";
+                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)  _rtag = "Bool";
+                                else if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)    _rtag = "Int";
+                                if (_rtag) {
+                                    snprintf(return_type_buf, sizeof(return_type_buf), "Result%s%s",
+                                             _rtag, _rsuf);
+                                    return_type = return_type_buf;
+                                }
                                 else {
                                     // `Result<Struct, E>` -> the monomorphic
                                     // Result<Struct,E> family (ResultPoint,

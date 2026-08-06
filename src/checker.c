@@ -1202,6 +1202,16 @@ static const char* result_err_type_name(Type* err_type) {
             static char b[96]; token_to_cstr(b, sizeof(b), err_type->struct_type.name);
             return b;
         }
+        case TYPE_ENUM: {
+            // A plain enum lowers to a C typedef of its own name, so it is a valid
+            // err payload exactly like a struct. Returning NULL here (the old
+            // behavior) made the checker fall back to the `string` family while
+            // codegen still named `Result<Ok>_<Enum>` — the two disagreed and the
+            // build failed with "unknown method 'ResultP.Code_Err'".
+            if (err_type->name.length == 0) return NULL;
+            static char b[96]; token_to_cstr(b, sizeof(b), err_type->name);
+            return b;
+        }
         default: return NULL;
     }
 }
@@ -1221,9 +1231,32 @@ static const char* result_err_type_name(Type* err_type) {
 // concrete C family is emitted after the struct typedefs.
 // Returns the Result Type (a TYPE_STRUCT named after the family).
 static Type* register_result_struct_family_e(Type* struct_type, Type* err_type) {
-    if (!struct_type || struct_type->kind != TYPE_STRUCT || struct_type->struct_type.name.length == 0)
-        return NULL;
-    char sname[96]; token_to_cstr(sname, sizeof(sname), struct_type->struct_type.name);
+    if (!struct_type) return NULL;
+    // The ok payload is either a user struct (#181/#182) or a primitive. A primitive
+    // ok is spelled with the builtin's own tag ("int" -> "Int"), so a `string` error
+    // resolves to the existing builtin family (ResultInt/...) via the find_symbol
+    // check below, while a NON-string error gets its own `_<ErrTag>` family instead
+    // of collapsing onto the builtin (whose err_value is hardcoded `const char*`).
+    char sname[96];
+    const char* ok_tag = NULL;
+    switch (struct_type->kind) {
+        case TYPE_INT:    ok_tag = "Int";    break;
+        case TYPE_STRING: ok_tag = "String"; break;
+        case TYPE_FLOAT:  ok_tag = "Float";  break;
+        case TYPE_BOOL:   ok_tag = "Bool";   break;
+        case TYPE_STRUCT:
+            if (struct_type->struct_type.name.length == 0) return NULL;
+            token_to_cstr(sname, sizeof(sname), struct_type->struct_type.name);
+            ok_tag = sname;
+            break;
+        default: return NULL;
+    }
+    // Wyn-level ok type name handed to codegen (it derives the C type + tag itself).
+    const char* ok_wyn = (struct_type->kind == TYPE_INT)    ? "int"
+                       : (struct_type->kind == TYPE_STRING) ? "string"
+                       : (struct_type->kind == TYPE_FLOAT)  ? "float"
+                       : (struct_type->kind == TYPE_BOOL)   ? "bool"
+                       : sname;
     const char* ename = result_err_type_name(err_type);
     if (!ename) ename = "string";              // unusable err falls back to string
     Type* eff_err = err_type ? err_type : builtin_string;
@@ -1232,8 +1265,8 @@ static Type* register_result_struct_family_e(Type* struct_type, Type* err_type) 
     // Family name: bare "Result<Ok>" for a string error (backward compatible),
     // "Result<Ok>_<ErrTag>" otherwise.
     char fambuf[192];
-    if (strcmp(ename, "string") == 0) snprintf(fambuf, sizeof(fambuf), "Result%s", sname);
-    else                              snprintf(fambuf, sizeof(fambuf), "Result%s_%s", sname, ename);
+    if (strcmp(ename, "string") == 0) snprintf(fambuf, sizeof(fambuf), "Result%s", ok_tag);
+    else                              snprintf(fambuf, sizeof(fambuf), "Result%s_%s", ok_tag, ename);
     char* fam = strdup(fambuf);
     Token fam_tok = {TOKEN_IDENT, fam, (int)strlen(fam), 0};
 
@@ -1267,7 +1300,7 @@ static Type* register_result_struct_family_e(Type* struct_type, Type* err_type) 
     #undef REG_RES_FN
 
     extern const char* register_result_family_for_types(const char*, const char*);
-    register_result_family_for_types(sname, ename);
+    register_result_family_for_types(ok_wyn, ename);
     return res_type;
 }
 // Backward-compatible shim: string-error family.
@@ -7855,35 +7888,53 @@ void check_program(Program* prog) {
                             if (fn->return_type->call.arg_count > 0 &&
                                 fn->return_type->call.args[0]->type == EXPR_IDENT) {
                                 Token inner = fn->return_type->call.args[0]->token;
-                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
+                                // Resolve E once, up front: it decides whether a PRIMITIVE
+                                // ok payload may use the builtin family at all. A primitive
+                                // ok with a non-string E must get its own monomorphic family
+                                // — the builtin's err_value is hardcoded `const char*`, so
+                                // reusing it silently discards E (uncompilable C for a struct
+                                // E, a segfault for a scalar E).
+                                Type* err_t = NULL;
+                                if (fn->return_type->call.arg_count > 1 &&
+                                    fn->return_type->call.args[1]->type == EXPR_IDENT) {
+                                    Token en = fn->return_type->call.args[1]->token;
+                                    if (en.length == 6 && memcmp(en.start, "string", 6) == 0) err_t = builtin_string;
+                                    else if (en.length == 3 && memcmp(en.start, "int", 3) == 0) err_t = builtin_int;
+                                    else if (en.length == 5 && memcmp(en.start, "float", 5) == 0) err_t = builtin_float;
+                                    else if (en.length == 4 && memcmp(en.start, "bool", 4) == 0) err_t = builtin_bool;
+                                    else {
+                                        Symbol* es = find_symbol(global_scope, en);
+                                        if (es && es->type) err_t = es->type;
+                                    }
+                                }
+                                int err_is_str = (!err_t || err_t->kind == TYPE_STRING);
+                                Type* prim_ok = NULL;
+                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0) {
                                     concrete = (Token){TOKEN_IDENT, "ResultString", 12, 0};
-                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)
+                                    prim_ok = builtin_string;
+                                } else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0) {
                                     concrete = (Token){TOKEN_IDENT, "ResultFloat", 11, 0};
-                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
+                                    prim_ok = builtin_float;
+                                } else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0) {
                                     concrete = (Token){TOKEN_IDENT, "ResultBool", 10, 0};
-                                else if (inner.length != 3 || memcmp(inner.start, "int", 3) != 0) {
+                                    prim_ok = builtin_bool;
+                                } else if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0) {
+                                    prim_ok = builtin_int;   // `concrete` already ResultInt
+                                }
+                                if (prim_ok) {
+                                    // Primitive ok: builtin family for a string E (unchanged),
+                                    // own `Result<Tag>_<ErrTag>` family otherwise.
+                                    if (!err_is_str)
+                                        struct_res = register_result_struct_family_e(prim_ok, err_t);
+                                } else {
                                     // `Result<Struct, E>` - resolve the user struct and
                                     // make its monomorphic Result<Struct, E> family the
                                     // signature type (mirrors the `-> Struct?` path). The
                                     // error type E is resolved too (string/scalar/struct)
                                     // so the family carries the real err C type.
                                     Symbol* st = find_symbol(global_scope, inner);
-                                    if (st && st->type && st->type->kind == TYPE_STRUCT) {
-                                        Type* err_t = NULL;
-                                        if (fn->return_type->call.arg_count > 1 &&
-                                            fn->return_type->call.args[1]->type == EXPR_IDENT) {
-                                            Token en = fn->return_type->call.args[1]->token;
-                                            if (en.length == 6 && memcmp(en.start, "string", 6) == 0) err_t = builtin_string;
-                                            else if (en.length == 3 && memcmp(en.start, "int", 3) == 0) err_t = builtin_int;
-                                            else if (en.length == 5 && memcmp(en.start, "float", 5) == 0) err_t = builtin_float;
-                                            else if (en.length == 4 && memcmp(en.start, "bool", 4) == 0) err_t = builtin_bool;
-                                            else {
-                                                Symbol* es = find_symbol(global_scope, en);
-                                                if (es && es->type) err_t = es->type;
-                                            }
-                                        }
+                                    if (st && st->type && st->type->kind == TYPE_STRUCT)
                                         struct_res = register_result_struct_family_e(st->type, err_t);
-                                    }
                                 }
                             }
                             if (struct_res) {

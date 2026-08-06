@@ -2361,16 +2361,48 @@ const char* result_family_err_suffix(Expr* return_type) {
     return buf;
 }
 
-// Given ok (a known struct) + err Wyn type names from a `Result<Ok, Err>`
-// annotation, compute the monomorphic family name, register it (with concrete
-// ok/err C types), and return the family name in a static buffer. NULL only when
-// inputs are unusable.
+// Map an ok type-name token (from a `Result<Ok, Err>` annotation) to its C type
+// and its family-name tag. `ok_name` is the Wyn type name ("int"/"string"/"float"/
+// "bool"/<Struct>). A primitive's tag is capitalized so the family name matches the
+// builtin spelling ("int" -> tag "Int", C type `long long`); a struct is its own
+// tag AND its own C type. Returns 1 when the ok payload is a primitive, else 0.
+int result_ok_c_type(const char* ok_name, char* cty_out, size_t cty_sz,
+                     char* tag_out, size_t tag_sz) {
+    if (strcmp(ok_name, "int") == 0) {
+        snprintf(cty_out, cty_sz, "long long"); snprintf(tag_out, tag_sz, "Int");    return 1;
+    }
+    if (strcmp(ok_name, "string") == 0) {
+        snprintf(cty_out, cty_sz, "const char*"); snprintf(tag_out, tag_sz, "String"); return 1;
+    }
+    if (strcmp(ok_name, "float") == 0) {
+        snprintf(cty_out, cty_sz, "double"); snprintf(tag_out, tag_sz, "Float");     return 1;
+    }
+    if (strcmp(ok_name, "bool") == 0) {
+        snprintf(cty_out, cty_sz, "bool"); snprintf(tag_out, tag_sz, "Bool");        return 1;
+    }
+    snprintf(cty_out, cty_sz, "%s", ok_name); snprintf(tag_out, tag_sz, "%s", ok_name);
+    return 0;
+}
+
+// Given ok + err Wyn type names from a `Result<Ok, Err>` annotation, compute the
+// monomorphic family name, register it (with concrete ok/err C types), and return
+// the family name in a static buffer.
+//
+// The ok payload may be a struct (the #181/#182 case) OR a primitive: a primitive
+// ok used to collapse unconditionally to the builtin ResultInt/ResultString/...
+// family, whose `err_value` is hardcoded `const char*`, which silently DISCARDED a
+// non-string E (`Result<int,Fail>` emitted uncompilable C; `Result<int,int>` stored
+// a scalar in a `const char*` and segfaulted). Only a primitive ok paired with a
+// `string` err is a genuine builtin - that one keeps the runtime-header family and
+// is deliberately NOT registered, so it is never re-emitted.
 const char* register_result_family_for_types(const char* ok_name, const char* err_name) {
     static char fam[192];
-    char err_cty[96]; char suffix[96];
+    char ok_cty[96]; char ok_tag[96]; char err_cty[96]; char suffix[96];
+    int ok_is_prim = result_ok_c_type(ok_name, ok_cty, sizeof(ok_cty), ok_tag, sizeof(ok_tag));
     int err_is_str = result_err_c_type(err_name, err_cty, sizeof(err_cty), suffix, sizeof(suffix));
-    snprintf(fam, sizeof(fam), "Result%s%s", ok_name, suffix);
-    register_result_family(fam, ok_name, err_cty, err_is_str);
+    snprintf(fam, sizeof(fam), "Result%s%s", ok_tag, suffix);
+    if (!(ok_is_prim && err_is_str))
+        register_result_family(fam, ok_cty, err_cty, err_is_str);
     return fam;
 }
 

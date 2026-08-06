@@ -2887,12 +2887,22 @@ void codegen_stmt(Stmt* stmt) {
                             if (stmt->fn.return_type->call.arg_count > 0 &&
                                 stmt->fn.return_type->call.args[0]->type == EXPR_IDENT) {
                                 Token inner = stmt->fn.return_type->call.args[0]->token;
-                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
-                                    return_type = "ResultString";
-                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)
-                                    return_type = "ResultFloat";
-                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
-                                    return_type = "ResultBool";
+                                extern const char* result_family_err_suffix(Expr*);
+                                // The emitted C signature must name the SAME family the
+                                // body's Ok()/Err() lower to (see current_fn_return_kind
+                                // below): for a primitive ok payload that is the builtin
+                                // only when E is a string, else `Result<Tag>_<ErrTag>`.
+                                const char* _rsuf = result_family_err_suffix(stmt->fn.return_type);
+                                const char* _rtag = NULL;
+                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)     _rtag = "String";
+                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0) _rtag = "Float";
+                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)  _rtag = "Bool";
+                                else if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)   _rtag = "Int";
+                                if (_rtag) {
+                                    snprintf(return_type_buf, sizeof(return_type_buf), "Result%s%s",
+                                             _rtag, _rsuf);
+                                    return_type = return_type_buf;
+                                }
                                 else {
                                     // `Result<Struct, E>` -> monomorphic Result<Struct,E>.
                                     char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner);
@@ -3256,12 +3266,23 @@ void codegen_stmt(Stmt* stmt) {
                     if (stmt->fn.return_type->call.arg_count > 0 &&
                         stmt->fn.return_type->call.args[0]->type == EXPR_IDENT) {
                         Token inner = stmt->fn.return_type->call.args[0]->token;
-                        if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
-                            current_fn_return_kind = "ResultString";
-                        else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)
-                            current_fn_return_kind = "ResultFloat";
-                        else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
-                            current_fn_return_kind = "ResultBool";
+                        extern const char* result_family_err_suffix(Expr*);
+                        // A PRIMITIVE ok payload keeps the builtin family only when E is
+                        // a string; a non-string E names its own monomorphic family
+                        // (`ResultInt_Fail`, `ResultString_int`, ...) so Ok()/Err() in the
+                        // body lower to that family's members instead of the builtin's,
+                        // whose err_value is hardcoded `const char*` and would drop E.
+                        const char* _esuf = result_family_err_suffix(stmt->fn.return_type);
+                        const char* _ptag = NULL;
+                        if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)      _ptag = "String";
+                        else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)  _ptag = "Float";
+                        else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)   _ptag = "Bool";
+                        else if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)    _ptag = "Int";
+                        if (_ptag) {
+                            static char _pfk_buf[192];
+                            snprintf(_pfk_buf, sizeof(_pfk_buf), "Result%s%s", _ptag, _esuf);
+                            current_fn_return_kind = _pfk_buf;
+                        }
                         else {
                             // `Result<Struct, E>` -> the monomorphic Result<Struct,E>
                             // family, so Ok(Struct{...})/Err(...) in the body lower to
