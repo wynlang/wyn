@@ -1,0 +1,125 @@
+// Feature: a lambda is registered for emission wherever it appears, not only in
+// the ten expression kinds `scan_expr_for_lambdas` happened to list.
+//
+// The scanner assigns each lambda an id and records it for top-level emission.
+// Any expression kind it does not descend into hides the lambda: no id, no body
+// emitted -- while the surrounding expression still emits a CALL to it. The user
+// saw only:
+//
+//     Internal codegen error: lambda at line 0 was never registered,
+//     so no body will be emitted for it.
+//
+// Three separate arms in this file (EXPR_STRUCT_INIT, EXPR_STRING_INTERP,
+// EXPR_UNARY) were each added as an individual fix, the last one noting it
+// "proves it is a family rather than three accidents". It was still a
+// whitelist of ten kinds out of ~45. The sibling walker in the same file,
+// veto_scan_expr, already covered thirty -- so the shape of the fix was sitting
+// next to the bug.
+//
+// This was filed as "a lambda nested in a print() call argument is never
+// scanned". That framing was wrong twice over: `print` is irrelevant (hoisting
+// to `var y = ...` ICEs identically), and it is not one shape but every
+// unhandled container. Each case below is a DISTINCT expression kind and ICE'd
+// independently before the fix.
+fn apply(f: fn(int) -> int) -> int { return f(2) }
+
+struct Box { v: int }
+fn boxed(f: fn(int) -> int) -> Box { return Box { v: f(10) } }
+
+fn main() -> int {
+    xs = [1, 2, 3]
+
+    // EXPR_INDEX -- indexing the RESULT of a call taking a lambda. The filed
+    // case. Hoisting it to a var ICE'd too, so this is not about print().
+    println("${xs.map((n) => n + 100)[0]}")
+
+    // NOT TESTED HERE: the doubly-indexed form `grid.map((r) => r)[1][0]`. It now
+    // compiles (the lambda registers), then SEGFAULTS at runtime -- but that is a
+    // separate, PRE-EXISTING defect, not this one: it reproduces identically on
+    // dev with no lambda anywhere (`grid.map(named_fn)[1][0]`) and with the map
+    // result hoisted to a variable first. Verified against an unmodified compiler.
+    // Asserting it here would make this test fail for an unrelated reason.
+
+    // EXPR_FIELD_ACCESS -- reading a field off a struct built by a lambda-taking fn.
+    println("${boxed((n) => n * 3).v}")
+
+    // EXPR_TERNARY -- a lambda in a branch of `? :`.
+    var flag = true
+    var t = flag ? apply((n) => n + 7) : 0
+    println("${t}")
+
+    // EXPR_IF_EXPR -- the block-form conditional expression.
+    var e = if flag { apply((n) => n + 8) } else { 0 }
+    println("${e}")
+
+    // EXPR_RANGE -- a range bound computed by a lambda-taking call.
+    var total = 0
+    for i in 0..apply((n) => n + 1) { total = total + i }
+    println("${total}")
+
+    // EXPR_TUPLE -- a lambda-taking call as a tuple element.
+    var tup = (apply((n) => n + 20), 5)
+    println("${tup.0}")
+
+    // EXPR_LIST_COMP -- the comprehension body.
+    var comp = [apply((n) => n + 30) for i in 0..2]
+    println("${comp[0]}")
+
+    // EXPR_HASHMAP_LITERAL -- a `{"k": v}` value. A distinct kind from EXPR_MAP
+    // (the `map { }` form), and NOT covered by veto_scan_expr either, so the
+    // thirty-kind sibling walker was not a complete reference on its own.
+    var hm = {"a": apply((n) => n + 40)}
+    println("${hm["a"]}")
+
+    // The assignment and access forms. Each ICE'd on dev before this fix -- checked
+    // individually against an unmodified compiler, not assumed from the diff.
+    var k = 1
+    var mt = match k { 1 => apply((n) => n + 50), _ => 0 }  // EXPR_MATCH arm
+    println("${mt}")
+
+    var z = 0
+    z = apply((n) => n + 60)                                 // EXPR_ASSIGN
+    println("${z}")
+
+    slots = [0, 0]
+    slots[0] = apply((n) => n + 70)                          // EXPR_INDEX_ASSIGN
+    println("${slots[0]}")
+
+    var fb = Box { v: 0 }
+    fb.v = apply((n) => n + 80)                              // EXPR_FIELD_ASSIGN
+    println("${fb.v}")
+
+    var ti = (apply((n) => n + 90), 1)                       // EXPR_TUPLE_INDEX
+    println("${ti.0}")
+
+    // CONTROL: the kinds that already worked must keep working, in one function
+    // with the new ones so a shared id-counter regression shows up. The id
+    // counter advancing without emission is what made the original failures
+    // surface on a DIFFERENT line than their cause.
+    println("${xs.map((n) => n + 1)}")               // EXPR_METHOD_CALL
+    println("${apply((n) => n + 2)}")                 // EXPR_CALL
+    var arr = [apply((n) => n + 3)]                   // EXPR_ARRAY
+    println("${arr[0]}")
+    var bx = Box { v: apply((n) => n + 4) }           // EXPR_STRUCT_INIT
+    println("${bx.v}")
+    if not xs.all((n) => n > 100) { println("unary") } // EXPR_UNARY
+    return 0
+}
+// EXPECT: 101
+// EXPECT: 30
+// EXPECT: 9
+// EXPECT: 10
+// EXPECT: 3
+// EXPECT: 22
+// EXPECT: 32
+// EXPECT: 42
+// EXPECT: 52
+// EXPECT: 62
+// EXPECT: 72
+// EXPECT: 82
+// EXPECT: 92
+// EXPECT: [2, 3, 4]
+// EXPECT: 4
+// EXPECT: 5
+// EXPECT: 6
+// EXPECT: unary
