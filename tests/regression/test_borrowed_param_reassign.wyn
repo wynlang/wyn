@@ -77,10 +77,16 @@ fn main() -> int {
     // Verified by mutation: with the borrow check disabled the accumulator below comes
     // back EMPTY, while a literal-string version of the same program still passes. An
     // earlier draft of this test used literals and was therefore vacuous.
-    File::write("bpr_a.txt", "// c\ni lexer\ni util\n")
-    File::write("bpr_b.txt", "// c\ni core\n")
+    //
+    // Reads from its OWN directory. An earlier draft walked "." and filtered on `.txt`,
+    // which picked up whatever else happened to be in the working directory - on CI that
+    // was an unrelated `known_failures.txt`, so it failed on ubuntu while passing locally.
+    // A test that depends on what else is lying around is not a test.
+    File::mkdir("bpr_dir")
+    File::write("bpr_dir/bpr_a.txt", "// c\ni lexer\ni util\n")
+    File::write("bpr_dir/bpr_b.txt", "// c\ni core\n")
 
-    for f in File::walk_dir(".").split("\n") {
+    for f in File::walk_dir("bpr_dir").split("\n") {
         if f == "" { continue }
         if not f.ends_with(".txt") { continue }
         var mod = shorten(f)                  // borrows its parameter, then reassigns
@@ -93,8 +99,8 @@ fn main() -> int {
         println("${mod}=[${edges}]")
     }
 
-    File::delete("bpr_a.txt")
-    File::delete("bpr_b.txt")
+    File::delete("bpr_dir/bpr_a.txt")
+    File::delete("bpr_dir/bpr_b.txt")
     return 0
 }
 // EXPECT: parser
