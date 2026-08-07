@@ -1,0 +1,79 @@
+// Regression: `from`, `as` and `root` were reserved GLOBALLY but are used ONLY in the
+// import grammar (`import {a,b} from m`, `import m as n`, `import root::m`). So a
+// perfectly ordinary identifier failed to PARSE:
+//
+//   fn f(from: int)        -> "Expected parameter name"  (with the caret on the `fn` line)
+//   var from = 1           -> "Expected variable name"
+//   from = 1               -> "Expected an expression"
+//   struct S { from: int } -> "Expected type name"
+//   for root in 0..n       -> "Expected ';' after for init"
+//   fn f(as: int)          -> "Expected type name"
+//
+// `to` was never reserved, so `from`/`to` pairs half-worked -- found writing a graph app
+// whose `shortest_path(g, from, to)` would not compile.
+//
+// They are now lexed as identifiers and matched by TEXT at the import sites, exactly as
+// `test` already was (lexer.c: "'test' is context-sensitive - only a keyword at top
+// level"). The import forms are unchanged; test_module_import*.wyn cover those.
+//
+// EXPECT: param from=3 to=4
+// EXPECT: var from=7
+// EXPECT: field from=1 to=2
+// EXPECT: root=10
+// EXPECT: as=5
+// EXPECT: reassigned from=9
+// EXPECT: nested 12
+
+struct Span {
+    from: int
+    to: int
+}
+
+// `from` and `to` as parameters -- the case that started this.
+fn span_len(from: int, to: int) -> int {
+    return to - from
+}
+
+// `as` as a parameter name.
+fn double_it(as: int) -> int {
+    return as * 2
+}
+
+// `root` as a parameter, and as a local.
+fn from_root(root: int) -> int {
+    return root + 1
+}
+
+fn main() {
+    print("param from=3 to=4")
+    if span_len(3, 4) != 1 {
+        print("BAD span_len")
+    }
+
+    from = 7
+    print("var from=${from}")
+
+    s = Span { from: 1, to: 2 }
+    print("field from=${s.from} to=${s.to}")
+
+    // `root` as a for-loop binding, which failed with "Expected ';' after for init".
+    total = 0
+    for root in 0..5 {
+        total += root
+    }
+    if total != 10 {
+        print("BAD root loop")
+    }
+    print("root=${total}")
+
+    as = 5
+    print("as=${as}")
+
+    // Reassignment: `from = 1` alone used to report "Expected an expression".
+    from = from + 2
+    print("reassigned from=${from}")
+
+    // All three as ordinary values in one expression, plus a call.
+    root = 3
+    print("nested ${from_root(root) + double_it(4)}")
+}

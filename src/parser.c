@@ -250,6 +250,45 @@ static bool match(WynTokenType type) {
     return true;
 }
 
+// --- Contextual keywords ----------------------------------------------------------
+//
+// `from`, `as` and `root` are keywords ONLY inside an import (`import {a,b} from m`,
+// `import m as n`, `import root::m`). The lexer therefore hands them back as plain
+// TOKEN_IDENT so they stay usable as ordinary names -- reserving them globally rejected
+// `fn f(from: int)`, `var from = 1`, `struct S { from: int }` and `for root in 0..n`,
+// while `to` was never reserved, so a from/to pair half-worked.
+//
+// These two helpers are how the import grammar still recognises them: by TEXT, not by
+// token type. Same approach the parser already uses for `test` (see parse_declaration).
+static bool check_kw(const char* kw, int len) {
+    return parser.current.type == TOKEN_IDENT &&
+           parser.current.length == len &&
+           memcmp(parser.current.start, kw, (size_t)len) == 0;
+}
+
+static bool match_kw(const char* kw, int len) {
+    if (!check_kw(kw, len)) return false;
+    advance();
+    return true;
+}
+
+// Consume a contextual keyword or report `message`, mirroring expect().
+static void expect_kw(const char* kw, int len, const char* message) {
+    if (match_kw(kw, len)) return;
+    if (parser.current.type == TOKEN_EOF && parser.had_error) return;
+    if (current_source_file) {
+        show_error_context(current_source_file, parser.current.line, 1, message, NULL);
+    } else {
+        fprintf(stderr, "Parse error at line %d: %s\n", parser.current.line, message);
+    }
+    parser.had_error = true;
+}
+
+#define MATCH_FROM()  match_kw("from", 4)
+#define MATCH_AS()    match_kw("as", 2)
+#define MATCH_ROOT()  match_kw("root", 4)
+#define EXPECT_FROM(msg) expect_kw("from", 4, (msg))
+
 static void expect(WynTokenType type, const char* message) {
     if (parser.current.type == type) {
         advance();
@@ -2898,7 +2937,7 @@ static Stmt* statement_impl() {
             } while (match(TOKEN_COMMA));
             
             expect(TOKEN_RBRACE, "Expected '}' after import list");
-            expect(TOKEN_FROM, "Expected 'from' after import list");
+            EXPECT_FROM("Expected 'from' after import list");
             expect_module_name("Expected module name after 'from'");
             
             // Build module path
@@ -2931,7 +2970,7 @@ static Stmt* statement_impl() {
         bool is_relative = false;
         char relative_prefix[32] = "";
         
-        if (match(TOKEN_ROOT)) {
+        if (MATCH_ROOT()) {
             strcpy(relative_prefix, "crate");
             is_relative = true;
             expect(TOKEN_COLONCOLON, "Expected '::' after 'root'");
@@ -2976,7 +3015,7 @@ static Stmt* statement_impl() {
         stmt->import.item_count = 0;
         
         // Optional: as alias
-        if (match(TOKEN_AS)) {
+        if (MATCH_AS()) {
             expect(TOKEN_IDENT, "Expected alias name after 'as'");
             stmt->import.alias = parser.previous;
             
@@ -2991,7 +3030,7 @@ static Stmt* statement_impl() {
         }
         
         // Optional: from "path"
-        if (match(TOKEN_FROM)) {
+        if (MATCH_FROM()) {
             expect(TOKEN_STRING, "Expected string path after 'from'");
             stmt->import.path = parser.previous;
         } else {
@@ -4293,7 +4332,7 @@ Program* parse_program() {
                 } while (match(TOKEN_COMMA));
                 
                 expect(TOKEN_RBRACE, "Expected '}' after import list");
-                expect(TOKEN_FROM, "Expected 'from' after import list");
+                EXPECT_FROM("Expected 'from' after import list");
                 expect_module_name("Expected module name after 'from'");
                 
                 // Build module path
@@ -4327,7 +4366,7 @@ Program* parse_program() {
             bool is_relative = false;
             char relative_prefix[32] = "";
             
-            if (match(TOKEN_ROOT)) {
+            if (MATCH_ROOT()) {
                 strcpy(relative_prefix, "crate");
                 is_relative = true;
                 expect(TOKEN_COLONCOLON, "Expected '::' after 'root'");
@@ -4370,7 +4409,7 @@ Program* parse_program() {
             stmt->import.item_count = 0;
             
             // Optional: as alias
-            if (match(TOKEN_AS)) {
+            if (MATCH_AS()) {
                 expect(TOKEN_IDENT, "Expected alias name after 'as'");
                 stmt->import.alias = parser.previous;
                 
@@ -4387,7 +4426,7 @@ Program* parse_program() {
             }
             
             // Optional: from "path"
-            if (match(TOKEN_FROM)) {
+            if (MATCH_FROM()) {
                 expect(TOKEN_STRING, "Expected string path after 'from'");
                 stmt->import.path = parser.previous;
             } else {
@@ -4409,7 +4448,7 @@ Program* parse_program() {
             stmt->import.module = parser.previous;
             
             // Optional: as alias
-            if (match(TOKEN_AS)) {
+            if (MATCH_AS()) {
                 expect(TOKEN_IDENT, "Expected alias name after 'as'");
                 stmt->import.alias = parser.previous;
                 
@@ -4426,7 +4465,7 @@ Program* parse_program() {
             }
             
             // Optional: from "path"
-            if (match(TOKEN_FROM)) {
+            if (MATCH_FROM()) {
                 expect(TOKEN_STRING, "Expected string path after 'from'");
                 stmt->import.path = parser.previous;
             } else {
