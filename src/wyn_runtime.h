@@ -5284,13 +5284,30 @@ void StringBuilder_free(long long handle) {
 }
 
 // === JSON Parsing ===
-// Simple recursive descent JSON parser returning handle-based access
-#define MAX_JSON_NODES 4096
+// Simple recursive descent JSON parser returning handle-based access.
+//
+// Nodes live in one GROWABLE arena shared by every parsed document, and a handle is an
+// index into it. It used to be a fixed 4096-entry array that `Json_parse` RESET to zero on
+// every call, which made two live documents impossible: the second parse overwrote the
+// first and both handles were 0, so `Json.get(a, "x")` silently returned "" after `b` was
+// parsed. Growing instead of resetting is what lets handles stay valid for the program's
+// life -- a server parsing one document per request needs both properties.
 typedef struct { char type; /* o=object, a=array, s=string, n=number, b=bool, x=null */ char* key; char* str_val; double num_val; int parent; int next_sibling; int first_child; } JsonNode;
-static JsonNode json_nodes[MAX_JSON_NODES];
+static JsonNode* json_nodes = NULL;
 static int json_node_count = 0;
+static int json_node_cap = 0;
 
-static int json_alloc_node() { if (json_node_count >= MAX_JSON_NODES) return -1; int i = json_node_count++; json_nodes[i] = (JsonNode){0}; json_nodes[i].parent = -1; json_nodes[i].next_sibling = -1; json_nodes[i].first_child = -1; return i; }
+static int json_alloc_node() {
+    if (json_node_count >= json_node_cap) {
+        int ncap = json_node_cap ? json_node_cap * 2 : 256;
+        json_nodes = wyn_realloc(json_nodes, sizeof(JsonNode) * (size_t)ncap);
+        json_node_cap = ncap;
+    }
+    int i = json_node_count++;
+    json_nodes[i] = (JsonNode){0};
+    json_nodes[i].parent = -1; json_nodes[i].next_sibling = -1; json_nodes[i].first_child = -1;
+    return i;
+}
 
 static const char* json_skip_ws(const char* p) { while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++; return p; }
 
@@ -5366,12 +5383,18 @@ static const char* json_parse_value(const char* p, int parent) {
 }
 
 long long Json_parse(const char* text) {
-    json_node_count = 0;
+    // The root is wherever this document STARTS in the shared arena -- not always 0. It was
+    // `json_node_count = 0; ...; return 0;`, which threw away every previously parsed
+    // document and handed back a handle that aliased it.
+    int root = json_node_count;
     json_parse_value(text, -1);
-    return 0; // root node is always 0
+    return root;
 }
 
 static int json_find_child(int parent, const char* key) {
+    // Guard the handle: Json_get_array/Json_get_object return -1 for "no such key", and
+    // feeding that straight back into Json_get read json_nodes[-1].
+    if (parent < 0 || parent >= json_node_count) return -1;
     int c = json_nodes[parent].first_child;
     while (c >= 0) {
         if (json_nodes[c].key && strcmp(json_nodes[c].key, key) == 0) return c;
@@ -5412,6 +5435,7 @@ long long Json_has(long long root, const char* key) {
 
 long long Json_array_len(long long node) {
     int n = (int)node;
+    if (n < 0 || n >= json_node_count) return 0;
     if (json_nodes[n].type != 'a') return 0;
     int count = 0;
     int c = json_nodes[n].first_child;
@@ -5420,7 +5444,9 @@ long long Json_array_len(long long node) {
 }
 
 long long Json_array_get(long long node, long long index) {
-    int c = json_nodes[(int)node].first_child;
+    int n = (int)node;
+    if (n < 0 || n >= json_node_count) return -1;
+    int c = json_nodes[n].first_child;
     for (int i = 0; i < (int)index && c >= 0; i++) c = json_nodes[c].next_sibling;
     return c >= 0 ? c : -1;
 }
@@ -5439,7 +5465,9 @@ char* Json_node_str(long long node) {
 // newline-joined string, which the for-loop path can't iterate.)
 WynArray Json_keys(long long root) {
     WynArray arr = array_new();
-    int c = json_nodes[(int)root].first_child;
+    int r = (int)root;
+    if (r < 0 || r >= json_node_count) return arr;
+    int c = json_nodes[r].first_child;
     while (c >= 0) {
         if (json_nodes[c].key) array_push_str(&arr, wyn_strdup(json_nodes[c].key));
         c = json_nodes[c].next_sibling;
