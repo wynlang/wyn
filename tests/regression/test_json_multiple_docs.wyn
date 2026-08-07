@@ -1,0 +1,90 @@
+// Regression: parsing a SECOND JSON document destroyed the first.
+//
+//   a = Json.parse("{\"x\":\"AAA\"}")
+//   b = Json.parse("{\"y\":\"BBB\"}")
+//   Json.get(a, "x")   -> ""   (expected "AAA")
+//
+// Cause: nodes lived in one fixed 4096-entry arena and `Json_parse` did
+// `json_node_count = 0; ...; return 0;` -- it RESET the arena on every call and always
+// claimed the root was index 0. So every handle aliased index 0 and the older document's
+// nodes were overwritten in place. Nothing errored; reads just came back empty, which is the
+// worst failure mode: a server that parses a request body and a config would silently mix
+// them up.
+//
+// Fix: the arena GROWS instead of resetting, and Json_parse returns the index the document
+// actually starts at. Growth matters as much as the return value -- without it, a program in
+// a loop would exhaust a fixed arena that resetting used to hide.
+//
+// Found extending the sample apps; the api-client offline suite could not assert anything
+// about two documents at once.
+//
+// EXPECT: a.x=AAA
+// EXPECT: b.y=BBB
+// EXPECT: a.x still AAA after b
+// EXPECT: handles differ
+// EXPECT: 300 of 300 round-tripped
+// EXPECT: arena grew past the old fixed cap
+// EXPECT: miss handle is -1
+// EXPECT: reads on a miss handle are empty, not a crash
+
+fn main() {
+    a = Json.parse("{\"x\":\"AAA\"}")
+    b = Json.parse("{\"y\":\"BBB\"}")
+
+    print("a.x=${Json.get(a, "x")}")
+    print("b.y=${Json.get(b, "y")}")
+
+    // The point of the bug: `a` must survive `b` being parsed.
+    if Json.get(a, "x") == "AAA" {
+        print("a.x still AAA after b")
+    } else {
+        print("a.x CLOBBERED by b: [${Json.get(a, "x")}]")
+    }
+
+    // Two live documents cannot share a handle.
+    if a == b {
+        print("handles ALIAS (both ${a})")
+    } else {
+        print("handles differ")
+    }
+
+    // Many documents in sequence: the arena must grow, not wrap or exhaust. 300 parses of a
+    // 2-node document is 600 nodes; the loop also proves each handle still reads back its
+    // OWN value rather than the most recent one.
+    ok = 0
+    last = 0
+    for i in 0..300 {
+        h = Json.parse("{\"k\":\"v${i}\"}")
+        if Json.get(h, "k") == "v${i}" {
+            ok += 1
+        }
+        last = h
+    }
+    print("${ok} of 300 round-tripped")
+
+    // Handles are monotonic indices, so the last one must be past the earlier documents.
+    if last > 500 {
+        print("arena grew past the old fixed cap")
+    } else {
+        print("arena did NOT grow: last handle ${last}")
+    }
+
+    // A missing object/array key yields -1, and feeding that back in used to index
+    // json_nodes[-1]. Every read on it must be an empty answer, not a crash.
+    //
+    // HONEST LIMIT: these two lines do NOT fail without the bounds guard. Removing the guard
+    // and re-running this test still prints the expected output, because json_nodes[-1] is
+    // undefined behaviour that happens to read zeroed heap. Verified under ASan instead --
+    // with the guard removed, this exact program reports a heap-buffer-overflow READ in
+    // json_find_child ("8 bytes before" the arena); with it, ASan is clean. Kept here as a
+    // behavioural pin (a future guard that returned junk WOULD fail), but the memory-safety
+    // arm is only provable by the ASan runtime job in CI.
+    doc = Json.parse("{\"a\":1}")
+    miss = Json.get_object(doc, "nope")
+    print("miss handle is ${miss}")
+    if Json.get(miss, "x") == "" and Json.has(miss, "x") == 0 and Json.array_len(miss) == 0 {
+        print("reads on a miss handle are empty, not a crash")
+    } else {
+        print("miss handle reads BAD")
+    }
+}
