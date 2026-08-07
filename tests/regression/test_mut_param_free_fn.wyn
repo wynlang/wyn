@@ -30,9 +30,12 @@
 // EXPECT: a mut param passed to a by-value param: 33
 // EXPECT: repeated calls accumulate: 5
 // EXPECT: mixed args do not misfire the guard: n=42 name=lit
+// EXPECT: a nested field arg is addressable: 6
 
 struct S { n: int, name: string }
 struct Box { items: [int] }
+struct Inner { n: int }
+struct Outer { i: Inner }
 
 fn bump(mut s: S) { s.n = s.n + 1 }
 fn rename(mut s: S, v: string) { s.name = v }
@@ -103,26 +106,34 @@ fn main() {
     var kk = 20
     three(g, kk + 22, "lit")
     print("mixed args do not misfire the guard: n=${g.n} name=${g.name}")
+
+    // A FIELD ACCESS is addressable (`&o.i.n` is valid C) and must work. This is the case
+    // that exposed the checker/codegen list mismatch: while codegen accepted only a plain
+    // identifier, the checker permitted this and it segfaulted.
+    var o = Outer { i: Inner { n: 5 } }
+    bump_int(o.i.n)
+    print("a nested field arg is addressable: ${o.i.n}")
 }
 
-// --- the lvalue guard ------------------------------------------------------------------
+// --- which arguments are addressable -----------------------------------------------------
 //
-// `&` is only emitted for a plain identifier argument. Dropping that guard makes `&` appear
-// on temporaries and literals, which is not valid C:
+// `&` is emitted only for a plain identifier or a field access, and the checker REJECTS
+// anything else for a `mut` parameter (expr_is_addressable). The two lists must stay
+// identical -- a form the checker allows but codegen skips gets no address and the callee
+// dereferences a value. That is not hypothetical: while codegen accepted only EXPR_IDENT,
+// `bump_int(o.i.n)` type-checked and segfaulted, which is why the field case is pinned in
+// main() above.
 //
-//     add(3, 5)        -> add(&3, 5)          "cannot take the address of an rvalue"
-//     add(x + 2, 5)    -> add(&x + 2, 5)      wrong precedence, wrong type
-//     bump(make())     -> bump(&make())       cannot address a call result
+// EXPR_INDEX is excluded from BOTH lists, and that is a measured decision rather than
+// caution: `xs[0]` does not lower to C subscripting, it lowers to `array_get_int(xs, 0)` --
+// a call returning a value -- so `&xs[0]` is "cannot take the address of an rvalue". Allowing
+// it produced exactly that C error. `bump(xs[0])` is therefore a clean check-time error now,
+// where before it segfaulted.
 //
-// so the guard is load-bearing. This file cannot exercise those three forms DIRECTLY: they
-// are broken with OR without the guard -- `add(3, 5)` and `add(x + 2, 5)` compile and then
-// SEGFAULT, `bump(make())` fails the C compile, all three identically on baseline 97647c4.
-// Passing a NON-LVALUE to a `mut` parameter has never worked and should be a check-time
-// error; that is filed separately and is not what this fix is about.
-//
-// The guard is therefore verified by MUTATION (removing it makes all three fail the C compile
-// instead of reaching the runtime), and what is pinned here is that it does not MISFIRE on
-// the ordinary mixed call -- a mut identifier alongside an expression and a literal.
+// The non-lvalue forms (`add(3, 5)`, `add(x + 2, 5)`, `bump(make())`) are rejected at check
+// time by the same guard, with a message naming the argument, the function and the fix. Those
+// rejections cannot be asserted from an EXPECT file, which must compile and run -- they are
+// covered by tests/errors/run_mut_param_nonlvalue_test.sh.
 //
 // (Checks live in main() as prints matched by the EXPECT lines at the top, not in `test`
 // blocks: run_bdd.sh drives these files with `wyn run`. A `test` block in a regression file is
