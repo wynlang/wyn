@@ -276,6 +276,63 @@ static FnVisibility module_fn_visibility(const char* module_name, const char* fn
     return found ? VIS_PRIVATE : VIS_FN_UNKNOWN;
 }
 
+// Does the free function `fn_name` declare parameter `idx` as `mut`?
+//
+// The checker's counterpart of codegen's fn_param_is_mut: the call site needs to reject a
+// non-addressable argument for a `mut` parameter, and only the AST records the modifier
+// (the fn TYPE carries parameter types, not their mutability). Walks current_program the
+// same way check_function_visibility above does.
+//
+// Returns false for an unknown function, so a call the checker cannot resolve keeps its
+// existing lenient path rather than producing a spurious error.
+static bool checker_fn_param_is_mut(const char* fn_name, int idx) {
+    if (!current_program || !fn_name || idx < 0) return false;
+    size_t fl = strlen(fn_name);
+    for (int i = 0; i < current_program->count; i++) {
+        Stmt* s = current_program->stmts[i];
+        if (!s) continue;
+        if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+        if (s->type != STMT_FN) continue;
+        if ((size_t)s->fn.name.length != fl ||
+            memcmp(s->fn.name.start, fn_name, fl) != 0) continue;
+        if (idx >= s->fn.param_count || !s->fn.param_mutable) return false;
+        return s->fn.param_mutable[idx];
+    }
+    return false;
+}
+
+// Can `&expr` be taken -- i.e. does this expression denote storage IN THE GENERATED C?
+//
+// This list must match the one in codegen_expr.c that decides where to emit `&`. Any
+// disagreement is a hole: an argument the checker allows but codegen skips gets no address
+// and the callee dereferences a value.
+//
+//   EXPR_IDENT         -> a C variable.               &x       OK
+//   EXPR_FIELD_ACCESS  -> a C struct member.          &o.i.n   OK
+//
+// An INDEX is deliberately NOT here. `xs[0]` does not lower to C subscripting -- it lowers to
+// `array_get_int(xs, 0)`, a function call returning a value, so `&xs[0]` is
+// "cannot take the address of an rvalue". Verified, not assumed: allowing it produced exactly
+// that C error. Writing back into an array element through a `mut` parameter would need the
+// element's address, which the WynValue-boxed representation does not hand out.
+static bool expr_is_addressable(Expr* e) {
+    if (!e) return false;
+    switch (e->type) {
+        case EXPR_IDENT:
+        case EXPR_FIELD_ACCESS:
+            return true;
+        case EXPR_UNARY:
+            // `inc(&n)` -- the EXPLICIT address-of spelling. This is not hypothetical: five
+            // stdlib tests write it (test_mut_refs, test_brutal_audit, test_stress,
+            // test_v16_final, test_final_validation) and it works, so rejecting it would
+            // break working, in-use code. Recursing on the operand keeps `&3` rejected.
+            if (e->unary.op.type == TOKEN_AMP) return expr_is_addressable(e->unary.operand);
+            return false;
+        default:
+            return false;
+    }
+}
+
 // Is the checker currently inside `target` (module calling its own fns)?
 static bool checking_same_module(const char* target) {
     if (current_module_name[0] == '\0') return false;
@@ -2179,6 +2236,41 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return left;
         }
         case EXPR_CALL: {
+            // A `mut` parameter is written back through a POINTER, so the argument must be
+            // something that HAS an address. A literal or a temporary is meaningless -- there
+            // is nowhere for the callee's write to go -- and it used to be ACCEPTED:
+            //
+            //     fn add(mut n: int, by: int) { n = n + by }
+            //     add(3, 5)          // compiled, then SEGFAULTED: the literal 3 was
+            //                        // dereferenced as an address
+            //     bump(make())       // failed the C compile instead
+            //
+            // Two different late failures for one mistake, neither naming the argument.
+            //
+            // Checked HERE, at the top of EXPR_CALL, because the per-argument validation
+            // further down only runs for a callee that resolved to a TYPE_FUNCTION symbol --
+            // a plain call to a user function returns earlier, so a guard placed there never
+            // fired (verified by probe, not assumed).
+            if (expr->call.callee && expr->call.callee->type == EXPR_IDENT) {
+                char _fnb[256];
+                token_to_cstr(_fnb, sizeof(_fnb), expr->call.callee->token);
+                for (int _ai = 0; _ai < expr->call.arg_count; _ai++) {
+                    if (!checker_fn_param_is_mut(_fnb, _ai)) continue;
+                    if (expr_is_addressable(expr->call.args[_ai])) continue;
+                    fprintf(stderr,
+                        "\nError at line %d: argument %d of '%s' is declared `mut`, so it "
+                        "must be a variable\n",
+                        expr->call.args[_ai]->token.line, _ai + 1, _fnb);
+                    show_source_line(expr->call.args[_ai]->token.line);
+                    fprintf(stderr,
+                        "  \033[33mWhy:\033[0m a `mut` parameter is written back to the "
+                        "caller, and a literal or temporary has nowhere to write to.\n");
+                    fprintf(stderr,
+                        "  \033[33mFix:\033[0m assign it first -- `var x = ...` then "
+                        "`%s(x, ...)`.\n", _fnb);
+                    had_error = true;
+                }
+            }
             // Check for named arguments
             bool _has_named_args = false;
             if (expr->call.arg_names) {
@@ -3030,10 +3122,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         snprintf(actual_str, sizeof(actual_str), "%s", type_to_string(actual_type));
                         snprintf(context, sizeof(context), "argument %d", i + 1);
                         
-                        type_error_mismatch(expected_str, actual_str, context, 
+                        type_error_mismatch(expected_str, actual_str, context,
                                           expr->call.args[i]->token.line, 0);
                         had_error = true;
                     }
+
                 }
             }
             

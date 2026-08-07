@@ -301,6 +301,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_unresolved_import_test.sh
 	@echo "=== Running selective-import alias rejection test ==="
 	@WYN=./wyn bash tests/errors/run_selective_import_alias_test.sh
+	@echo "=== Running mut-param non-lvalue rejection test ==="
+	@WYN=./wyn bash tests/errors/run_mut_param_nonlvalue_test.sh
 	@echo "=== Running for-in-string check-time rejection test ==="
 	@WYN=./wyn bash tests/errors/run_for_in_string_test.sh
 	@echo "=== Running run-cache import-staleness test ==="

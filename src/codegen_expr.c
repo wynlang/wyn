@@ -2151,15 +2151,20 @@ void codegen_expr(Expr* expr) {
                     // this via struct_method_takes_mut_self; this is its free-function
                     // counterpart, and the int case is why it cannot be scoped to structs.
                     //
-                    // Scoped to an addressable lvalue (a plain identifier): `&` on a temporary
-                    // or a literal is not valid C. `mut` on a non-lvalue argument is
-                    // meaningless anyway -- there is nothing for the callee to write back to.
+                    // Scoped to an ADDRESSABLE argument: `&` on a temporary or a literal is
+                    // not valid C. This list MUST match expr_is_addressable() in checker.c,
+                    // which rejects everything else at check time -- a form the checker allows
+                    // but this misses gets no `&` and the callee dereferences a value
+                    // (`bump(o.i.n)` did exactly that while this was EXPR_IDENT-only).
+                    // EXPR_INDEX is excluded on both sides: `xs[0]` lowers to
+                    // `array_get_int(xs, 0)`, a call, so `&xs[0]` is not valid C.
                     if (expr->call.callee->type == EXPR_IDENT && !is_array_push && !is_array_pop) {
                         char _mcb[128];
                         token_to_cstr(_mcb, sizeof(_mcb), expr->call.callee->token);
                         extern bool fn_param_is_mut(const char*, int);
+                        ExprType _at = expr->call.args[i]->type;
                         if (fn_param_is_mut(_mcb, i) &&
-                            expr->call.args[i]->type == EXPR_IDENT) {
+                            (_at == EXPR_IDENT || _at == EXPR_FIELD_ACCESS)) {
                             emit("&");
                         }
                     }
