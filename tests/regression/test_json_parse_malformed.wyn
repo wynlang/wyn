@@ -1,0 +1,104 @@
+// Regression: malformed JSON made Json.parse spin forever and abort.
+//
+//   Json.parse("{\"quote\": \"a\"b\"}")   -> "wyn: out of memory" / panic: abort
+//
+// Cause: the object and array parse loops had no progress guarantee. On input where the key
+// is not a quoted string, json_parse_string_raw returns the pointer UNMOVED, no ':' or ','
+// follows, and the loop re-runs on the same byte -- allocating one node per pass until the
+// arena exhausts memory. Confirmed in isolated C: the pointer advanced 12 bytes on the first
+// iteration and 0 bytes on every one after. Under a CPU rlimit instead of a memory one the
+// pre-fix binary is killed by SIGXCPU (exit 152), so this is a hang, not merely a bad alloc.
+//
+// That makes it a remote denial of service for any server that parses an untrusted request
+// body -- web/server in sample-apps does exactly that. The input above is not exotic: it is
+// what Json.set + Json.stringify EMITS for a value containing a quote, because that writer
+// does not escape (a separate bug, filed separately).
+//
+// Fix: both loops record the pointer at the top of the iteration and break if it has not
+// moved by the bottom. Malformed input now yields a partial document rather than hanging;
+// this parser has no error channel, so terminating with whatever parsed is the honest
+// behaviour available.
+//
+// EXPECT: bare quote in a value terminates
+// EXPECT: unquoted key terminates
+// EXPECT: missing colon terminates
+// EXPECT: truncated object terminates
+// EXPECT: truncated nested object terminates
+// EXPECT: malformed array terminates
+// EXPECT: nested bare quote terminates
+// EXPECT: empty and junk input terminate
+// EXPECT: well-formed documents still parse correctly
+// EXPECT: all 15 malformed inputs returned
+
+fn survived(text: string) -> int {
+    // Reaching the next line at all is the assertion: before the fix, control never
+    // returned from Json.parse.
+    d = Json.parse(text)
+    return Json.keys(d).len() + 1
+}
+
+fn main() {
+    n = 0
+
+    // The exact input that hung: a bare quote inside a string value.
+    if survived("{\"quote\": \"a\"b\"}") > 0 {
+        print("bare quote in a value terminates")
+    }
+    n += 1
+
+    if survived("{k: 1}") > 0 {
+        print("unquoted key terminates")
+    }
+    n += 1
+
+    if survived("{\"k\" 1}") > 0 {
+        print("missing colon terminates")
+    }
+    n += 1
+
+    // Truncation at every interesting point.
+    n += 1
+    if survived("{") > 0 and survived("{xyz") > 0 and survived("{\"k\":") > 0 {
+        print("truncated object terminates")
+    }
+    n += 2
+
+    if survived("{\"k\": {\"j\": ") > 0 {
+        print("truncated nested object terminates")
+    }
+    n += 1
+
+    // The array loop had the same shape, so it needs the same guarantee.
+    if survived("[@@@]") > 0 and survived("[a,b,c]") > 0 and survived("[1,2") > 0 {
+        print("malformed array terminates")
+    }
+    n += 3
+
+    // Nested: the guard has to hold at depth, not just at the top level.
+    if survived("{\"o\":{\"i\":\"a\"b\"}}") > 0 and survived("{\"k\":[\"a\"b\"]}") > 0 {
+        print("nested bare quote terminates")
+    }
+    n += 2
+
+    if survived("") > 0 and survived("@@@@") > 0 and survived("{\"k\":}") > 0 {
+        print("empty and junk input terminate")
+    }
+    n += 3
+
+    // The guard must not break VALID input -- a break on a non-advancing iteration could
+    // truncate a good document if the bookkeeping were wrong.
+    ok = Json.parse("{\"a\":\"one\",\"b\":2,\"c\":[1,2,3],\"d\":{\"e\":\"deep\"}}")
+    good = 0
+    if Json.get(ok, "a") == "one" { good += 1 }
+    if Json.get_int(ok, "b") == 2 { good += 1 }
+    if Json.array_len(Json.get_array(ok, "c")) == 3 { good += 1 }
+    if Json.get(Json.get_object(ok, "d"), "e") == "deep" { good += 1 }
+    if Json.keys(ok).len() == 4 { good += 1 }
+    if good == 5 {
+        print("well-formed documents still parse correctly")
+    } else {
+        print("well-formed parse REGRESSED: ${good} of 5")
+    }
+
+    print("all ${n} malformed inputs returned")
+}
