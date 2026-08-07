@@ -1,0 +1,168 @@
+// Regression: the Json writer emitted INVALID JSON, and the reader never decoded escapes.
+//
+//   j = Json.new()
+//   Json.set(j, "name", "Eve\",\"role\":\"admin")
+//   Json.stringify(j)   ->  {"name": "Eve","role":"admin"}      <-- injected a second key
+//
+// Five separate defects in one write/read path, all found extending web/server (which builds
+// a JSON response from client-supplied values):
+//
+//  1. NO ESCAPING. json_stringify used snprintf("\"%s\": \"%s\"") straight, so a value
+//     containing a quote closed the string early. A caller-supplied name could inject
+//     arbitrary keys -- verified: the forged "role" read back as "admin". Control characters
+//     and backslashes were equally unescaped, so the output was not parseable JSON at all.
+//  2. NO DECODING. json_parse_string_raw memcpy'd the raw bytes, skipping a backslash only to
+//     find the closing quote, never translating it. A valid {"k":"a\"b"} came back as the
+//     four characters a \ " b. A writer that escapes and a reader that does not decode cannot
+//     round-trip.
+//  3. FIXED 4096-BYTE OUTPUT. json_stringify wrote into malloc(4096) and let snprintf clamp,
+//     so a larger document was silently truncated mid-string into an unterminated document
+//     (measured: a 6080-byte document came out as exactly 4095 bytes, not ending in '}').
+//  4. FIXED 32 PAIRS. json_set_string/json_set_int silently did nothing once full, so the
+//     33rd key onward vanished with no error (measured: k31 present, k39 absent).
+//  5. RAGGED PRETTY-PRINT. Json_to_pretty_string copied the serializer's own ", " and ": "
+//     spaces THROUGH while also adding indentation, giving `"a":  "x",\n   "b"`.
+//
+// Fixes: escape on write (RFC 8259, incl. \u00XX for control chars), decode on read (incl.
+// \uXXXX -> UTF-8 for the BMP), growable output buffer, growable pair array, and a
+// pretty-printer that emits its line breaks lazily so it neither doubles the serializer's
+// spacing nor prints an empty object as "{\n  \n}".
+//
+// EXPECT: a quote in a value cannot inject a key
+// EXPECT: stringify escapes quote backslash newline and tab
+// EXPECT: a value with a quote round-trips
+// EXPECT: newline and tab round-trip
+// EXPECT: control characters are escaped
+// EXPECT: unicode escapes decode to utf-8
+// EXPECT: solidus and unknown escapes decode
+// EXPECT: a document past 4096 bytes is not truncated
+// EXPECT: more than 32 keys survive
+// EXPECT: pretty print indents one level per depth
+// EXPECT: an empty object pretty prints as {}
+// EXPECT: a value ending in a backslash does not break the printer
+
+fn main() {
+    // --- 1. the injection ---------------------------------------------------------
+    j = Json.new()
+    Json.set(j, "name", "Eve\",\"role\":\"admin")
+    doc = Json.parse(Json.stringify(j))
+    // The forged key must NOT exist, and the real value must survive intact.
+    if Json.has(doc, "role") == 0 and Json.get(doc, "name") == "Eve\",\"role\":\"admin" {
+        print("a quote in a value cannot inject a key")
+    } else {
+        print("INJECTION: role=[${Json.get(doc, "role")}] name=[${Json.get(doc, "name")}]")
+    }
+
+    // --- 2. what the writer emits -------------------------------------------------
+    e = Json.new()
+    Json.set(e, "q", "a\"b")
+    Json.set(e, "s", "a\\b")
+    Json.set(e, "n", "a\nb")
+    Json.set(e, "t", "a\tb")
+    raw = Json.stringify(e)
+    if raw.contains("a\\\"b") and raw.contains("a\\\\b") and raw.contains("a\\nb") and raw.contains("a\\tb") {
+        print("stringify escapes quote backslash newline and tab")
+    } else {
+        print("BAD ESCAPING: ${raw}")
+    }
+
+    // --- 3. full round-trip through the library's own parser ----------------------
+    back = Json.parse(raw)
+    if Json.get(back, "q") == "a\"b" and Json.get(back, "s") == "a\\b" {
+        print("a value with a quote round-trips")
+    } else {
+        print("ROUND-TRIP BAD: q=[${Json.get(back, "q")}] s=[${Json.get(back, "s")}]")
+    }
+    if Json.get(back, "n") == "a\nb" and Json.get(back, "t") == "a\tb" {
+        print("newline and tab round-trip")
+    } else {
+        print("WS ROUND-TRIP BAD")
+    }
+
+    // --- 4. control characters ----------------------------------------------------
+    // A raw byte below 0x20 inside a JSON string is illegal; it must come out as \u00XX.
+    // The control byte is obtained by DECODING one out of JSON and then re-encoding it, which
+    // exercises both directions at once. (String.from_chars would be the direct route, but it
+    // segfaults -- filed separately, not touched by this PR.)
+    src = Json.get(Json.parse("{\"k\":\"a\\u0007b\"}"), "k")
+    c = Json.new()
+    Json.set(c, "bell", src)
+    craw = Json.stringify(c)
+    if src.len() == 3 and craw.contains("\\u0007") {
+        print("control characters are escaped")
+    } else {
+        print("CONTROL CHAR NOT ESCAPED: decoded_len=${src.len()} raw=${craw}")
+    }
+
+    // --- 5. decoding escapes the writer never produces but real JSON contains -----
+    u = Json.parse("{\"a\":\"caf\\u00e9\",\"b\":\"\\u0041\\u0042\"}")
+    if Json.get(u, "a") == "café" and Json.get(u, "b") == "AB" {
+        print("unicode escapes decode to utf-8")
+    } else {
+        print("UNICODE BAD: a=[${Json.get(u, "a")}] b=[${Json.get(u, "b")}]")
+    }
+
+    v = Json.parse("{\"p\":\"a\\/b\",\"q\":\"a\\qb\"}")
+    if Json.get(v, "p") == "a/b" and Json.get(v, "q") == "aqb" {
+        print("solidus and unknown escapes decode")
+    } else {
+        print("SOLIDUS BAD: p=[${Json.get(v, "p")}] q=[${Json.get(v, "q")}]")
+    }
+
+    // --- 6. the output buffer -----------------------------------------------------
+    big = Json.new()
+    filler = "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
+    for i in 0..30 {
+        Json.set(big, "key${i}", filler)
+    }
+    bigraw = Json.stringify(big)
+    // Past the old 4096 cap, and a complete document rather than a clipped one.
+    if bigraw.len() > 5000 and bigraw.ends_with("}") {
+        print("a document past 4096 bytes is not truncated")
+    } else {
+        print("TRUNCATED: len=${bigraw.len()} ends_with_brace=${bigraw.ends_with("}")}")
+    }
+
+    // --- 7. the pair array --------------------------------------------------------
+    many = Json.new()
+    for i in 0..40 {
+        Json.set(many, "k${i}", "v${i}")
+    }
+    manyraw = Json.stringify(many)
+    if manyraw.contains("\"k39\"") and manyraw.contains("\"k32\"") and manyraw.contains("\"k0\"") {
+        print("more than 32 keys survive")
+    } else {
+        print("KEYS DROPPED: k0=${manyraw.contains("\"k0\"")} k32=${manyraw.contains("\"k32\"")} k39=${manyraw.contains("\"k39\"")}")
+    }
+
+    // --- 8. the pretty printer ----------------------------------------------------
+    p = Json.new()
+    Json.set(p, "a", "one")
+    Json.set_int(p, "b", 2)
+    pretty = Json.to_pretty_string(p)
+    // Exactly two spaces of indent, and no doubled spacing after the colon.
+    if pretty.contains("\n  \"a\": \"one\"") and pretty.contains("\n  \"b\": 2") {
+        print("pretty print indents one level per depth")
+    } else {
+        print("PRETTY RAGGED:\n${pretty}")
+    }
+
+    if Json.to_pretty_string(Json.new()) == "{}" {
+        print("an empty object pretty prints as {}")
+    } else {
+        print("EMPTY PRETTY BAD: [${Json.to_pretty_string(Json.new())}]")
+    }
+
+    // A value ending in a backslash: the closing quote is preceded by a real escaped
+    // backslash, so a naive `prev != '\\'` check treats the rest of the document as string
+    // content and stops indenting.
+    b = Json.new()
+    Json.set(b, "path", "C:\\dir\\")
+    Json.set(b, "after", "still-a-key")
+    bp = Json.to_pretty_string(b)
+    if bp.contains("\n  \"after\": \"still-a-key\"") {
+        print("a value ending in a backslash does not break the printer")
+    } else {
+        print("BACKSLASH BREAKS PRINTER:\n${bp}")
+    }
+}
