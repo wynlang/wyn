@@ -2185,6 +2185,49 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 for (int i = 0; i < expr->call.arg_count; i++)
                     if (expr->call.arg_names[i].length > 0) { _has_named_args = true; break; }
             }
+            // Check for enum constructor calls: EnumName::Variant(args)
+            //
+            // The parser folds `Shape::Circle` into ONE EXPR_IDENT whose text is
+            // "Shape::Circle", so this never reached the EXPR_FIELD_ACCESS path below that
+            // handles the equivalent `Shape.Circle(...)`. The name IS registered, but as a
+            // value symbol of the enum type rather than as a function, so a CALL through it
+            // fell all the way to the module-qualified-call handling and came back
+            // `builtin_int`. The expression then had no enum type for anything downstream to
+            // see:
+            //
+            //     a = Shape::Circle(1.0)      // a: int
+            //     xs = [a]                    // array_push_int(&arr, a)  -> C error:
+            //                                 //   passing 'Shape' to parameter of type
+            //                                 //   'long long'
+            //
+            // It only SURFACED in an array literal, because that is where codegen consults
+            // the element's expr_type; `a` alone, and `take(Shape::Circle(1.0))`, both worked,
+            // which is why this looked like "arrays of data enums are broken". The dot form
+            // was fine throughout -- the two spellings simply disagreed.
+            if (expr->call.callee->type == EXPR_IDENT) {
+                Token qn = expr->call.callee->token;
+                int sep = -1;
+                for (int i = 0; i + 1 < qn.length; i++)
+                    if (qn.start[i] == ':' && qn.start[i+1] == ':') { sep = i; break; }
+                if (sep > 0) {
+                    // Resolve the enum half; the C constructor is EnumName_VariantName.
+                    Token ename = {TOKEN_IDENT, qn.start, sep, qn.line};
+                    Symbol* esym = find_symbol(scope, ename);
+                    if (esym && esym->type && esym->type->kind == TYPE_ENUM) {
+                        char cname[256];
+                        snprintf(cname, sizeof(cname), "%.*s_%.*s", sep, qn.start,
+                                 qn.length - sep - 2, qn.start + sep + 2);
+                        Token ctok = {TOKEN_IDENT, cname, (int)strlen(cname), qn.line};
+                        Symbol* csym = find_symbol(scope, ctok);
+                        if (csym && csym->type && csym->type->kind == TYPE_FUNCTION) {
+                            for (int i = 0; i < expr->call.arg_count; i++)
+                                check_expr(expr->call.args[i], scope);
+                            expr->expr_type = esym->type;
+                            return esym->type;
+                        }
+                    }
+                }
+            }
             // Check for enum constructor calls: EnumName.Variant(args)
             if (expr->call.callee->type == EXPR_FIELD_ACCESS &&
                 expr->call.callee->field_access.object->type == EXPR_IDENT) {
