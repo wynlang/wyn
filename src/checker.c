@@ -1167,10 +1167,29 @@ static Symbol* find_local_noncallable(SymbolTable* scope, Token name) {
 // builtin OptionInt/OptionString families. Idempotent. Also records the struct in
 // codegen's registry so the concrete C family is emitted after the struct typedef.
 // Returns the Option<Struct> Type (a TYPE_STRUCT named "Option<Struct>").
+//
+// A DATA-CARRYING ENUM takes this path too. It lowers to a C struct (a tagged union),
+// so it needs the same monomorphic family a user struct gets -- but its checker Type is
+// TYPE_ENUM, not TYPE_STRUCT, and the `kind != TYPE_STRUCT` guard used to reject it. Every
+// caller then fell back to OptionInt while codegen (which asks wyn_option_family, the
+// authority) correctly produced OptionShape, so `fn pick() -> Shape?` emitted
+// `OptionInt __match_opt_1 = pick(1);` against a function returning OptionShape and the C
+// compile failed. Accepting it HERE fixes all five call sites at once rather than adding the
+// same enum test to each -- the shape of the earlier wyn_option_family() consolidation.
+//
+// A PLAIN enum must still be rejected: it is an `int` in C, so its family is the builtin
+// OptionInt, and callers rely on NULL to mean exactly that.
 static Type* register_option_struct_family(Type* struct_type) {
-    if (!struct_type || struct_type->kind != TYPE_STRUCT || struct_type->struct_type.name.length == 0)
+    if (!struct_type) return NULL;
+    bool is_data_enum = struct_type->kind == TYPE_ENUM &&
+                        struct_type->name.length > 0 &&
+                        enum_name_is_data_enum(struct_type->name);
+    if (!is_data_enum &&
+        (struct_type->kind != TYPE_STRUCT || struct_type->struct_type.name.length == 0))
         return NULL;
-    char sname[96]; token_to_cstr(sname, sizeof(sname), struct_type->struct_type.name);
+    char sname[96];
+    token_to_cstr(sname, sizeof(sname),
+                  is_data_enum ? struct_type->name : struct_type->struct_type.name);
     // Family type name "Option<Struct>" - persistent storage for the Token.
     char* fam = malloc(strlen(sname) + 7);
     sprintf(fam, "Option%s", sname);
@@ -4424,9 +4443,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 had_error = true;
                 return builtin_int;
             }
-            // Result is Option<field_type>: reuse the family machinery.
+            // Result is Option<field_type>: reuse the family machinery. A data-carrying enum
+            // field is a C struct, so it needs the monomorphic family too.
             Type* result;
-            if (field_type->kind == TYPE_STRUCT) {
+            if (field_type->kind == TYPE_STRUCT ||
+                (field_type->kind == TYPE_ENUM && enum_name_is_data_enum(field_type->name))) {
                 result = register_option_struct_family(field_type);
             } else {
                 const char* fam = "OptionInt";
@@ -4805,8 +4826,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 Token ob_name = {TOKEN_IDENT, "OptionBool", 10, 0};
                 Symbol* sym = find_symbol(scope, ob_name);
                 if (sym) { expr->expr_type = sym->type; return sym->type; }
-            } else if (inner_type->kind == TYPE_STRUCT && inner_type->struct_type.name.length > 0) {
-                // `Struct?` -> the monomorphic Option<Struct> family (lazily made).
+            } else if ((inner_type->kind == TYPE_STRUCT && inner_type->struct_type.name.length > 0) ||
+                       (inner_type->kind == TYPE_ENUM && enum_name_is_data_enum(inner_type->name))) {
+                // `Struct?` -> the monomorphic Option<Struct> family (lazily made). A
+                // data-carrying enum lowers to a C struct, so `Shape?` gets OptionShape the
+                // same way; the plain-enum branch below still collapses to OptionInt.
                 Type* opt_type = register_option_struct_family(inner_type);
                 if (opt_type) { expr->expr_type = opt_type; return opt_type; }
             } else if (inner_type->kind == TYPE_ENUM &&
@@ -4984,8 +5008,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             Type* inner_type = check_expr(expr->option.value, scope);
             if (!inner_type) return NULL;
             // A user-struct payload gets its own monomorphic family Option<Struct>
-            // (e.g. `Some(User{...})` -> OptionUser), registered on demand.
-            if (inner_type->kind == TYPE_STRUCT && inner_type->struct_type.name.length > 0) {
+            // (e.g. `Some(User{...})` -> OptionUser), registered on demand. A DATA-carrying
+            // enum payload (`Some(Shape::Circle(1.5))` -> OptionShape) takes the same path,
+            // since it is a C struct; a PLAIN enum falls through to OptionInt below.
+            if ((inner_type->kind == TYPE_STRUCT && inner_type->struct_type.name.length > 0) ||
+                (inner_type->kind == TYPE_ENUM && enum_name_is_data_enum(inner_type->name))) {
                 Type* opt_type = register_option_struct_family(inner_type);
                 if (opt_type) { expr->expr_type = opt_type; return opt_type; }
             }
@@ -8075,7 +8102,7 @@ void check_program(Program* prog) {
                             // register_option_struct_family() returns NULL for a PLAIN
                             // enum, which correctly falls through to OptionInt below.
                             Symbol* st = find_symbol(global_scope, inner->token);
-                            if (st && st->type && st->type->kind == TYPE_STRUCT)
+                            if (st && st->type)
                                 struct_opt = register_option_struct_family(st->type);
                         }
                     }

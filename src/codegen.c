@@ -2674,6 +2674,20 @@ const char* get_enum_var_type(const char* var) {
     }
     return NULL;
 }
+// Drop the MOST RECENT record for `var`. Used by scoped binders (an Option match arm's
+// payload) that must not stay visible after their arm: leaving one registered makes a later
+// same-named variable of a different type resolve to this enum. Removes only the newest
+// entry so an outer variable of the same name that was shadowed stays intact -- which is
+// also why get_enum_var_type scans backwards.
+void unregister_enum_var(const char* var) {
+    for (int i = enum_var_count - 1; i >= 0; i--) {
+        if (strcmp(enum_var_map[i].var_name, var) == 0) {
+            for (int j = i; j < enum_var_count - 1; j++) enum_var_map[j] = enum_var_map[j + 1];
+            enum_var_count--;
+            return;
+        }
+    }
+}
 
 // Map a checker-assigned Type* to its C type spelling for a variable declaration.
 // Returns NULL when the type is unknown/unmapped so callers can keep their own

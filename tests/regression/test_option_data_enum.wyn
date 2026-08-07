@@ -1,0 +1,157 @@
+// Regression: an optional of a DATA-CARRYING enum failed codegen everywhere.
+//
+//   enum Shape { Circle(float), Square(int) }
+//   fn pick(n: int) -> Shape? { ... }        // internal codegen error
+//
+// A plain enum is an `int` in C so its optional is the builtin OptionInt; a data-carrying
+// enum lowers to a C *struct* (a tagged union) and needs the monomorphic Option<Enum> family
+// that a user struct gets. Codegen already knew this -- wyn_option_family() produced
+// OptionShape correctly -- but three separate places did not:
+//
+//  1. THE CHECKER typed the signature as OptionInt. register_option_struct_family() bailed on
+//     `kind != TYPE_STRUCT`, and a data enum's Type is TYPE_ENUM, so `fn pick() -> Shape?`
+//     emitted `OptionInt __match_opt_1 = pick(1);` against a function returning OptionShape.
+//     (A comment there claimed the data enum "takes the same path" -- it did not.)
+//  2. THE MATCH-ARM BINDER was not recorded as an enum var, so a NESTED
+//     `match v { Circle(r) => ... }` inside the Some arm could not resolve v's enum. The
+//     parser marks any data-carrying variant pattern with option.is_some, so the inner match
+//     was misclassified as an OPTION match and emitted `OptionInt __match_opt_2 = v;`.
+//  3. THE OPTION FAMILY WAS EMITTED TOO LATE for a struct field: the per-declaration hook
+//     existed for STMT_STRUCT but not STMT_ENUM, so `struct Holder { s: Shape? }` referenced
+//     OptionShape before its typedef ("unknown type name 'OptionShape'").
+//
+// Each is fixed at the authority rather than at the use: accepting a data enum inside
+// register_option_struct_family covers all five of its callers.
+//
+// STILL BROKEN, filed separately, deliberately not fixed here:
+//   * `v = a.unwrap()` followed by `match v` -- the match is generated BEFORE v's enum-var
+//     registration, so the lookup returns NULL on the first pass (probed: get_enum_var(v)
+//     -> NULL, then -> Shape). An ordering bug in the method-call var-decl path, not a
+//     missing registration.
+//   * `[Shape]` (an ARRAY of data enums) -- pre-existing, fails identically on baseline
+//     2bd5a6c, unrelated to optionals.
+//
+// EXPECT: some
+// EXPECT: correctly none
+// EXPECT: circle r=1.5
+// EXPECT: square n=7
+// EXPECT: payload-free variant in an optional
+// EXPECT: plain enum optional still works
+// EXPECT: plain enum optional none
+// EXPECT: param some
+// EXPECT: param none
+// EXPECT: local some
+// EXPECT: is_some=1 is_none=0
+// EXPECT: struct field some
+// EXPECT: struct field none
+
+enum Shape { Circle(float), Square(int), Empty }
+enum Plain { Red, Green }
+
+struct Holder { s: Shape? }
+
+fn pick(n: int) -> Shape? {
+    if n == 1 { return Some(Shape::Circle(1.5)) }
+    if n == 2 { return Some(Shape::Square(7)) }
+    if n == 3 { return Some(Shape::Empty) }
+    return None
+}
+
+fn pick_plain(n: int) -> Plain? {
+    if n > 0 { return Some(Plain::Red) }
+    return None
+}
+
+// A data-enum optional as a PARAMETER.
+fn describe(s: Shape?) -> string {
+    match s {
+        Some(v) => return "param some"
+        None => return "param none"
+    }
+}
+
+fn main() {
+    // 1. the signature: match on a returned Shape?
+    match pick(1) {
+        Some(v) => print("some")
+        None => print("wrong none")
+    }
+    match pick(0) {
+        Some(v) => print("wrong some")
+        None => print("correctly none")
+    }
+
+    // 2. NESTED match -- use the payload, which is the whole point of a data enum.
+    // Asserting the payload VALUE, not just that the arm was taken: a binder wired to the
+    // wrong union member would still select the right arm.
+    match pick(1) {
+        Some(v) => {
+            match v {
+                Circle(r) => print("circle r=${r}")
+                Square(n) => print("wrong square")
+                Empty => print("wrong empty")
+            }
+        }
+        None => print("wrong none")
+    }
+    match pick(2) {
+        Some(v) => {
+            match v {
+                Circle(r) => print("wrong circle")
+                Square(n) => print("square n=${n}")
+                Empty => print("wrong empty")
+            }
+        }
+        None => print("wrong none")
+    }
+
+    // A payload-FREE variant of a data-carrying enum, inside the optional.
+    match pick(3) {
+        Some(v) => {
+            match v {
+                Circle(r) => print("wrong circle")
+                Square(n) => print("wrong square")
+                Empty => print("payload-free variant in an optional")
+            }
+        }
+        None => print("wrong none")
+    }
+
+    // 3. A PLAIN enum optional must still collapse to OptionInt and keep working -- that is
+    // the arm a careless widening of the guard would break.
+    match pick_plain(1) {
+        Some(p) => print("plain enum optional still works")
+        None => print("wrong plain none")
+    }
+    match pick_plain(0) {
+        Some(p) => print("wrong plain some")
+        None => print("plain enum optional none")
+    }
+
+    // 4. as a parameter
+    print(describe(pick(1)))
+    print(describe(pick(0)))
+
+    // 5. an annotated local
+    var v: Shape? = Some(Shape::Square(3))
+    match v {
+        Some(x) => print("local some")
+        None => print("wrong local none")
+    }
+
+    // 6. the is_some/is_none surface
+    a = pick(1)
+    print("is_some=${a.is_some()} is_none=${a.is_none()}")
+
+    // 7. as a STRUCT FIELD -- this is the emission-ordering arm.
+    h = Holder { s: Some(Shape::Circle(2.5)) }
+    match h.s {
+        Some(x) => print("struct field some")
+        None => print("wrong field none")
+    }
+    h2 = Holder { s: None }
+    match h2.s {
+        Some(x) => print("wrong field some")
+        None => print("struct field none")
+    }
+}

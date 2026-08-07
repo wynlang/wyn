@@ -524,6 +524,19 @@ void codegen_program(Program* prog) {
                 extern int is_registered_result_struct(const char*);
                 if (is_registered_result_struct(_sn)) emit_result_struct_family(_sn);
             }
+            // A DATA-carrying enum needs the same hook: its Option<Enum> family names the
+            // enum's own C struct, and a LATER struct may hold that family as a field
+            // (`struct Holder { s: Shape? }` -> `OptionShape s;`). Without emitting here,
+            // the family only appeared in the catch-all further below -- i.e. AFTER Holder --
+            // and the C compile failed with "unknown type name 'OptionShape'".
+            // emit_option_struct_family dedups, so the catch-all remains harmless.
+            if (s->type == STMT_ENUM) {
+                char _en[96]; token_to_cstr(_en, sizeof(_en), s->enum_decl.name);
+                extern int is_registered_option_struct(const char*);
+                if (is_registered_option_struct(_en)) emit_option_struct_family(_en);
+                extern int is_registered_result_struct(const char*);
+                if (is_registered_result_struct(_en)) emit_result_struct_family(_en);
+            }
             // For imported enums, emit module-prefixed typedef and constructor aliases
             if (s->type == STMT_ENUM && prog->stmts[i]->type == STMT_EXPORT) {
                 char ename[128]; token_to_cstr(ename, sizeof(ename), s->enum_decl.name);
@@ -1976,6 +1989,21 @@ void codegen_match_statement(Stmt* stmt) {
                             mc->pattern->option.inner->ident.name.start, _omid);
                         if (_obind_str) { char _sv[256]; token_to_cstr(_sv, sizeof(_sv), mc->pattern->option.inner->ident.name);
                             extern void register_string_var(const char*); register_string_var(_sv); }
+                        // If the payload is a DATA-carrying enum, record the binder's enum
+                        // type for the arm body. A nested `match v { Circle(r) => ... }`
+                        // resolves the matched value's enum via get_enum_var_type(); without
+                        // this the binder is unknown, so the inner match is misclassified as
+                        // an OPTION match (the parser marks any data-carrying variant pattern
+                        // with option.is_some) and emitted `OptionInt __match_opt_2 = v;`
+                        // against a plain Shape. Mirrors the string-var registration above.
+                        {
+                            extern int is_data_enum_type(const char*);
+                            extern void register_enum_var(const char*, const char*);
+                            if (is_data_enum_type(_octy)) {
+                                char _ev[256]; token_to_cstr(_ev, sizeof(_ev), mc->pattern->option.inner->ident.name);
+                                register_enum_var(_ev, _octy);
+                            }
+                        }
                     }
                     emit("        ");
                     if (mc->body) codegen_stmt(mc->body);
@@ -1986,6 +2014,13 @@ void codegen_match_statement(Stmt* stmt) {
                         mc->pattern->option.inner->type == PATTERN_IDENT) {
                         char _ub[256]; token_to_cstr(_ub, sizeof(_ub), mc->pattern->option.inner->ident.name);
                         extern void unregister_string_var(const char*); unregister_string_var(_ub);
+                        // Same scoping rule for the enum-var record: the binder does not
+                        // exist outside this arm, so leaving it registered would make a
+                        // later same-named variable of a different type resolve to this
+                        // enum. (Dispatch-table leaks of exactly this kind were found by
+                        // dogfooding WynJS -- see the str_array/int_array var-name leaks.)
+                        extern void unregister_enum_var(const char*);
+                        unregister_enum_var(_ub);
                     }
                     emit("    }");
                 } else if (mc->pattern->type == PATTERN_OPTION && !mc->pattern->option.is_some) {
