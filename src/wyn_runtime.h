@@ -2663,11 +2663,20 @@ bool char_is_alpha(char x) { return (x >= 'A' && x <= 'Z') || (x >= 'a' && x <= 
 bool char_is_numeric(char x) { return x >= '0' && x <= '9'; }
 bool char_is_alphanumeric(char x) { return char_is_alpha(x) || char_is_numeric(x); }
 bool char_is_whitespace(char x) { return x == ' ' || x == '\t' || x == '\n' || x == '\r'; }
+// String.from_chars accepts an array of one-character STRINGS or of integer code points.
+// It used to read .data.string_val unconditionally, so `String.from_chars([65, 66, 67])`
+// dereferenced the integer 65 as a pointer and SEGFAULTED -- a type confusion, since codegen
+// emits array_push_int for an int literal array. WynValue carries a type tag, so dispatch on
+// it rather than guessing from the call site.
 char* String_from_chars(WynArray arr) {
     char* r = wyn_str_alloc(arr.count + 1);
     for (int i = 0; i < arr.count; i++) {
-        const char* s = arr.data[i].data.string_val;
-        r[i] = (s && *s) ? s[0] : 0;
+        if (arr.data[i].type == WYN_TYPE_INT) {
+            r[i] = (char)arr.data[i].data.int_val;
+        } else {
+            const char* s = arr.data[i].data.string_val;
+            r[i] = (s && *s) ? s[0] : 0;
+        }
     }
     r[arr.count] = 0;
     return r;
