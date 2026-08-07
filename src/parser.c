@@ -344,6 +344,34 @@ static void expect_module_name(const char* message) {
     expect(TOKEN_IDENT, message);
 }
 
+// `import {x} from m as u` has never been supported: an alias renames a whole MODULE, while
+// a selective import binds the names directly, so there is nothing for the alias to attach
+// to. Without this check the selective-import parse just ENDED at the module name and the
+// leftover `as u` was parsed as two expression statements:
+//     Error: Undefined variable 'as'   Did you mean: Os?
+//     Error: Undefined variable 'u'    Did you mean: Db?
+// -- two errors about variables that do not exist, plus nonsense suggestions, for what is a
+// syntax question. Say what is wrong and name both working forms.
+//
+// Called from BOTH selective-import parse paths (statement_impl and the program-level loop).
+// They are near-duplicates, which is exactly why this is a shared helper: a one-site fix
+// would leave half the programs still reporting "Undefined variable 'as'".
+static void reject_alias_after_selective_import(void) {
+    if (!check_kw("as", 2)) return;
+    const char* hint =
+        "A selective import binds the names directly, so there is no module name for an "
+        "alias to rename. Use `import {a, b} from m` to bind the names, or `import m as u` "
+        "and then call `u.a()`.";
+    if (current_source_file) {
+        show_error_context(current_source_file, parser.current.line, 1,
+                           "'as' cannot be combined with a selective import", hint);
+    } else {
+        fprintf(stderr, "Error at line %d: 'as' cannot be combined with a selective import. "
+                        "%s\n", parser.current.line, hint);
+    }
+    parser.had_error = true;
+}
+
 static Expr* alloc_expr() {
     Expr* e = (Expr*)safe_calloc(1, sizeof(Expr));
     e->_codegen_temp_id = -1;
@@ -2962,10 +2990,12 @@ static Stmt* statement_impl() {
             stmt->import.alias.length = 0;
             stmt->import.path.start = NULL;
             stmt->import.path.length = 0;
-            
+
+            reject_alias_after_selective_import();
+
             return stmt;
         }
-        
+
         // Check for relative imports: root::, self::
         bool is_relative = false;
         char relative_prefix[32] = "";
@@ -4357,7 +4387,9 @@ Program* parse_program() {
                 stmt->import.alias.length = 0;
                 stmt->import.path.start = NULL;
                 stmt->import.path.length = 0;
-                
+
+                reject_alias_after_selective_import();
+
                 prog->stmts[prog->count++] = stmt;
                 continue;
             }
