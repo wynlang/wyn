@@ -7132,7 +7132,25 @@ void check_program(Program* prog) {
                     struct_type->struct_type.field_types[_fi] = ft ? ft : builtin_int;
                 }
             }
-            add_symbol(global_scope, struct_decl->name, struct_type, false);
+            // A user struct SHADOWS a same-named builtin stdlib namespace.
+            //
+            // init_checker() registers all 42 namespaces (File, Path, Time, Color, Log,
+            // Env, Task, ...) as global symbols typed `int`, and it runs before parsing, so
+            // it cannot know what the program declares. add_symbol appends without
+            // replacing and find_symbol returns the FIRST hash match, so the namespace won
+            // and `struct Path` resolved to an int -- which surfaced far away as
+            // "Type mismatch at line 1:0 / Expected: enum, Got: string", naming neither the
+            // struct nor a real line. Retyping the existing symbol here makes the user's
+            // declaration win, which is the only sensible resolution: a struct and a
+            // namespace are different kinds of name, and only the struct is in this file.
+            {
+                Symbol* prior = find_symbol(global_scope, struct_decl->name);
+                if (prior && prior->type && prior->type->kind != TYPE_STRUCT) {
+                    prior->type = struct_type;
+                } else {
+                    add_symbol(global_scope, struct_decl->name, struct_type, false);
+                }
+            }
         } else if (pass0_stmt->type == STMT_ENUM) {
             // Register enum type and variants early so functions can use them
             EnumStmt* enum_decl = &pass0_stmt->enum_decl;
