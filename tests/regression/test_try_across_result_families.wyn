@@ -1,0 +1,64 @@
+// Feature: `?` propagates an error outward when the two functions' Result OK types differ.
+//
+// `?` emitted `return __try_N` unconditionally - returning the INNER function's Result
+// family from a function declared as the OUTER one:
+//
+//     fn inner() -> Result<int, string>
+//     fn outer() -> Result<string, string> { var v = inner()? ... }
+//
+//   -> error: returning 'ResultInt' from a function with incompatible result type
+//      'ResultString'
+//
+// after `wyn check` reported no errors: the v1.21 soundness rule (what checks must build),
+// and this is that plan's "S4" item.
+//
+// Propagating an error outward through `?` is THE canonical use of the operator, and the
+// ok types differing is the NORMAL case - `parse() ?` inside a function that returns
+// something else entirely. The same-family case worked, which is why this survived: the
+// smallest test of `?` passes.
+//
+// Fixed by re-wrapping through the OUTER family's generated `_Err` constructor (every
+// family has one), and ONLY when the families actually differ, so the commoner
+// same-family path emits exactly as before.
+
+fn inner_int() -> Result<int, string> { return Ok(7) }
+fn inner_fails() -> Result<int, string> { return Err("boom") }
+
+// int -> string: the reported shape.
+fn to_string_res() -> Result<string, string> {
+    var v = inner_int()?
+    return Ok("v${v}")
+}
+
+// int -> float: a different ok family again, so this is not special-cased to string.
+fn to_float_res() -> Result<float, string> {
+    var v = inner_int()?
+    return Ok(1.5 + v)
+}
+
+// The ERROR path across families - the whole point of the operator. If the re-wrap
+// dropped or mangled the payload this prints the wrong text rather than failing to build.
+fn propagates_err() -> Result<string, string> {
+    var v = inner_fails()?
+    return Ok("unreachable${v}")
+}
+
+// CONTROL: same family in and out. This path is unchanged and much the commoner one;
+// if the fix had re-wrapped unconditionally it would still work, so this is here to
+// catch a regression in the ordinary case rather than to prove the fix.
+fn same_family() -> Result<int, string> {
+    var v = inner_int()?
+    return Ok(v + 1)
+}
+
+fn main() -> int {
+    match to_string_res() { Ok(s) => println(s), Err(e) => println("err ${e}") }
+    match to_float_res() { Ok(f) => println("${f}"), Err(e) => println("err ${e}") }
+    match propagates_err() { Ok(s) => println(s), Err(e) => println("got:${e}") }
+    match same_family() { Ok(v) => println("${v}"), Err(e) => println("err ${e}") }
+    return 0
+}
+// EXPECT: v7
+// EXPECT: 8.5
+// EXPECT: got:boom
+// EXPECT: 8
