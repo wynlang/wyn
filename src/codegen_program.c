@@ -313,14 +313,11 @@ void codegen_program(Program* prog) {
                 const char* fam = "OptionInt";
                 static char _osfam[128];
                 if (inr && inr->type == EXPR_IDENT) {
-                    if (inr->token.length == 6 && memcmp(inr->token.start, "string", 6) == 0) fam = "OptionString";
-                    else if (inr->token.length == 5 && memcmp(inr->token.start, "float", 5) == 0) fam = "OptionFloat";
-                    else if (inr->token.length == 4 && memcmp(inr->token.start, "bool", 4) == 0) fam = "OptionBool";
-                    else {
-                        char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inr->token);
-                        extern int is_known_struct(const char*);
-                        if (is_known_struct(_stn)) { snprintf(_osfam, sizeof(_osfam), "Option%s", _stn); fam = _osfam; }
-                    }
+                    // Recorded fn return family — same authority as the signature.
+                    char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inr->token);
+                    extern const char* wyn_option_family(const char*, const char**, int*);
+                    snprintf(_osfam, sizeof(_osfam), "%s", wyn_option_family(_stn, NULL, NULL));
+                    fam = _osfam;
                 }
                 register_fn_return_type(_fn, fam);
             } else if (fn_stmt->fn.return_type && fn_stmt->fn.return_type->type == EXPR_CALL &&
@@ -960,12 +957,23 @@ void codegen_program(Program* prog) {
                             if (fn->return_type->call.arg_count > 0 &&
                                 fn->return_type->call.args[0]->type == EXPR_IDENT) {
                                 Token inner = fn->return_type->call.args[0]->token;
-                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
-                                    return_type = "ResultString";
-                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)
-                                    return_type = "ResultFloat";
-                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
-                                    return_type = "ResultBool";
+                                extern const char* result_family_err_suffix(Expr*);
+                                // This FORWARD DECLARATION must name the same family as
+                                // the definition (codegen_stmt) — a primitive ok payload
+                                // uses the builtin only for a string E, else its own
+                                // `Result<Tag>_<ErrTag>` family. Disagreeing here emits
+                                // "conflicting types for '<fn>'".
+                                const char* _rsuf = result_family_err_suffix(fn->return_type);
+                                const char* _rtag = NULL;
+                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)     _rtag = "String";
+                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0) _rtag = "Float";
+                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)  _rtag = "Bool";
+                                else if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)    _rtag = "Int";
+                                if (_rtag) {
+                                    snprintf(return_type_buf, sizeof(return_type_buf), "Result%s%s",
+                                             _rtag, _rsuf);
+                                    return_type = return_type_buf;
+                                }
                                 else {
                                     // `Result<Struct, E>` -> the monomorphic
                                     // Result<Struct,E> family (ResultPoint,
@@ -1029,18 +1037,14 @@ void codegen_program(Program* prog) {
                     Expr* inner = fn->return_type->optional_type.inner_type;
                     if (inner && inner->type == EXPR_IDENT) {
                         Token t = inner->token;
-                        if (t.length == 3 && memcmp(t.start, "int", 3) == 0) return_type = "OptionInt";
-                        else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return_type = "OptionString";
-                        else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) return_type = "OptionFloat";
-                        else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) return_type = "OptionBool";
-                        else {
-                            char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
-                            extern int is_known_struct(const char*);
-                            if (is_known_struct(_stn)) {
-                                static char _osfd[128];
-                                snprintf(_osfd, sizeof(_osfd), "Option%s", _stn);
-                                return_type = _osfd;
-                            } else return_type = "WynOptional*";
+                        // Same authority as the DEFINITION in codegen_stmt — they must
+                        // name the same family or C reports "conflicting types for '<fn>'".
+                        {
+                            char _ptn[96]; token_to_cstr(_ptn, sizeof(_ptn), t);
+                            extern const char* wyn_option_family(const char*, const char**, int*);
+                            static char _offd[128];
+                            snprintf(_offd, sizeof(_offd), "%s", wyn_option_family(_ptn, NULL, NULL));
+                            return_type = _offd;
                         }
                     } else {
                         return_type = "WynOptional*";
@@ -1248,9 +1252,11 @@ void codegen_program(Program* prog) {
                             else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) param_type = "OptionFloat";
                             else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) param_type = "OptionBool";
                             else {
+                                // Same authority as the definition side.
                                 char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
-                                extern int is_known_struct(const char*);
-                                if (is_known_struct(_stn)) { snprintf(_opbuf, sizeof(_opbuf), "Option%s", _stn); param_type = _opbuf; }
+                                extern const char* wyn_option_family(const char*, const char**, int*);
+                                snprintf(_opbuf, sizeof(_opbuf), "%s", wyn_option_family(_stn, NULL, NULL));
+                                param_type = _opbuf;
                             }
                         }
                     }
@@ -1942,10 +1948,18 @@ void codegen_match_statement(Stmt* stmt) {
                 else if (strcmp(_n, "OptionFloat") == 0) { _ofam = "OptionFloat"; _octy = "double"; }
                 else if (strcmp(_n, "OptionBool") == 0) { _ofam = "OptionBool"; _octy = "bool"; }
                 else if (strncmp(_n, "Option", 6) == 0 && strcmp(_n, "OptionInt") != 0) {
-                    // Monomorphic Option<Struct> (e.g. OptionUser): payload is the
-                    // struct value, bound by value (no string registration).
-                    snprintf(_ofam_buf, sizeof(_ofam_buf), "%s", _n); _ofam = _ofam_buf;
-                    snprintf(_octy_buf, sizeof(_octy_buf), "%s", _n + 6); _octy = _octy_buf;
+                    // Monomorphic Option<Name> (OptionUser, OptionShape): the payload is
+                    // the struct value, bound by value. Ask THE authority for the payload
+                    // C type rather than assuming it is the name minus "Option" — for a
+                    // DATA-carrying enum the family is Option<Enum> while the payload C
+                    // type is the enum's own struct typedef, and for a PLAIN enum the
+                    // family collapses to OptionInt (so this branch is not even reached).
+                    extern const char* wyn_option_family(const char*, const char**, int*);
+                    const char* _pcty = NULL;
+                    const char* _pfam = wyn_option_family(_n + 6, &_pcty, NULL);
+                    snprintf(_ofam_buf, sizeof(_ofam_buf), "%s", _pfam); _ofam = _ofam_buf;
+                    snprintf(_octy_buf, sizeof(_octy_buf), "%s", _pcty ? _pcty : _n + 6);
+                    _octy = _octy_buf;
                 }
             }
             emit("    %s __match_opt_%d = ", _ofam, _omid);

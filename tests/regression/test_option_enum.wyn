@@ -1,0 +1,68 @@
+// Regression: `Option<Enum>` (`-> Code?`, `c: Code?`) failed the C compile after
+// `wyn check` reported no errors. The optional-type lowering recognized
+// int/string/float/bool and a user STRUCT, but not an enum, so it fell back to the
+// generic boxed `WynOptional*` for the signature — while `Some(Code::Worse)`/`None`
+// produced the monomorphic `OptionInt` family (correct: an enum IS an int in C).
+// The two disagreed:
+//   error: returning 'OptionInt' from a function with incompatible result type
+//          'WynOptional *'
+//   error: initializing 'OptionInt' with an expression of incompatible type
+//          'WynOptional *'
+// Failed in BOTH positions — as a function return type and as a local var
+// annotation. A struct optional (`-> P?`) was unaffected.
+//
+// EXPECT: some worse
+// EXPECT: none
+// EXPECT: var worse
+// EXPECT: field bad
+enum Code {
+    Bad
+    Worse
+}
+
+struct Holder {
+    tag: Code
+}
+
+fn get(n: int) -> Code? {
+    if n < 0 {
+        return None
+    }
+    return Some(Code::Worse)
+}
+
+fn main() {
+    match get(1) {
+        Some(c) => {
+            if c == Code::Worse {
+                print("some worse")
+            } else {
+                print("some bad")
+            }
+        }
+        None => print("none")
+    }
+    match get(-1) {
+        Some(c) => print("some")
+        None => print("none")
+    }
+    // Local var annotation — the second failing position.
+    v: Code? = Some(Code::Worse)
+    match v {
+        Some(c) => {
+            if c == Code::Worse {
+                print("var worse")
+            } else {
+                print("var bad")
+            }
+        }
+        None => print("var none")
+    }
+    // An enum kept in a struct field still round-trips.
+    h = Holder { tag: Code::Bad }
+    if h.tag == Code::Bad {
+        print("field bad")
+    } else {
+        print("field worse")
+    }
+}

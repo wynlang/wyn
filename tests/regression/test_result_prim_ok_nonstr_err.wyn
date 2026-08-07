@@ -1,0 +1,85 @@
+// Regression: `Result<Prim, E>` where the OK payload is a PRIMITIVE and the error
+// type E is NOT a string. #181/#182 generalized the err payload only for a STRUCT
+// ok-payload (which routes through the `register_result_family` registry); a
+// primitive ok-payload still collapsed to the builtin `ResultInt`/`ResultString`/...
+// family, whose `err_value` is hardcoded `const char*`. That silently DISCARDED E:
+//   - `Result<int, Fail>` (struct err)  -> C error "passing 'Fail' to parameter of
+//     incompatible type 'const char *'" AFTER `wyn check` reported no errors.
+//   - `Result<int, int>` (scalar err)   -> compiled, then stored 99 in a
+//     `const char*` err_value and SEGFAULTED reading it back.
+// Both arms below must bind the Err payload with E's real C type.
+//
+// An ENUM error type is covered too: the checker used to report it as un-nameable
+// and fall back to the `string` family while codegen named `Result<Ok>_<Enum>`, so
+// the two disagreed ("unknown method 'ResultP.Code_Err'"). That mismatch predates
+// the primitive-ok work and broke a STRUCT ok payload as well.
+//
+// EXPECT: ok 10
+// EXPECT: err code=42 msg=negative
+// EXPECT: scalar ok 10
+// EXPECT: scalar err 99
+// EXPECT: enum ok 10
+// EXPECT: enum err WORSE
+enum Code {
+    Bad
+    Worse
+}
+
+struct Fail {
+    code: int
+    msg: string
+}
+
+fn risky(n: int) -> Result<int, Fail> {
+    if n < 0 {
+        return Err(Fail { code: 42, msg: "negative" })
+    }
+    return Ok(n * 2)
+}
+
+fn scalar_err(n: int) -> Result<int, int> {
+    if n < 0 {
+        return Err(99)
+    }
+    return Ok(n * 2)
+}
+
+fn enum_err(n: int) -> Result<int, Code> {
+    if n < 0 {
+        return Err(Code::Worse)
+    }
+    return Ok(n * 2)
+}
+
+fn main() {
+    match risky(5) {
+        Ok(v) => print("ok ${v}")
+        Err(e) => print("err code=${e.code} msg=${e.msg}")
+    }
+    match risky(-1) {
+        Ok(v) => print("ok ${v}")
+        Err(e) => print("err code=${e.code} msg=${e.msg}")
+    }
+    match scalar_err(5) {
+        Ok(v) => print("scalar ok ${v}")
+        Err(e) => print("scalar err ${e}")
+    }
+    match scalar_err(-1) {
+        Ok(v) => print("scalar ok ${v}")
+        Err(e) => print("scalar err ${e}")
+    }
+    match enum_err(5) {
+        Ok(v) => print("enum ok ${v}")
+        Err(e) => print("enum err other")
+    }
+    match enum_err(-1) {
+        Ok(v) => print("enum ok ${v}")
+        Err(e) => {
+            if e == Code::Worse {
+                print("enum err WORSE")
+            } else {
+                print("enum err other")
+            }
+        }
+    }
+}

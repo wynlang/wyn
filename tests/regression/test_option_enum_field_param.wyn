@@ -1,0 +1,83 @@
+// Regression: an enum optional (`Code?`) was rejected in two positions that a STRUCT
+// optional (`P?`) has always accepted — so the cause was enum-specific, not optional-
+// specific. Both were CHECKER rejections of valid code (not miscompiled C), and both
+// predate the `Option<Enum>` signature fix.
+//
+//   (1) STRUCT FIELD — `struct Holder { tag: Code? }` then `h.tag` reported
+//       "struct 'Holder' has no field 'tag'". The field-type resolver built the family
+//       name `OptionCode` and looked it up; only `Option<Struct>` families are
+//       registered under such a name, so the lookup missed and it returned NULL, which
+//       reads to the caller as "no such field". A plain enum's family is `OptionInt`
+//       (an enum is an int in C).
+//
+//   (2) PARAMETER — `fn take(c: Code?)` reported
+//       "Type mismatch / Expected: optional (Option<T>) / Got: struct (struct)"
+//       at a bogus 0:0 source location.
+//
+// EXPECT: field some worse
+// EXPECT: field none
+// EXPECT: param some
+// EXPECT: param none
+// EXPECT: roundtrip worse
+enum Code {
+    Bad
+    Worse
+}
+
+struct Holder {
+    name: string
+    tag: Code?
+}
+
+fn take(c: Code?) -> int {
+    match c {
+        Some(v) => {
+            return 1
+        }
+        None => {
+            return 0
+        }
+    }
+}
+
+fn main() {
+    // (1) enum optional as a struct field — read it back and match on it.
+    h = Holder { name: "h", tag: Some(Code::Worse) }
+    match h.tag {
+        Some(v) => {
+            if v == Code::Worse {
+                print("field some worse")
+            } else {
+                print("field some bad")
+            }
+        }
+        None => print("field none")
+    }
+    empty = Holder { name: "e", tag: None }
+    match empty.tag {
+        Some(v) => print("field some")
+        None => print("field none")
+    }
+    // (2) enum optional as a parameter, both variants.
+    if take(Some(Code::Bad)) == 1 {
+        print("param some")
+    } else {
+        print("param bad")
+    }
+    if take(None) == 0 {
+        print("param none")
+    } else {
+        print("param bad")
+    }
+    // The payload VALUE must survive the field round-trip, not just the tag.
+    match h.tag {
+        Some(v) => {
+            if v == Code::Worse {
+                print("roundtrip worse")
+            } else {
+                print("roundtrip bad")
+            }
+        }
+        None => print("roundtrip none")
+    }
+}

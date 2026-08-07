@@ -1444,6 +1444,68 @@ int wyn_struct_field_is_string(const char* struct_name, const char* field_name) 
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// THE Option-family authority.
+//
+// `T?` lowers to a concrete C family, and the mapping from T to that family was
+// re-derived independently at ~12 sites (fn return type, its forward declaration,
+// param type, its forward declaration, local var annotation, struct field decl,
+// struct-literal field, the ctor for Some()/None, the match temp, current_fn_return_kind,
+// …). Every one of them open-coded the same if-chain, so adding a payload kind meant
+// finding and fixing all twelve — and missing one produced a C type mismatch between two
+// halves of the same program ("conflicting types for 'get'", "returning 'OptionInt' from
+// a function with incompatible result type 'OptionShape'"). That is exactly how the
+// data-carrying-enum case stayed broken: seven of the twelve were not enough.
+//
+// wyn_option_family() is the single authority. Give it the Wyn payload type NAME and it
+// returns the C family name, and via out params the payload's C type and whether the
+// payload is a Wyn string. It also registers a monomorphic family when one is needed, so
+// callers cannot forget that step.
+//
+//   int/…    -> OptionInt     (payload `long long`)
+//   string   -> OptionString  (payload `const char*`, is_str = 1)
+//   float    -> OptionFloat   (payload `double`)
+//   bool     -> OptionBool    (payload `bool`)
+//   <Struct> -> Option<Name>  (payload is the struct, by value)   [registered]
+//   <Enum>   -> OptionInt     when PLAIN (an enum is an int in C)
+//            -> Option<Name>  when DATA-carrying (it is a C struct) [registered]
+//
+// Returns a pointer to a static buffer. `payload_cty_out`/`is_str_out` may be NULL.
+/* Both are defined further down in this file; the authority needs them here. */
+void register_option_struct(const char* struct_name);
+int is_data_enum_type(const char* name);
+const char* wyn_option_family(const char* payload_name,
+                              const char** payload_cty_out, int* is_str_out) {
+    static char fam[128];
+    const char* cty = "long long";
+    int is_str = 0;
+    if (strcmp(payload_name, "string") == 0)      { snprintf(fam, sizeof(fam), "OptionString"); cty = "const char*"; is_str = 1; }
+    else if (strcmp(payload_name, "float") == 0)  { snprintf(fam, sizeof(fam), "OptionFloat");  cty = "double"; }
+    else if (strcmp(payload_name, "bool") == 0)   { snprintf(fam, sizeof(fam), "OptionBool");   cty = "bool"; }
+    else if (strcmp(payload_name, "int") == 0)    { snprintf(fam, sizeof(fam), "OptionInt"); }
+    else {
+        extern int is_known_struct(const char*);
+        extern int is_enum_type(const char*);
+        // A user struct, or a DATA-carrying enum: both are C structs, so both get the
+        // monomorphic per-name family with the payload stored by value.
+        if (is_known_struct(payload_name) ||
+            (is_enum_type(payload_name) && is_data_enum_type(payload_name))) {
+            register_option_struct(payload_name);
+            snprintf(fam, sizeof(fam), "Option%s", payload_name);
+            cty = payload_name;
+        }
+        // A PLAIN enum is an int in C, so it shares the builtin OptionInt family.
+        else if (is_enum_type(payload_name)) snprintf(fam, sizeof(fam), "OptionInt");
+        // Unknown name (e.g. a type from a module this pass cannot see): keep the
+        // historical by-name struct guess rather than silently becoming an int.
+        else { register_option_struct(payload_name);
+               snprintf(fam, sizeof(fam), "Option%s", payload_name); cty = payload_name; }
+    }
+    if (payload_cty_out) *payload_cty_out = cty;
+    if (is_str_out) *is_str_out = is_str;
+    return fam;
+}
+
 int get_struct_field_option_family(const char* struct_name, const char* field_name,
                                    char* out, size_t outsz) {
     extern Program* current_program;
@@ -1473,12 +1535,10 @@ int get_struct_field_option_family(const char* struct_name, const char* field_na
             }
             if (!inner || inner->type != EXPR_IDENT) return 0;
             Token t = inner->token;
-            if (t.length == 3 && memcmp(t.start, "int", 3) == 0) snprintf(out, outsz, "OptionInt");
-            else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) snprintf(out, outsz, "OptionString");
-            else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) snprintf(out, outsz, "OptionFloat");
-            else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) snprintf(out, outsz, "OptionBool");
-            else { char _stn[96]; snprintf(_stn, sizeof(_stn), "%.*s", t.length, t.start);
-                   snprintf(out, outsz, "Option%s", _stn); }
+            // Struct-literal field family -> THE authority, so a bare `f: Some(x)` /
+            // `f: None` lowers to the same family the field is DECLARED with.
+            { char _stn[96]; snprintf(_stn, sizeof(_stn), "%.*s", t.length, t.start);
+              snprintf(out, outsz, "%s", wyn_option_family(_stn, NULL, NULL)); }
             return 1;
         }
         return 0;
@@ -2361,16 +2421,48 @@ const char* result_family_err_suffix(Expr* return_type) {
     return buf;
 }
 
-// Given ok (a known struct) + err Wyn type names from a `Result<Ok, Err>`
-// annotation, compute the monomorphic family name, register it (with concrete
-// ok/err C types), and return the family name in a static buffer. NULL only when
-// inputs are unusable.
+// Map an ok type-name token (from a `Result<Ok, Err>` annotation) to its C type
+// and its family-name tag. `ok_name` is the Wyn type name ("int"/"string"/"float"/
+// "bool"/<Struct>). A primitive's tag is capitalized so the family name matches the
+// builtin spelling ("int" -> tag "Int", C type `long long`); a struct is its own
+// tag AND its own C type. Returns 1 when the ok payload is a primitive, else 0.
+int result_ok_c_type(const char* ok_name, char* cty_out, size_t cty_sz,
+                     char* tag_out, size_t tag_sz) {
+    if (strcmp(ok_name, "int") == 0) {
+        snprintf(cty_out, cty_sz, "long long"); snprintf(tag_out, tag_sz, "Int");    return 1;
+    }
+    if (strcmp(ok_name, "string") == 0) {
+        snprintf(cty_out, cty_sz, "const char*"); snprintf(tag_out, tag_sz, "String"); return 1;
+    }
+    if (strcmp(ok_name, "float") == 0) {
+        snprintf(cty_out, cty_sz, "double"); snprintf(tag_out, tag_sz, "Float");     return 1;
+    }
+    if (strcmp(ok_name, "bool") == 0) {
+        snprintf(cty_out, cty_sz, "bool"); snprintf(tag_out, tag_sz, "Bool");        return 1;
+    }
+    snprintf(cty_out, cty_sz, "%s", ok_name); snprintf(tag_out, tag_sz, "%s", ok_name);
+    return 0;
+}
+
+// Given ok + err Wyn type names from a `Result<Ok, Err>` annotation, compute the
+// monomorphic family name, register it (with concrete ok/err C types), and return
+// the family name in a static buffer.
+//
+// The ok payload may be a struct (the #181/#182 case) OR a primitive: a primitive
+// ok used to collapse unconditionally to the builtin ResultInt/ResultString/...
+// family, whose `err_value` is hardcoded `const char*`, which silently DISCARDED a
+// non-string E (`Result<int,Fail>` emitted uncompilable C; `Result<int,int>` stored
+// a scalar in a `const char*` and segfaulted). Only a primitive ok paired with a
+// `string` err is a genuine builtin - that one keeps the runtime-header family and
+// is deliberately NOT registered, so it is never re-emitted.
 const char* register_result_family_for_types(const char* ok_name, const char* err_name) {
     static char fam[192];
-    char err_cty[96]; char suffix[96];
+    char ok_cty[96]; char ok_tag[96]; char err_cty[96]; char suffix[96];
+    int ok_is_prim = result_ok_c_type(ok_name, ok_cty, sizeof(ok_cty), ok_tag, sizeof(ok_tag));
     int err_is_str = result_err_c_type(err_name, err_cty, sizeof(err_cty), suffix, sizeof(suffix));
-    snprintf(fam, sizeof(fam), "Result%s%s", ok_name, suffix);
-    register_result_family(fam, ok_name, err_cty, err_is_str);
+    snprintf(fam, sizeof(fam), "Result%s%s", ok_tag, suffix);
+    if (!(ok_is_prim && err_is_str))
+        register_result_family(fam, ok_cty, err_cty, err_is_str);
     return fam;
 }
 

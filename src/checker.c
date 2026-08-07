@@ -630,6 +630,18 @@ static EnumStmt* find_enum_definition(Token enum_name) {
     return NULL;
 }
 
+// True when `enum_name` names a DATA-carrying enum (at least one variant has a
+// payload, e.g. `Circle(float)`). The distinction matters wherever an enum is
+// lowered: a PLAIN enum is an `int` in C (so its Option family is `OptionInt`),
+// while a data-carrying enum is a C *struct* and needs the struct treatment.
+static bool enum_name_is_data_enum(Token enum_name) {
+    EnumStmt* e = find_enum_definition(enum_name);
+    if (!e || !e->variant_type_counts) return false;
+    for (int v = 0; v < e->variant_count; v++)
+        if (e->variant_type_counts[v] > 0) return true;
+    return false;
+}
+
 // Find the enum that declares a variant named `variant` (searching the current
 // program and loaded modules), returning its EnumStmt and, via *out_vi, the
 // variant index. Used to resolve a BARE (unqualified) enum constructor call
@@ -848,10 +860,22 @@ static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
                     else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) fam = "OptionFloat";
                     else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) fam = "OptionBool";
                     else {
-                        // Struct?: reuse the registered Option<Struct> family symbol.
-                        char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
-                        static char _famb[128]; snprintf(_famb, sizeof(_famb), "Option%s", _stn);
-                        fam = _famb;
+                        // A PLAIN enum payload's family is OptionInt (an enum is an int
+                        // in C) — there is no `Option<Enum>` family symbol to find, so
+                        // building the name `OptionCode` made the lookup below MISS and
+                        // return NULL, which the caller reads as "struct 'H' has no
+                        // field 'tag'". A data-carrying enum is a C struct, so it keeps
+                        // the by-name path below.
+                        Symbol* _es = find_symbol(global_scope, t);
+                        if (_es && _es->type && _es->type->kind == TYPE_ENUM &&
+                            !enum_name_is_data_enum(t)) {
+                            fam = "OptionInt";
+                        } else {
+                            // Struct?: reuse the registered Option<Struct> family symbol.
+                            char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
+                            static char _famb[128]; snprintf(_famb, sizeof(_famb), "Option%s", _stn);
+                            fam = _famb;
+                        }
                     }
                 }
                 if (fam) {
@@ -1202,8 +1226,61 @@ static const char* result_err_type_name(Type* err_type) {
             static char b[96]; token_to_cstr(b, sizeof(b), err_type->struct_type.name);
             return b;
         }
+        case TYPE_ENUM: {
+            // A plain enum lowers to a C typedef of its own name, so it is a valid
+            // err payload exactly like a struct. Returning NULL here (the old
+            // behavior) made the checker fall back to the `string` family while
+            // codegen still named `Result<Ok>_<Enum>` — the two disagreed and the
+            // build failed with "unknown method 'ResultP.Code_Err'".
+            if (err_type->name.length == 0) return NULL;
+            static char b[96]; token_to_cstr(b, sizeof(b), err_type->name);
+            return b;
+        }
         default: return NULL;
     }
+}
+
+// The payload type bound by a `Result` match arm. `fam_type` is the family's fake
+// struct type (named "Result<OkTag>" for a string err, "Result<OkTag>_<ErrTag>"
+// otherwise); `want_ok` selects the Ok arm's payload over the Err arm's.
+//
+// Without this, a Result arm binding defaulted to `int`: the checker then accepted
+// nonsense like `e.nope` on a struct error, and codegen could not dispatch
+// `p.msg.len()` or `c.method()` — it emitted an EMPTY receiver, surfacing as
+// "error: expected expression" or "Unknown method 'len' (no type info)".
+// Returns NULL when `fam_type` is not a Result family or the payload is unresolvable,
+// so callers keep their existing default.
+static Type* result_arm_payload_type(Type* fam_type, bool want_ok) {
+    if (!fam_type || fam_type->kind != TYPE_STRUCT) return NULL;
+    Token fam = fam_type->struct_type.name;
+    if (fam.length <= 6 || memcmp(fam.start, "Result", 6) != 0) return NULL;
+    char buf[192];
+    int len = fam.length - 6;
+    if (len <= 0 || len >= (int)sizeof(buf)) return NULL;
+    memcpy(buf, fam.start + 6, len); buf[len] = '\0';
+    // Split "<OkTag>_<ErrTag>" at the FIRST '_'. No '_' means the bare,
+    // backward-compatible family name, whose error payload is a `string`.
+    char* us = strchr(buf, '_');
+    const char* ok_tag = buf;
+    const char* err_tag = NULL;
+    if (us) { *us = '\0'; err_tag = us + 1; }
+    const char* want = want_ok ? ok_tag : err_tag;
+    if (!want_ok && !err_tag) return builtin_string;
+    if (!want || !*want) return NULL;
+    if (strcmp(want, "String") == 0) return builtin_string;
+    if (strcmp(want, "Int") == 0)    return builtin_int;
+    if (strcmp(want, "Float") == 0)  return builtin_float;
+    if (strcmp(want, "Bool") == 0)   return builtin_bool;
+    if (strcmp(want, "string") == 0) return builtin_string;
+    if (strcmp(want, "int") == 0)    return builtin_int;
+    if (strcmp(want, "float") == 0)  return builtin_float;
+    if (strcmp(want, "bool") == 0)   return builtin_bool;
+    // A user struct or enum payload.
+    Token pn = {TOKEN_IDENT, want, (int)strlen(want), 0};
+    Symbol* ps = find_symbol(global_scope, pn);
+    if (ps && ps->type && (ps->type->kind == TYPE_STRUCT || ps->type->kind == TYPE_ENUM))
+        return ps->type;
+    return NULL;
 }
 
 // Lazily register a monomorphic Result<Ok, Err> family for a user-struct ok-payload
@@ -1221,9 +1298,32 @@ static const char* result_err_type_name(Type* err_type) {
 // concrete C family is emitted after the struct typedefs.
 // Returns the Result Type (a TYPE_STRUCT named after the family).
 static Type* register_result_struct_family_e(Type* struct_type, Type* err_type) {
-    if (!struct_type || struct_type->kind != TYPE_STRUCT || struct_type->struct_type.name.length == 0)
-        return NULL;
-    char sname[96]; token_to_cstr(sname, sizeof(sname), struct_type->struct_type.name);
+    if (!struct_type) return NULL;
+    // The ok payload is either a user struct (#181/#182) or a primitive. A primitive
+    // ok is spelled with the builtin's own tag ("int" -> "Int"), so a `string` error
+    // resolves to the existing builtin family (ResultInt/...) via the find_symbol
+    // check below, while a NON-string error gets its own `_<ErrTag>` family instead
+    // of collapsing onto the builtin (whose err_value is hardcoded `const char*`).
+    char sname[96];
+    const char* ok_tag = NULL;
+    switch (struct_type->kind) {
+        case TYPE_INT:    ok_tag = "Int";    break;
+        case TYPE_STRING: ok_tag = "String"; break;
+        case TYPE_FLOAT:  ok_tag = "Float";  break;
+        case TYPE_BOOL:   ok_tag = "Bool";   break;
+        case TYPE_STRUCT:
+            if (struct_type->struct_type.name.length == 0) return NULL;
+            token_to_cstr(sname, sizeof(sname), struct_type->struct_type.name);
+            ok_tag = sname;
+            break;
+        default: return NULL;
+    }
+    // Wyn-level ok type name handed to codegen (it derives the C type + tag itself).
+    const char* ok_wyn = (struct_type->kind == TYPE_INT)    ? "int"
+                       : (struct_type->kind == TYPE_STRING) ? "string"
+                       : (struct_type->kind == TYPE_FLOAT)  ? "float"
+                       : (struct_type->kind == TYPE_BOOL)   ? "bool"
+                       : sname;
     const char* ename = result_err_type_name(err_type);
     if (!ename) ename = "string";              // unusable err falls back to string
     Type* eff_err = err_type ? err_type : builtin_string;
@@ -1232,8 +1332,8 @@ static Type* register_result_struct_family_e(Type* struct_type, Type* err_type) 
     // Family name: bare "Result<Ok>" for a string error (backward compatible),
     // "Result<Ok>_<ErrTag>" otherwise.
     char fambuf[192];
-    if (strcmp(ename, "string") == 0) snprintf(fambuf, sizeof(fambuf), "Result%s", sname);
-    else                              snprintf(fambuf, sizeof(fambuf), "Result%s_%s", sname, ename);
+    if (strcmp(ename, "string") == 0) snprintf(fambuf, sizeof(fambuf), "Result%s", ok_tag);
+    else                              snprintf(fambuf, sizeof(fambuf), "Result%s_%s", ok_tag, ename);
     char* fam = strdup(fambuf);
     Token fam_tok = {TOKEN_IDENT, fam, (int)strlen(fam), 0};
 
@@ -1267,7 +1367,7 @@ static Type* register_result_struct_family_e(Type* struct_type, Type* err_type) 
     #undef REG_RES_FN
 
     extern const char* register_result_family_for_types(const char*, const char*);
-    register_result_family_for_types(sname, ename);
+    register_result_family_for_types(ok_wyn, ename);
     return res_type;
 }
 // Backward-compatible shim: string-error family.
@@ -4709,6 +4809,16 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 // `Struct?` -> the monomorphic Option<Struct> family (lazily made).
                 Type* opt_type = register_option_struct_family(inner_type);
                 if (opt_type) { expr->expr_type = opt_type; return opt_type; }
+            } else if (inner_type->kind == TYPE_ENUM &&
+                       !enum_name_is_data_enum(inner_type->name)) {
+                // `Enum?` -> OptionInt: a PLAIN enum is an int in C, and OptionInt is
+                // what `Some(Code::X)`/`None` actually produce. Falling through to the
+                // generic TYPE_OPTIONAL below made a `c: Code?` PARAMETER reject its own
+                // argument ("Expected: optional (Option<T>) / Got: struct (struct)").
+                // A data-carrying enum is a C struct, so it keeps the generic fallback.
+                Token oi_name = {TOKEN_IDENT, "OptionInt", 9, 0};
+                Symbol* sym = find_symbol(scope, oi_name);
+                if (sym) { expr->expr_type = sym->type; return sym->type; }
             }
 
             // Fallback: generic optional type
@@ -6287,6 +6397,20 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                                 if (ps && ps->type && ps->type->kind == TYPE_STRUCT) bound_type = ps->type;
                             }
                         }
+                        // Result family Ok(v)/Err(e): bind the arm variable to the real
+                        // payload type (see result_arm_payload_type). Previously only
+                        // the Option families were handled here, so every Result arm
+                        // binding was typed `int`.
+                        {
+                            // Select the arm by VARIANT NAME, not by `is_some`: the
+                            // parser sets is_some=true for any data-carrying variant
+                            // pattern, `Err(e)` included, so is_some cannot tell the
+                            // two Result arms apart. Codegen keys off the name too.
+                            Token _vn = match_case->pattern->option.variant_name;
+                            bool _is_err = (_vn.length == 3 && memcmp(_vn.start, "Err", 3) == 0);
+                            Type* _rp = result_arm_payload_type(match_value_type, !_is_err);
+                            if (_rp) bound_type = _rp;
+                        }
                         if (match_value_type && match_value_type->kind == TYPE_ENUM) {
                             Token variant_name = match_case->pattern->option.variant_name;
                             EnumStmt* enum_def = find_enum_definition(match_value_type->name);
@@ -7855,35 +7979,53 @@ void check_program(Program* prog) {
                             if (fn->return_type->call.arg_count > 0 &&
                                 fn->return_type->call.args[0]->type == EXPR_IDENT) {
                                 Token inner = fn->return_type->call.args[0]->token;
-                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
+                                // Resolve E once, up front: it decides whether a PRIMITIVE
+                                // ok payload may use the builtin family at all. A primitive
+                                // ok with a non-string E must get its own monomorphic family
+                                // — the builtin's err_value is hardcoded `const char*`, so
+                                // reusing it silently discards E (uncompilable C for a struct
+                                // E, a segfault for a scalar E).
+                                Type* err_t = NULL;
+                                if (fn->return_type->call.arg_count > 1 &&
+                                    fn->return_type->call.args[1]->type == EXPR_IDENT) {
+                                    Token en = fn->return_type->call.args[1]->token;
+                                    if (en.length == 6 && memcmp(en.start, "string", 6) == 0) err_t = builtin_string;
+                                    else if (en.length == 3 && memcmp(en.start, "int", 3) == 0) err_t = builtin_int;
+                                    else if (en.length == 5 && memcmp(en.start, "float", 5) == 0) err_t = builtin_float;
+                                    else if (en.length == 4 && memcmp(en.start, "bool", 4) == 0) err_t = builtin_bool;
+                                    else {
+                                        Symbol* es = find_symbol(global_scope, en);
+                                        if (es && es->type) err_t = es->type;
+                                    }
+                                }
+                                int err_is_str = (!err_t || err_t->kind == TYPE_STRING);
+                                Type* prim_ok = NULL;
+                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0) {
                                     concrete = (Token){TOKEN_IDENT, "ResultString", 12, 0};
-                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)
+                                    prim_ok = builtin_string;
+                                } else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0) {
                                     concrete = (Token){TOKEN_IDENT, "ResultFloat", 11, 0};
-                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
+                                    prim_ok = builtin_float;
+                                } else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0) {
                                     concrete = (Token){TOKEN_IDENT, "ResultBool", 10, 0};
-                                else if (inner.length != 3 || memcmp(inner.start, "int", 3) != 0) {
+                                    prim_ok = builtin_bool;
+                                } else if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0) {
+                                    prim_ok = builtin_int;   // `concrete` already ResultInt
+                                }
+                                if (prim_ok) {
+                                    // Primitive ok: builtin family for a string E (unchanged),
+                                    // own `Result<Tag>_<ErrTag>` family otherwise.
+                                    if (!err_is_str)
+                                        struct_res = register_result_struct_family_e(prim_ok, err_t);
+                                } else {
                                     // `Result<Struct, E>` - resolve the user struct and
                                     // make its monomorphic Result<Struct, E> family the
                                     // signature type (mirrors the `-> Struct?` path). The
                                     // error type E is resolved too (string/scalar/struct)
                                     // so the family carries the real err C type.
                                     Symbol* st = find_symbol(global_scope, inner);
-                                    if (st && st->type && st->type->kind == TYPE_STRUCT) {
-                                        Type* err_t = NULL;
-                                        if (fn->return_type->call.arg_count > 1 &&
-                                            fn->return_type->call.args[1]->type == EXPR_IDENT) {
-                                            Token en = fn->return_type->call.args[1]->token;
-                                            if (en.length == 6 && memcmp(en.start, "string", 6) == 0) err_t = builtin_string;
-                                            else if (en.length == 3 && memcmp(en.start, "int", 3) == 0) err_t = builtin_int;
-                                            else if (en.length == 5 && memcmp(en.start, "float", 5) == 0) err_t = builtin_float;
-                                            else if (en.length == 4 && memcmp(en.start, "bool", 4) == 0) err_t = builtin_bool;
-                                            else {
-                                                Symbol* es = find_symbol(global_scope, en);
-                                                if (es && es->type) err_t = es->type;
-                                            }
-                                        }
+                                    if (st && st->type && st->type->kind == TYPE_STRUCT)
                                         struct_res = register_result_struct_family_e(st->type, err_t);
-                                    }
                                 }
                             }
                             if (struct_res) {
@@ -7910,7 +8052,10 @@ void check_program(Program* prog) {
                             concrete = (Token){TOKEN_IDENT, "OptionBool", 10, 0};
                         else if (inner->token.length != 3 || memcmp(inner->token.start, "int", 3) != 0) {
                             // `-> Struct?` - resolve the user struct and make its
-                            // monomorphic Option<Struct> family the signature type.
+                            // monomorphic Option<Struct> family the signature type. A
+                            // DATA-carrying enum takes the same path (it is a C struct);
+                            // register_option_struct_family() returns NULL for a PLAIN
+                            // enum, which correctly falls through to OptionInt below.
                             Symbol* st = find_symbol(global_scope, inner->token);
                             if (st && st->type && st->type->kind == TYPE_STRUCT)
                                 struct_opt = register_option_struct_family(st->type);
