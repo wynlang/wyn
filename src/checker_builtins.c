@@ -1054,7 +1054,13 @@ void init_checker() {
     reg_fn("HashSet_new", set_type, 0);
 
     // Json namespace
-    Type* json_type = make_type(TYPE_MAP); // opaque pointer
+    // TYPE_JSON, not TYPE_MAP. A WynJson* is NOT a WynHashMap*: typing it as a map made
+    // codegen declare `var j = Json.new()` as `WynHashMap*` AND register it for the
+    // scope-exit `hashmap_free()`, so a Json.set() followed by that free walked a WynJson
+    // as a hashmap and ABORTED (exit 134). codegen_stmt.c already maps TYPE_JSON ->
+    // "WynJson*", and the hashmap scope-free only triggers on the WynHashMap* c_type, so
+    // naming the real type fixes both halves.
+    Type* json_type = make_type(TYPE_JSON);
     struct { const char* name; int pc; Type* p1; Type* p2; Type* p3; Type* ret; } json_ns_fns[] = {
         {"Json_new", 0, NULL, NULL, NULL, json_type},
         {"Json_set_string", 3, json_type, builtin_string, builtin_string, builtin_void},
