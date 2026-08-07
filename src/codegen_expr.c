@@ -4609,6 +4609,24 @@ void codegen_expr(Expr* expr) {
                     if (elem_type) {
                         if (elem_type->kind == TYPE_STRUCT) {
                             is_struct_array = true;
+                        } else if (elem_type->kind == TYPE_ENUM && elem_type->name.length > 0 &&
+                                   ({ char _een[128];
+                                      token_to_cstr(_een, sizeof(_een), elem_type->name);
+                                      extern int is_data_enum_type(const char*);
+                                      is_data_enum_type(_een); })) {
+                            // A DATA-carrying enum is a C struct (a tagged union), so an
+                            // indexed read needs array_get_struct with the enum's own C type.
+                            // It used to fall through to array_get_int, which handed a
+                            // `long long` to anything expecting the enum:
+                            //   xs = [Shape.Circle(1.5)]
+                            //   name_of(xs[0])   -> passing 'long long' to parameter of
+                            //                       incompatible type 'Shape'
+                            // for-in over the SAME array already worked, because that path
+                            // makes this distinction with the same is_data_enum_type
+                            // predicate -- only the indexed read was missing it.
+                            // A PLAIN enum is an int in C and correctly stays on the int
+                            // path below.
+                            is_struct_array = true;
                         } else if (elem_type->kind == TYPE_STRING) {
                             is_string_array = true;
                         } else if (elem_type->kind == TYPE_FLOAT) {
@@ -4672,7 +4690,12 @@ void codegen_expr(Expr* expr) {
                         emit(", ");
                         codegen_expr(expr->index.index);
                         emit(", ");
-                        Token type_name = elem_type->struct_type.name;
+                        // A data-carrying enum reaches this branch too, and its name lives in
+                        // Type.name, not Type.struct_type.name -- reading the struct field for
+                        // an enum Type yields an empty token, emitting `array_get_struct(xs, 0, )`.
+                        Token type_name = (elem_type->kind == TYPE_ENUM)
+                                            ? elem_type->name
+                                            : elem_type->struct_type.name;
                         emit("%.*s", type_name.length, type_name.start);
                         emit(")");
                     } else if (is_float_array) {
