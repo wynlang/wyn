@@ -5324,6 +5324,13 @@ static const char* json_parse_value(const char* p, int parent) {
         int last_child = -1;
         p = json_skip_ws(p);
         while (*p && *p != '}') {
+            // Every iteration MUST consume at least one byte. On malformed input -- e.g. a
+            // bare quote inside a value, {"quote": "a"b"} -- the key is not a quoted string,
+            // json_parse_string_raw returns p unmoved, no ':' or ',' follows, and the loop
+            // spins on the same byte forever, allocating a node per pass until the arena
+            // exhausts memory and aborts. That is a remote DoS for any server parsing an
+            // untrusted body, so bail out rather than loop.
+            const char* iter_start = p;
             p = json_skip_ws(p);
             char* key = NULL;
             p = json_parse_string_raw(p, &key);
@@ -5339,6 +5346,7 @@ static const char* json_parse_value(const char* p, int parent) {
             }
             p = json_skip_ws(p);
             if (*p == ',') p++;
+            if (p == iter_start) break;
         }
         if (*p == '}') p++;
     } else if (*p == '[') {
@@ -5347,6 +5355,8 @@ static const char* json_parse_value(const char* p, int parent) {
         int last_child = -1;
         p = json_skip_ws(p);
         while (*p && *p != ']') {
+            // Same progress guarantee as the object loop above.
+            const char* iter_start = p;
             int before = json_node_count;
             p = json_parse_value(p, node);
             if (before < json_node_count) {
@@ -5356,6 +5366,7 @@ static const char* json_parse_value(const char* p, int parent) {
             }
             p = json_skip_ws(p);
             if (*p == ',') p++;
+            if (p == iter_start) break;
         }
         if (*p == ']') p++;
     } else if (*p == 't') { json_nodes[node].type = 'b'; json_nodes[node].num_val = 1; p += 4; }
