@@ -802,7 +802,30 @@ static inline const char* array_get_str_impl(WynArray arr, int index, const char
     if (arr.data[index].type == WYN_TYPE_STRING) return arr.data[index].data.string_val;
     return "";
 }
-#define array_get_struct(arr, idx, T) (*(T*)arr.data[idx].data.struct_val)
+// Resolve the payload pointer for a struct-array element, with the SAME contract as
+// array_get_int_impl: Python-style negative indexing, then a bounds check that panics with
+// the caller's file and line.
+//
+// This used to be a raw macro -- `(*(T*)arr.data[idx].data.struct_val)` -- with no check at
+// all, so a struct array behaved worse than every other array kind in two ways:
+//   * out of bounds SEGFAULTED (no file, no line), where `[int]` panics cleanly. Found by
+//     running the word-counter sample app on an empty file: it reads ranked[0].n to scale a
+//     bar chart.
+//   * a NEGATIVE index read arr.data[-1] and segfaulted, so `xs[-1]` -- which works on
+//     `[int]` and is a documented language feature -- was silently broken for structs.
+// The macro has to stay a macro because the cast needs the element type T; only the pointer
+// resolution moves into a checked helper.
+static inline void* wyn_array_struct_ptr(WynArray arr, int index,
+                                         const char* file, int line) {
+    if (index < 0) index += arr.count;   // Python-style negative index: a[-1] == last
+    if (index < 0 || index >= arr.count) {
+        wyn_oob_panic(index, arr.count, file, line);
+        return NULL;   // wyn_oob_panic exits; this keeps the compiler quiet
+    }
+    return arr.data[index].data.struct_val;
+}
+#define array_get_struct(arr, idx, T) \
+    (*(T*)wyn_array_struct_ptr(arr, idx, __FILE__, __LINE__))
 WynValue array_get(WynArray arr, int index) {
     WynValue val = {0};
     if (index < 0) index += arr.count;   // Python-style negative index
