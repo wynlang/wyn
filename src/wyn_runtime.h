@@ -5319,9 +5319,61 @@ static const char* json_parse_string_raw(const char* p, char** out) {
     const char* start = p;
     while (*p && *p != '"') { if (*p == '\\') p++; p++; }
     int len = p - start;
-    *out = wyn_malloc(len + 1);
-    memcpy(*out, start, len);
-    (*out)[len] = 0;
+    // DECODE the escapes rather than copying them verbatim. This used to memcpy the raw
+    // bytes, so a perfectly valid {"k":"a\"b"} came back as the 4 characters a \ " b -- the
+    // backslash was skipped for the purpose of finding the closing quote but never
+    // translated. A writer that escapes and a reader that does not decode cannot round-trip.
+    // Decoded output is never longer than the input, so len+1 is enough.
+    char* dst = wyn_malloc(len + 1);
+    int w = 0;
+    for (const char* s = start; s < p; s++) {
+        if (*s != '\\' || s + 1 >= p) { dst[w++] = *s; continue; }
+        s++;
+        switch (*s) {
+            case 'n':  dst[w++] = '\n'; break;
+            case 't':  dst[w++] = '\t'; break;
+            case 'r':  dst[w++] = '\r'; break;
+            case 'b':  dst[w++] = '\b'; break;
+            case 'f':  dst[w++] = '\f'; break;
+            case '"':  dst[w++] = '"';  break;
+            case '\\': dst[w++] = '\\'; break;
+            case '/':  dst[w++] = '/';  break;
+            case 'u': {
+                // \uXXXX -> UTF-8. Only the BMP; a surrogate pair decodes as two 3-byte
+                // sequences, which is wrong for astral characters but no worse than the
+                // previous behaviour of emitting the literal text "\ud83d".
+                if (s + 4 < p) {
+                    unsigned cp = 0; int valid = 1;
+                    for (int k = 1; k <= 4; k++) {
+                        char h = s[k]; unsigned d;
+                        if (h >= '0' && h <= '9') d = (unsigned)(h - '0');
+                        else if (h >= 'a' && h <= 'f') d = (unsigned)(h - 'a' + 10);
+                        else if (h >= 'A' && h <= 'F') d = (unsigned)(h - 'A' + 10);
+                        else { valid = 0; break; }
+                        cp = cp * 16 + d;
+                    }
+                    if (valid) {
+                        s += 4;
+                        if (cp < 0x80) dst[w++] = (char)cp;
+                        else if (cp < 0x800) {
+                            dst[w++] = (char)(0xC0 | (cp >> 6));
+                            dst[w++] = (char)(0x80 | (cp & 0x3F));
+                        } else {
+                            dst[w++] = (char)(0xE0 | (cp >> 12));
+                            dst[w++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                            dst[w++] = (char)(0x80 | (cp & 0x3F));
+                        }
+                        break;
+                    }
+                }
+                dst[w++] = 'u';   // malformed \u: keep it literal rather than lose data
+                break;
+            }
+            default: dst[w++] = *s; break;   // unknown escape: keep the character
+        }
+    }
+    dst[w] = 0;
+    *out = dst;
     if (*p == '"') p++;
     return p;
 }
@@ -6285,20 +6337,52 @@ char* Json_to_pretty_string(WynJson* j) {
     char* out = wyn_malloc(rlen * 4 + 1);
     int o = 0, indent = 0;
     int in_str = 0;
+    int pending_nl = 0;   // a line break is owed before the next token (see below)
     for (int i = 0; i < rlen; i++) {
         char c = raw[i];
-        if (c == '"' && (i == 0 || raw[i-1] != '\\')) { in_str = !in_str; out[o++] = c; continue; }
-        if (in_str) { out[o++] = c; continue; }
-        if (c == '{' || c == '[') {
-            out[o++] = c; out[o++] = '\n'; indent += 2;
-            for (int s = 0; s < indent; s++) out[o++] = ' ';
-        } else if (c == '}' || c == ']') {
-            out[o++] = '\n'; indent -= 2;
-            for (int s = 0; s < indent; s++) out[o++] = ' ';
+        if (c == '"') {
+            if (pending_nl) {
+                out[o++] = '\n';
+                for (int s = 0; s < indent; s++) out[o++] = ' ';
+                pending_nl = 0;
+            }
+            // Count the run of preceding backslashes: an ODD run escapes this quote, an even
+            // one does not. `raw[i-1] != '\\'` got this wrong for a value ending in a
+            // backslash ("a\\"), where the closing quote follows a real escaped backslash --
+            // the printer then treated the rest of the document as string content. Only
+            // reachable now that the writer emits backslash escapes at all.
+            int bs = 0;
+            for (int k = i - 1; k >= 0 && raw[k] == '\\'; k--) bs++;
+            if ((bs % 2) == 0) { in_str = !in_str; out[o++] = c; continue; }
             out[o++] = c;
-        } else if (c == ',') {
-            out[o++] = ','; out[o++] = '\n';
+            continue;
+        }
+        if (in_str) { out[o++] = c; continue; }
+        // Outside a string, drop the serializer's own cosmetic spaces -- json_stringify emits
+        // ", " and ": ", and copying those THROUGH while also adding indentation is what
+        // produced the ragged `"a":  "x",\n   "b"` output (two spaces after the colon, three
+        // before the next key).
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') continue;
+        // The newline+indent is emitted LAZILY, just before the next real token, rather than
+        // eagerly after '{'. That is what makes an empty container come out as "{}" instead
+        // of "{\n  \n}" without any rewinding: if nothing follows the brace, no line is ever
+        // opened.
+        if (c == '}' || c == ']') {
+            indent -= 2;
+            if (!pending_nl) { out[o++] = '\n'; for (int s = 0; s < indent; s++) out[o++] = ' '; }
+            pending_nl = 0;
+            out[o++] = c;
+            continue;
+        }
+        if (pending_nl) {
+            out[o++] = '\n';
             for (int s = 0; s < indent; s++) out[o++] = ' ';
+            pending_nl = 0;
+        }
+        if (c == '{' || c == '[') {
+            out[o++] = c; indent += 2; pending_nl = 1;
+        } else if (c == ',') {
+            out[o++] = ','; pending_nl = 1;
         } else if (c == ':') {
             out[o++] = ':'; out[o++] = ' ';
         } else {
