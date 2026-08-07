@@ -5849,7 +5849,30 @@ void codegen_expr(Expr* expr) {
             codegen_expr(expr->try_expr.value);
             extern const char* current_fn_return_kind;
             if (current_fn_return_kind && strncmp(current_fn_return_kind, "Result", 6) == 0) {
-                emit("; if (__try_%d.tag == 1) return __try_%d; __try_%d.data.ok_value; })", _try_id, _try_id, _try_id);
+                // `return __try_N` is only valid when the value's Result family IS the
+                // enclosing function's. Across DIFFERING families it returned the inner
+                // type from a function declared as the outer one:
+                //
+                //     fn inner() -> Result<int, string>
+                //     fn outer() -> Result<string, string> { var v = inner()? ... }
+                //
+                //   -> error: returning 'ResultInt' from a function with incompatible
+                //      result type 'ResultString'
+                //
+                // after passing `wyn check` - the v1.21 soundness rule, and this is its
+                // "S4" item. Propagating an error outward through `?` is THE canonical
+                // use of the operator, so the ok types differing is the normal case, not
+                // an exotic one.
+                //
+                // Re-wrap through the OUTER family's generated _Err constructor, which
+                // every family has. Only when the families actually differ, so the
+                // same-family path (much the commoner one) emits exactly as before.
+                if (strcmp(current_fn_return_kind, _try_fam) != 0) {
+                    emit("; if (__try_%d.tag == 1) return %s_Err(__try_%d.data.err_value); __try_%d.data.ok_value; })",
+                         _try_id, current_fn_return_kind, _try_id, _try_id);
+                } else {
+                    emit("; if (__try_%d.tag == 1) return __try_%d; __try_%d.data.ok_value; })", _try_id, _try_id, _try_id);
+                }
             } else if (_try_err_is_str) {
                 emit("; if (__try_%d.tag == 1) { fprintf(stderr, \"Error: %%s\\n\", __try_%d.data.err_value); exit(1); } __try_%d.data.ok_value; })", _try_id, _try_id, _try_id);
             } else {
