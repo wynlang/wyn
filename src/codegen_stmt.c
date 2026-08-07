@@ -99,6 +99,27 @@ static void codegen_hoist_nested_bare_assigns(Stmt** stmts, int count) {
             } else if (strcmp(ct, "WynArray") == 0) {
                 extern void register_array_var(const char*);
                 register_array_var(vn);
+            } else {
+                // A DATA-carrying enum hoisted here needs its enum type recorded, or a
+                // later `match` on it cannot resolve the enum:
+                //
+                //     v = a.unwrap()          // hoisted as `Shape v = {0};`
+                //     match v { Circle(r) => ... }
+                //
+                // emitted `OptionInt __match_opt_1 = v;` against a plain Shape. The match
+                // resolves the value's enum via get_enum_var_type(), and because the parser
+                // marks any data-carrying variant pattern with option.is_some, an
+                // unresolved binder makes the match look like an OPTION match.
+                //
+                // This pass runs BEFORE body emission, which is why the registration has to
+                // happen here: the c_type is already known ("Shape"), but the per-statement
+                // var-decl path that normally registers it never runs for a hoisted
+                // declaration -- it was demoted to a plain assignment just below. Probing
+                // showed get_enum_var_type(v) returning NULL on the first lookup and Shape
+                // on a later one, which is the signature of exactly that gap.
+                extern int is_data_enum_type(const char*);
+                extern void register_enum_var(const char*, const char*);
+                if (is_data_enum_type(ct)) register_enum_var(vn, ct);
             }
         }
         // Demote the nested declaration to a plain assignment in place.

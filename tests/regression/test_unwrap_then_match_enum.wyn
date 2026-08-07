@@ -1,0 +1,147 @@
+// Regression: `v = a.unwrap()` then `match v` emitted OptionInt against a plain enum.
+//
+//   a = pick(1)                 // Shape?
+//   if a.is_some() {
+//       v = a.unwrap()          // Shape
+//       match v { Circle(r) => ... }
+//   }
+//   -> C: initializing 'OptionInt' with an expression of incompatible type 'Shape'
+//
+// A bare first assignment inside a nested block is HOISTED to the top of the function
+// (`Shape v = {0};`) and the nested declaration is demoted to a plain assignment. That hoist
+// pass registers string vars and array vars for later passes to find, but not ENUM vars -- so
+// the match, which resolves its value's enum via get_enum_var_type(), found nothing. And
+// because the parser marks any data-carrying variant pattern with option.is_some, an
+// unresolved binder makes the match look like an OPTION match, hence the OptionInt temp.
+//
+// The registration has to happen in the hoist pass specifically: it runs BEFORE body
+// emission, and the per-statement var-decl path that normally registers an enum var never
+// runs for a hoisted declaration -- that declaration was demoted to a plain assignment.
+//
+// I originally filed this as an "ordering bug", on the strength of a probe showing
+// get_enum_var_type(v) returning NULL and then Shape. That reading was wrong: the cause is a
+// MISSING registration in the hoist pass, and the two lookups were simply the match's and a
+// later one. Worth stating because "it is an ordering problem" would have sent a fix at the
+// wrong pass entirely.
+//
+// Only a `match v` reproduces. Passing the binder to a FUNCTION (`name_of(v)`) works fine,
+// because the call does not consult get_enum_var_type() -- my first version of this test did
+// exactly that and passed with the fix mutated out.
+//
+// EXPECT: unwrap then match: circle:1.5
+// EXPECT: unwrap the other variant: square:7
+// EXPECT: unwrap a payload-free variant: dot
+// EXPECT: an annotated declaration still works: circle:2.5
+// EXPECT: unwrap_or on a None: dot
+// EXPECT: a plain enum unwrap still works: 1
+// EXPECT: a hoisted string still works: hello
+// EXPECT: a hoisted array still works: 3
+
+enum Shape { Circle(float), Square(int), Dot }
+enum Plain { Up, Down }
+
+fn name_of(s: Shape) -> string {
+    match s {
+        Circle(r) => return "circle:${r}"
+        Square(n) => return "square:${n}"
+        Dot => return "dot"
+    }
+}
+
+fn pick(n: int) -> Shape? {
+    if n == 1 { return Some(Shape::Circle(1.5)) }
+    if n == 2 { return Some(Shape::Square(7)) }
+    if n == 3 { return Some(Shape::Dot) }
+    return None
+}
+
+fn pick_plain(n: int) -> Plain? {
+    if n > 0 { return Some(Plain::Up) }
+    return None
+}
+
+fn main() {
+    // The exact failing shape: a bare `v = ...` inside an `if`, so it gets hoisted.
+    // MATCHING ON THE BINDER DIRECTLY is the failing shape. Passing it to a function
+    // (`name_of(v)`) does NOT reproduce -- my first version of this test did exactly that and
+    // passed even with the fix mutated out. Only a `match v` in the arm body consults
+    // get_enum_var_type().
+    a = pick(1)
+    if a.is_some() {
+        v = a.unwrap()
+        match v {
+            Circle(r) => print("unwrap then match: circle:${r}")
+            Square(n) => print("WRONG square:${n}")
+            Dot => print("WRONG dot")
+        }
+    }
+
+    // A different variant, to prove the binder carries the real payload rather than
+    // defaulting to the first variant.
+    b = pick(2)
+    if b.is_some() {
+        v2 = b.unwrap()
+        match v2 {
+            Circle(r) => print("WRONG circle:${r}")
+            Square(n) => print("unwrap the other variant: square:${n}")
+            Dot => print("WRONG dot")
+        }
+    }
+
+    // A payload-free variant of a data enum, which lowers differently again.
+    c = pick(3)
+    if c.is_some() {
+        v3 = c.unwrap()
+        match v3 {
+            Circle(r) => print("WRONG circle")
+            Square(n) => print("WRONG square")
+            Dot => print("unwrap a payload-free variant: dot")
+        }
+    }
+
+    // An ANNOTATED declaration is not hoisted the same way -- it must keep working, since
+    // that is the path that already registered the enum var.
+    if pick(1).is_some() {
+        var v4: Shape = pick(1).unwrap()
+        print("an annotated declaration still works: ${name_of(Shape::Circle(2.5))}")
+        if name_of(v4) != "circle:1.5" {
+            print("ANNOTATED BROKE: ${name_of(v4)}")
+        }
+    }
+
+    // unwrap_or has the same shape and must resolve the same way.
+    d = pick(0)
+    if d.is_none() {
+        v5 = d.unwrap_or(Shape::Dot)
+        match v5 {
+            Circle(r) => print("WRONG circle")
+            Square(n) => print("WRONG square")
+            Dot => print("unwrap_or on a None: dot")
+        }
+    }
+
+    // A PLAIN enum optional collapses to OptionInt by design -- unwrapping one must still
+    // work, and must NOT be caught by the new is_data_enum_type registration.
+    p = pick_plain(1)
+    if p.is_some() {
+        pv = p.unwrap()
+        n = 0
+        match pv {
+            Up => n = 1
+            Down => n = 2
+        }
+        print("a plain enum unwrap still works: ${n}")
+    }
+
+    // The two registrations that already existed in the hoist pass must be unaffected --
+    // the new branch is an `else` on the same chain, so a mistake there would silently
+    // stop releasing strings or tracking arrays.
+    if 1 == 1 {
+        s = "hello"
+        print("a hoisted string still works: ${s}")
+    }
+    if 1 == 1 {
+        xs = [1, 2, 3]
+        print("a hoisted array still works: ${xs.len()}")
+    }
+}
