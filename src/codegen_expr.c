@@ -2136,6 +2136,34 @@ void codegen_expr(Expr* expr) {
                     // No cast needed for array_push second arg - 
                     // array_push takes long long, array_push_str takes const char*
                     
+                    // A `mut` parameter is passed by POINTER -- `fn bump(mut s: S)` emits
+                    // `void bump(S *s)` -- so the call must take the address. Nothing did, and
+                    // the two symptoms looked like different bugs:
+                    //
+                    //   struct arg: the C compiler REJECTS it --
+                    //     "passing 'S' to parameter of incompatible type 'S *'"
+                    //   int arg:    C accepts the implicit conversion and the callee
+                    //               dereferences the VALUE as an address -> SEGFAULT
+                    //               (`bump_int(i)` with i==5 dereferences address 5).
+                    //
+                    // One cause: `mut` on a free-function parameter was unusable for every
+                    // type. The METHOD form (`impl S { fn bump(mut self) }`) already handled
+                    // this via struct_method_takes_mut_self; this is its free-function
+                    // counterpart, and the int case is why it cannot be scoped to structs.
+                    //
+                    // Scoped to an addressable lvalue (a plain identifier): `&` on a temporary
+                    // or a literal is not valid C. `mut` on a non-lvalue argument is
+                    // meaningless anyway -- there is nothing for the callee to write back to.
+                    if (expr->call.callee->type == EXPR_IDENT && !is_array_push && !is_array_pop) {
+                        char _mcb[128];
+                        token_to_cstr(_mcb, sizeof(_mcb), expr->call.callee->token);
+                        extern bool fn_param_is_mut(const char*, int);
+                        if (fn_param_is_mut(_mcb, i) &&
+                            expr->call.args[i]->type == EXPR_IDENT) {
+                            emit("&");
+                        }
+                    }
+
                     // Check if this argument needs trait object wrapping
                     if (expr->call.callee->type == EXPR_IDENT) {
                         char callee_buf[64];

@@ -1,0 +1,132 @@
+// Regression: `mut` on a FREE FUNCTION parameter was unusable for every type.
+//
+// A `mut` parameter is passed by POINTER -- `fn bump(mut s: S)` emits `void bump(S *s)` --
+// but the call site emitted `bump(s)`, the value. Two symptoms that look like different bugs:
+//
+//   STRUCT arg: the C compiler rejects it outright --
+//     "passing 'S' to parameter of incompatible type 'S *'; take the address with &"
+//   INT arg:    C accepts the implicit conversion, and the callee then dereferences the
+//     VALUE as an address -> SEGFAULT. `bump_int(i)` with i == 5 dereferences address 5.
+//
+// The int case is the dangerous one, and it is why the fix cannot be scoped to structs: it
+// compiles clean and crashes at run time.
+//
+// The METHOD form (`impl S { fn bump(mut self) }`) already worked, via
+// struct_method_takes_mut_self -- whose own comment describes this exact bug for methods
+// ("every mutation went to a copy and was discarded"). Nobody had written the free-function
+// counterpart, so `mut` looked supported and was not. Both symptoms reproduce identically on
+// baseline 97647c4, verified in a separate worktree with its own WYN_ROOT.
+//
+// Found probing what a shopping-cart app would need: `fn add(mut c: Cart, ...)`.
+//
+// EXPECT: struct mut mutates the caller: 2
+// EXPECT: a string field can be set: renamed
+// EXPECT: int mut mutates the caller: 6
+// EXPECT: two mut params: a=1 b=2
+// EXPECT: mut need not be the first param: n=42 name=set
+// EXPECT: push to a struct array field: len=2 first=7
+// EXPECT: a NON-mut param stays by value: 99 99
+// EXPECT: a mut param forwarded to another mut param: 11
+// EXPECT: a mut param passed to a by-value param: 33
+// EXPECT: repeated calls accumulate: 5
+// EXPECT: mixed args do not misfire the guard: n=42 name=lit
+
+struct S { n: int, name: string }
+struct Box { items: [int] }
+
+fn bump(mut s: S) { s.n = s.n + 1 }
+fn rename(mut s: S, v: string) { s.name = v }
+fn bump_int(mut n: int) { n = n + 1 }
+fn two(mut a: S, mut b: S) { a.n = 1  b.n = 2 }
+fn mixed(x: int, mut s: S, y: string) { s.n = x  s.name = y }
+fn push_item(mut b: Box, v: int) { b.items.push(v) }
+fn readonly(s: S) { s.n = 0 }
+fn chain(mut s: S) { bump(s) }
+fn readf(s: S) -> int { return s.n }
+fn via(mut s: S) -> int { return readf(s) }
+
+fn main() {
+    // The mutation must reach the CALLER, not a copy -- two calls, so a per-call copy
+    // would show 1 rather than 2.
+    var s = S { n: 0, name: "a" }
+    bump(s)
+    bump(s)
+    print("struct mut mutates the caller: ${s.n}")
+
+    rename(s, "renamed")
+    print("a string field can be set: ${s.name}")
+
+    // The segfaulting case. 5 -> 6 proves the write landed in the caller's variable.
+    var i = 5
+    bump_int(i)
+    print("int mut mutates the caller: ${i}")
+
+    var a = S { n: 0, name: "a" }
+    var b = S { n: 0, name: "b" }
+    two(a, b)
+    print("two mut params: a=${a.n} b=${b.n}")
+
+    // `mut` in a non-first position: the fix is per-argument, so an off-by-one in the index
+    // would address the wrong parameter.
+    var m = S { n: 0, name: "x" }
+    mixed(42, m, "set")
+    print("mut need not be the first param: n=${m.n} name=${m.name}")
+
+    var bx = Box { items: [] }
+    push_item(bx, 7)
+    push_item(bx, 8)
+    print("push to a struct array field: len=${bx.items.len()} first=${bx.items[0]}")
+
+    // A NON-mut param must still be by value -- a fix that addressed every argument would
+    // make this mutate the caller, which is the opposite bug.
+    var r = S { n: 99, name: "r" }
+    readonly(r)
+    print("a NON-mut param stays by value: ${r.n} ${readf(r)}")
+
+    // Inside `chain`, `s` is ALREADY a pointer, so `bump(s)` must not take a second address.
+    var c = S { n: 10, name: "c" }
+    chain(c)
+    print("a mut param forwarded to another mut param: ${c.n}")
+
+    // The reverse: a mut param handed to a by-value param must be DEREFERENCED.
+    var d = S { n: 33, name: "d" }
+    print("a mut param passed to a by-value param: ${via(d)}")
+
+    // Accumulation across a loop -- the strongest check that no copy is involved.
+    var e = S { n: 0, name: "e" }
+    for k in 0..5 { bump(e) }
+    print("repeated calls accumulate: ${e.n}")
+
+    // The lvalue guard must not MISFIRE on an ordinary mixed call: a mut identifier
+    // alongside an expression and a literal argument in the same call.
+    var g = S { n: 0, name: "z" }
+    var kk = 20
+    three(g, kk + 22, "lit")
+    print("mixed args do not misfire the guard: n=${g.n} name=${g.name}")
+}
+
+// --- the lvalue guard ------------------------------------------------------------------
+//
+// `&` is only emitted for a plain identifier argument. Dropping that guard makes `&` appear
+// on temporaries and literals, which is not valid C:
+//
+//     add(3, 5)        -> add(&3, 5)          "cannot take the address of an rvalue"
+//     add(x + 2, 5)    -> add(&x + 2, 5)      wrong precedence, wrong type
+//     bump(make())     -> bump(&make())       cannot address a call result
+//
+// so the guard is load-bearing. This file cannot exercise those three forms DIRECTLY: they
+// are broken with OR without the guard -- `add(3, 5)` and `add(x + 2, 5)` compile and then
+// SEGFAULT, `bump(make())` fails the C compile, all three identically on baseline 97647c4.
+// Passing a NON-LVALUE to a `mut` parameter has never worked and should be a check-time
+// error; that is filed separately and is not what this fix is about.
+//
+// The guard is therefore verified by MUTATION (removing it makes all three fail the C compile
+// instead of reaching the runtime), and what is pinned here is that it does not MISFIRE on
+// the ordinary mixed call -- a mut identifier alongside an expression and a literal.
+//
+// (Checks live in main() as prints matched by the EXPECT lines at the top, not in `test`
+// blocks: run_bdd.sh drives these files with `wyn run`. A `test` block in a regression file is
+// collected as "0 passed, 0 failed" and silently never executes -- I wrote two before
+// checking, and they proved nothing.)
+
+fn three(mut a: S, b: int, c: string) { a.n = b  a.name = c }
