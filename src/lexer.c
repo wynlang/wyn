@@ -166,7 +166,10 @@ static WynTokenType keyword_type(const char* start, int length) {
     switch (start[0]) {
         case 'a': 
             if (length == 3 && memcmp(start, "and", 3) == 0) return TOKEN_AND;
-            if (length == 2 && memcmp(start, "as", 2) == 0) return TOKEN_AS;
+            // 'as' is context-sensitive - only a keyword inside an import, where the
+            // parser matches it by TEXT. Reserving it globally rejected `fn f(as: int)`
+            // with "Expected type name". Same treatment as 'test' below.
+            if (length == 2 && memcmp(start, "as", 2) == 0) return TOKEN_IDENT;
             // 'assert' is a regular function, not a keyword
             // if (length == 6 && memcmp(start, "assert", 6) == 0) return TOKEN_ASSERT;
             // 'async' removed - spawn/await work on plain fns (async was a deprecated no-op)
@@ -195,7 +198,11 @@ static WynTokenType keyword_type(const char* start, int length) {
             if (length == 5 && memcmp(start, "false", 5) == 0) return TOKEN_FALSE;
             if (length == 2 && memcmp(start, "fn", 2) == 0) return TOKEN_FN;
             if (length == 3 && memcmp(start, "for", 3) == 0) return TOKEN_FOR;
-            if (length == 4 && memcmp(start, "from", 4) == 0) return TOKEN_FROM;
+            // 'from' is context-sensitive - only a keyword inside an import, where the
+            // parser matches it by TEXT. Reserving it globally rejected `fn f(from: int)`,
+            // `var from = 1` and `struct S { from: int }` -- and `to` was never reserved,
+            // so a from/to pair half-worked. Same treatment as 'test'.
+            if (length == 4 && memcmp(start, "from", 4) == 0) return TOKEN_IDENT;
             // 'finally' removed - unused (try/catch is not fully implemented)
             break;
         case 'i':
@@ -236,7 +243,10 @@ static WynTokenType keyword_type(const char* start, int length) {
             break;
         case 'r': 
             if (length == 6 && memcmp(start, "return", 6) == 0) return TOKEN_RETURN;
-            if (length == 4 && memcmp(start, "root", 4) == 0) return TOKEN_ROOT;
+            // 'root' is context-sensitive - only a keyword as the `root::` prefix of an
+            // import, where the parser matches it by TEXT. Reserving it globally rejected
+            // `for root in 0..n` with "Expected ';' after for init". Same as 'test'.
+            if (length == 4 && memcmp(start, "root", 4) == 0) return TOKEN_IDENT;
             break;
         case 's':
             if (length == 6 && memcmp(start, "struct", 6) == 0) return TOKEN_STRUCT;
