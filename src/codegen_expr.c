@@ -182,6 +182,26 @@ static const char* wyn_ctor_family(Type* payload, const char* kind) {
     // Option<Struct>/Result<Struct> family emitted per-program), everything else
     // (int/…) falls back to the Int family.
     static char buf[128];
+    // Option: route the payload's own type name through THE authority, so a bare
+    // `Some(x)` outside any annotated context picks the same family the declaration
+    // would. It handles struct / plain-enum / data-enum / primitive uniformly.
+    if (payload && strcmp(kind, "Option") == 0) {
+        const char* pn = NULL;
+        char nbuf[96];
+        if (payload->kind == TYPE_STRUCT && payload->struct_type.name.length > 0) {
+            token_to_cstr(nbuf, sizeof(nbuf), payload->struct_type.name); pn = nbuf;
+        } else if (payload->kind == TYPE_ENUM && payload->name.length > 0) {
+            token_to_cstr(nbuf, sizeof(nbuf), payload->name); pn = nbuf;
+        } else if (payload->kind == TYPE_STRING) pn = "string";
+        else if (payload->kind == TYPE_FLOAT)    pn = "float";
+        else if (payload->kind == TYPE_BOOL)     pn = "bool";
+        else if (payload->kind == TYPE_INT)      pn = "int";
+        if (pn) {
+            extern const char* wyn_option_family(const char*, const char**, int*);
+            snprintf(buf, sizeof(buf), "%s", wyn_option_family(pn, NULL, NULL));
+            return buf;
+        }
+    }
     if (payload && payload->kind == TYPE_STRUCT && payload->struct_type.name.length > 0) {
         char sname[96]; token_to_cstr(sname, sizeof(sname), payload->struct_type.name);
         // Both Option and Result support a monomorphic struct-payload family.
@@ -5171,9 +5191,15 @@ void codegen_expr(Expr* expr) {
                 else if (strcmp(_mtn, "OptionFloat") == 0) { opt_kind = 1; opt_val_cty = "double"; }
                 else if (strcmp(_mtn, "OptionBool") == 0) { opt_kind = 1; opt_val_cty = "bool"; }
                 else if (strncmp(_mtn, "Option", 6) == 0) {
-                    // Monomorphic Option<Struct> (OptionUser): payload is the struct
-                    // value, bound by value.
-                    static char _osmcty[96]; snprintf(_osmcty, sizeof(_osmcty), "%s", _mtn + 6);
+                    // Monomorphic Option<Name> (OptionUser, OptionShape): the payload is
+                    // bound by value. Ask THE authority for its C type instead of
+                    // assuming it is the family name minus "Option" — for a DATA-carrying
+                    // enum the payload C type is the enum's own struct typedef.
+                    extern const char* wyn_option_family(const char*, const char**, int*);
+                    const char* _pcty = NULL;
+                    (void)wyn_option_family(_mtn + 6, &_pcty, NULL);
+                    static char _osmcty[96];
+                    snprintf(_osmcty, sizeof(_osmcty), "%s", _pcty ? _pcty : _mtn + 6);
                     opt_kind = 1; opt_val_cty = _osmcty;
                 }
                 else if (strcmp(_mtn, "ResultInt") == 0) { opt_kind = 2; opt_val_cty = "long long"; }

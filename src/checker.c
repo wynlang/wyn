@@ -8052,7 +8052,10 @@ void check_program(Program* prog) {
                             concrete = (Token){TOKEN_IDENT, "OptionBool", 10, 0};
                         else if (inner->token.length != 3 || memcmp(inner->token.start, "int", 3) != 0) {
                             // `-> Struct?` - resolve the user struct and make its
-                            // monomorphic Option<Struct> family the signature type.
+                            // monomorphic Option<Struct> family the signature type. A
+                            // DATA-carrying enum takes the same path (it is a C struct);
+                            // register_option_struct_family() returns NULL for a PLAIN
+                            // enum, which correctly falls through to OptionInt below.
                             Symbol* st = find_symbol(global_scope, inner->token);
                             if (st && st->type && st->type->kind == TYPE_STRUCT)
                                 struct_opt = register_option_struct_family(st->type);
