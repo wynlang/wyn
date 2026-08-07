@@ -1182,6 +1182,14 @@ void codegen_expr(Expr* expr) {
                 // two stay in lockstep when a variant name is shared across enums.
                 char _bv[128]; token_to_cstr(_bv, sizeof(_bv), expr->call.callee->token);
                 char _ben[128]; token_to_cstr(_ben, sizeof(_ben), expr->expr_type->name);
+                // The callee may already be QUALIFIED: the parser folds `Shape::Circle` into
+                // one ident, so _bv is "Shape::Circle" and prefixing it again produced
+                // `Shape_Shape::Circle(1.0)` -- an undeclared identifier plus a C syntax
+                // error. Keep only the variant half. (This became reachable when the checker
+                // started typing a `::` constructor call as its enum; before that the call
+                // was typed int and never entered this branch at all.)
+                char* _bvcc = strstr(_bv, "::");
+                if (_bvcc) memmove(_bv, _bvcc + 2, strlen(_bvcc + 2) + 1);
                 emit("%s_%s(", _ben, _bv);
                 for (int i = 0; i < expr->call.arg_count; i++) {
                     if (i > 0) emit(", ");

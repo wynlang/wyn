@@ -1,0 +1,121 @@
+// Regression: `Enum::Variant(args)` was typed `int`, so it lost its enum type.
+//
+//   enum Shape { Circle(float), Square(int) }
+//   a = Shape::Circle(1.5)      // a: int   (should be Shape)
+//   xs = [a]                    // array_push_int(&arr, a)
+//                               //   -> C: passing 'Shape' to parameter of type 'long long'
+//
+// The parser folds `Shape::Circle` into ONE ident whose text is "Shape::Circle", so the call
+// never reached the EXPR_FIELD_ACCESS branch that handles the equivalent `Shape.Circle(...)`.
+// The name IS registered, but as a value symbol of the enum type rather than as a function,
+// so a CALL through it fell through to the module-qualified-call handling and came back
+// builtin_int.
+//
+// WHAT MADE THIS HARD TO SEE: the two spellings disagreed. `Shape.Circle(1.5)` worked
+// everywhere. `Shape::Circle(1.5)` worked as a variable initializer AND as a call argument --
+// it only broke where codegen consults the element's expr_type, i.e. inside an array literal.
+// So the symptom presented as "arrays of data enums are broken", which is not what it was.
+//
+// Fixing the checker then EXPOSED a second bug that the int-typing had masked: codegen's bare
+// enum-constructor path (`Circle(5)` -> `Shape_Circle(5)`) fires on expr_type->kind ==
+// TYPE_ENUM, and the callee here is already qualified, so it emitted
+// `Shape_Shape::Circle(1.0)`. Both halves are fixed together because neither is reachable
+// alone: the codegen path was dead code for `::` calls until the checker started typing them.
+//
+// EXPECT: colon-colon in a variable
+// EXPECT: colon-colon as a call argument
+// EXPECT: colon-colon in an array literal
+// EXPECT: values survive: circle:1.5,square:7,dot
+// EXPECT: dot form still works: circle:2.5,square:9,dot
+// EXPECT: plain enum array sum=111
+// EXPECT: a dataless variant of a data enum via colon-colon
+// EXPECT: mixed spellings in one array
+
+enum Shape { Circle(float), Square(int), Dot }
+enum Plain { Up, Down, Reset }
+
+fn name_of(s: Shape) -> string {
+    match s {
+        Circle(r) => return "circle:${r}"
+        Square(n) => return "square:${n}"
+        Dot => return "dot"
+    }
+}
+
+fn main() {
+    // The positions that already worked -- they must keep working.
+    a = Shape::Circle(1.5)
+    if name_of(a) == "circle:1.5" {
+        print("colon-colon in a variable")
+    } else {
+        print("VARIABLE BROKE: ${name_of(a)}")
+    }
+    if name_of(Shape::Square(3)) == "square:3" {
+        print("colon-colon as a call argument")
+    } else {
+        print("CALL ARGUMENT BROKE")
+    }
+
+    // The position that failed: an array literal.
+    xs = [Shape::Circle(1.5), Shape::Square(7), Shape::Dot]
+    if xs.len() == 3 {
+        print("colon-colon in an array literal")
+    } else {
+        print("ARRAY LITERAL BROKE: len=${xs.len()}")
+    }
+
+    // A length alone is not enough. A push_struct/push_int mismatch produces the right
+    // COUNT with every element collapsed to the first variant -- silently, at exit 0. That
+    // exact bug has been shipped before on the plain-enum path, so assert the VALUES.
+    out = []
+    for s in xs {
+        out.push(name_of(s))
+    }
+    print("values survive: ${out.join(",")}")
+
+    // The dot spelling must be unaffected -- it was the working one.
+    ys = [Shape.Circle(2.5), Shape.Square(9), Shape.Dot]
+    out2 = []
+    for s in ys {
+        out2.push(name_of(s))
+    }
+    print("dot form still works: ${out2.join(",")}")
+
+    // A PLAIN enum is an int in C and must STILL be int-pushed, and must not collapse.
+    // 1 + 10 + 100 distinguishes "all three present" from any collapse.
+    ps = [Plain::Up, Plain::Down, Plain::Reset]
+    n = 0
+    for p in ps {
+        match p {
+            Up => n = n + 1
+            Down => n = n + 10
+            Reset => n = n + 100
+        }
+    }
+    print("plain enum array sum=${n}")
+
+    // A dataless variant OF A DATA ENUM via `::` is a zero-arg constructor in C, a
+    // different lowering from both a data variant and a plain enum's constant.
+    if name_of(Shape::Dot) == "dot" {
+        print("a dataless variant of a data enum via colon-colon")
+    } else {
+        print("DATALESS VARIANT BROKE: ${name_of(Shape::Dot)}")
+    }
+
+    // Both spellings in ONE array: they must lower to the same representation, or the
+    // array holds two different things.
+    ms = [Shape::Circle(4.5), Shape.Square(6)]
+    out3 = []
+    for s in ms {
+        out3.push(name_of(s))
+    }
+    if out3.join(",") == "circle:4.5,square:6" {
+        print("mixed spellings in one array")
+    } else {
+        print("MIXED SPELLINGS BROKE: ${out3.join(",")}")
+    }
+
+    // NOTE: indexed access (`xs[0]`) on a data-enum array is a SEPARATE, PRE-EXISTING bug
+    // -- it fails identically on baseline 2bd5a6c with the dot spelling, so it is unrelated
+    // to this fix and is filed on its own. Deliberately not exercised here.
+}
