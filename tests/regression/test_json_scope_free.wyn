@@ -1,0 +1,77 @@
+// Regression: a `Json.new()` value declared in a scope that emits cleanup ABORTED.
+//
+//   test "x" { req = Json.new()  Json.set(req, "k", "v")  ... }   -> exit 134, "panic: abort"
+//
+// Cause: checker_builtins.c typed the Json handle as TYPE_MAP ("opaque pointer"), so codegen
+// declared the variable `WynHashMap*` AND registered it for the scope-exit `hashmap_free()`.
+// `Json_new()` actually returns `WynJson*` and `Json_set()` writes through it as one, so the
+// free then walked a WynJson as a WynHashMap and aborted. A type confusion plus the wrong
+// deallocator.
+//
+// It only showed up where cleanup is emitted -- a plain `fn main()` emits no hashmap_free for
+// the same code, which is why the mistype sat latent. Found writing offline tests for the
+// api-client sample app.
+//
+// This test puts the Json value in a BLOCK scope so the cleanup path is exercised, and keeps
+// using Json afterwards so a fix that merely dropped the free (leaving the wrong C type)
+// would still be caught.
+//
+// NOTE: `Json.get` after `Json.set` returns "" -- Json has TWO incompatible
+// representations (Json_new/Json_set use a WynJson* struct; Json_get/Json_parse use an int
+// index into a global node array). That is a separate, deeper bug, filed separately; before
+// this fix the program below SEGFAULTED instead, so this is strictly better. The assertions
+// here therefore read a set value back through `to_pretty_string` (which shares the WynJson*
+// side) and use `get` only after `parse` (which shares the node-array side).
+//
+// EXPECT: set+pretty has name
+// EXPECT: int version=2
+// EXPECT: parse+get origin=1.2.3.4
+// EXPECT: nested pretty ok
+// EXPECT: survived scope exit
+
+fn build_doc() -> string {
+    // A Json value created, written and stringified entirely inside a callee scope.
+    j = Json.new()
+    Json.set(j, "name", "Wyn")
+    Json.set_int(j, "version", 2)
+    return Json.to_pretty_string(j)
+}
+
+fn main() {
+    doc = Json.new()
+    Json.set(doc, "name", "Wyn")
+    if Json.to_pretty_string(doc).contains("Wyn") {
+        print("set+pretty has name")
+    } else {
+        print("set+pretty MISSING name")
+    }
+
+    Json.set_int(doc, "version", 2)
+    pretty = Json.to_pretty_string(doc)
+    if pretty.contains("version") {
+        print("int version=2")
+    } else {
+        print("int version=MISSING")
+    }
+    parsed = Json.parse("{\"origin\":\"1.2.3.4\"}")
+    print("parse+get origin=${Json.get(parsed, "origin")}")
+
+    // A block scope, which is where the bogus cleanup was emitted.
+    {
+        inner = Json.new()
+        Json.set(inner, "k", "v")
+        if Json.to_pretty_string(inner).contains("v") {
+            print("nested pretty ok")
+        } else {
+            print("nested pretty BAD")
+        }
+    }
+
+    // A callee scope, then keep using Json here afterwards.
+    s = build_doc()
+    if s.contains("Wyn") {
+        print("survived scope exit")
+    } else {
+        print("callee doc BAD")
+    }
+}
