@@ -1,0 +1,65 @@
+// Regression: String.from_chars on an INT array segfaulted.
+//
+//   String.from_chars([65, 66, 67])   ->  Segmentation fault
+//
+// Cause: the runtime read arr.data[i].data.string_val unconditionally, but codegen emits
+// array_push_int for an array of int literals -- so the integer 65 was dereferenced as a
+// char*. A type confusion, not a missing feature: the string form (["a","b","c"]) already
+// worked, which is why it went unnoticed.
+//
+// WynValue carries a type tag, so the fix dispatches on it and both forms now work.
+//
+// Found while writing the JSON escaping test, which needed a way to build a control
+// character. (It uses a JSON decode round-trip instead, since that exercises both
+// directions; this fix is separate.)
+//
+// EXPECT: int code points build a string: ABC
+// EXPECT: one-character strings still build a string: abc
+// EXPECT: an empty array gives an empty string: len=0
+// EXPECT: a single code point works: Z
+// EXPECT: code points and String.char agree
+// EXPECT: a control byte can be constructed
+// EXPECT: a computed array of code points works
+
+fn main() {
+    // The case that crashed.
+    print("int code points build a string: ${String.from_chars([65, 66, 67])}")
+
+    // The form that already worked must keep working -- the fix dispatches per element, so
+    // this is the arm a careless fix would break.
+    print("one-character strings still build a string: ${String.from_chars(["a", "b", "c"])}")
+
+    e = String.from_chars([])
+    print("an empty array gives an empty string: len=${e.len()}")
+
+    print("a single code point works: ${String.from_chars([90])}")
+
+    // The two routes to a character from a number must agree.
+    if String.from_chars([72, 105]) == "${String.char(72)}${String.char(105)}" {
+        print("code points and String.char agree")
+    } else {
+        print("DISAGREE: [${String.from_chars([72, 105])}]")
+    }
+
+    // The actual motivating use: a byte below 0x20, which no string literal can express.
+    // Verified against String.char rather than by JSON-escaping it -- routing this through
+    // Json.stringify would make the test depend on the separate JSON escaping fix, so it
+    // would fail here for a reason that has nothing to do with String.from_chars.
+    bell = String.from_chars([97, 7, 98])
+    if bell.len() == 3 and bell == "a${String.char(7)}b" {
+        print("a control byte can be constructed")
+    } else {
+        print("CONTROL BYTE BAD: len=${bell.len()}")
+    }
+
+    // A computed array, not a literal -- the element type is only known at run time here.
+    codes = []
+    for i in 0..5 {
+        codes.push(97 + i)
+    }
+    if String.from_chars(codes) == "abcde" {
+        print("a computed array of code points works")
+    } else {
+        print("COMPUTED BAD: [${String.from_chars(codes)}]")
+    }
+}
