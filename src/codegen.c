@@ -1754,6 +1754,38 @@ bool struct_method_takes_mut_self(const char* struct_name, const char* method_na
     return false;
 }
 
+// Does the FREE FUNCTION `fn_name` declare parameter `idx` as `mut`?
+//
+// The free-function counterpart of struct_method_takes_mut_self above, and it exists for
+// exactly the same reason: a `mut` parameter is passed by POINTER, so
+//
+//     fn bump(mut s: S) { s.n = s.n + 1 }
+//     bump(s)
+//
+// emits `void bump(S *s)` but the call emitted `bump(s)` -- the struct by value. Unlike the
+// method case (where the mismatch silently mutated a copy) a struct argument makes the C
+// compiler reject it outright:
+//   "passing 'S' to parameter of incompatible type 'S *'; take the address with &"
+// so `mut` on a struct parameter of a free function was unusable. The METHOD form
+// (`impl S { fn bump(mut self) }`) worked, which is why this went unnoticed.
+//
+// Returns false for an unknown function or index, so a caller that cannot resolve the
+// callee keeps its existing by-value behaviour.
+bool fn_param_is_mut(const char* fn_name, int idx) {
+    if (!current_program || !fn_name || idx < 0) return false;
+    size_t fl = strlen(fn_name);
+    for (int i = 0; i < current_program->count; i++) {
+        Stmt* st = current_program->stmts[i];
+        if (st->type == STMT_EXPORT && st->export.stmt) st = st->export.stmt;
+        if (st->type != STMT_FN) continue;
+        if (st->fn.name.length != (int)fl ||
+            memcmp(st->fn.name.start, fn_name, fl) != 0) continue;
+        if (idx >= st->fn.param_count || !st->fn.param_mutable) return false;
+        return st->fn.param_mutable[idx];
+    }
+    return false;
+}
+
 // Look up a struct method's return type string ("float", "string", "int", etc.)
 const char* lookup_struct_method_return_type(const char* struct_name, const char* method_name) {
     if (!current_program) return NULL;
