@@ -100,6 +100,19 @@ fn main() {
 }
 EOF
 
+# An `extern fn` whose symbol LOOKS like Namespace_method but is a genuine missing library
+# symbol must NOT be claimed as a stdlib typo. This only bites on a toolchain where an
+# implicit declaration is a warning rather than an error (GCC 13, which is ubuntu-latest):
+# there the compile succeeds and the LINKER reports "undefined reference to `Foo_bar'",
+# indistinguishable in wording from a namespace typo. The corpus has 84 such declarations
+# (Raylib_*, Win_*), so mislabelling them would be worse than the bare message.
+cat > ffi_shaped.wyn <<'EOF'
+extern fn Raylib_no_such_symbol(x: int) -> int;
+fn main() {
+    print("${Raylib_no_such_symbol(1)}")
+}
+EOF
+
 # A real HashMap program must still compile and run. A diagnostics change is exactly where
 # a false positive breaks working code, so the positive case is pinned by VALUE.
 cat > good.wyn <<'EOF'
@@ -142,6 +155,12 @@ out="$("$WYN_ABS" check bare_call.wyn 2>&1)"
 check "bare_call: rejected as an undefined variable" \
     "$(echo "$out" | grep -c "Undefined variable 'hashmap_nope'")" "1"
 check "bare_call: not claimed to be a namespace method" \
+    "$(echo "$out" | grep -c "unknown method")" "0"
+
+out="$("$WYN_ABS" run ffi_shaped.wyn 2>&1)"
+rc=$?
+check "ffi_shaped: still fails" "$([ "$rc" -ne 0 ] && echo yes || echo no)" "yes"
+check "ffi_shaped: a missing FFI symbol is NOT called a namespace typo" \
     "$(echo "$out" | grep -c "unknown method")" "0"
 
 # The positive case, by value.

@@ -717,6 +717,16 @@ static void wynter_encourage(void) {
 // The table maps the C prefix back to the Wyn spelling; an unlisted lowercase
 // symbol is still reported the old way, because it is far more likely to be a
 // genuine missing FFI function than a namespace typo.
+//
+// THREE C-toolchain wordings must be handled, which is a cross-platform trap
+// rather than a style choice. Clang says "call to undeclared function 'f'" and
+// GCC 14 says "implicit declaration of function 'f'", both ERRORS. On GCC 13 an
+// implicit declaration is only a WARNING, so the compile SUCCEEDS and the program
+// dies at LINK time with a third wording that quotes differently:
+//   undefined reference to `hashmap_contains'
+// i.e. a backtick open-quote and a plain close-quote. Handling only the two
+// compile wordings made this translator silent on the whole GCC-13 platform --
+// found by CI (ubuntu-latest is GCC 13), not by local testing on clang.
 static const struct { const char* c_prefix; const char* wyn_ns; } wyn_lowercase_namespaces[] = {
     {"hashmap_", "HashMap"},
     {"hashset_", "HashSet"},
@@ -731,10 +741,19 @@ static int wyn_report_undeclared_namespace_call(const char* cc_err_path) {
     char line[2048];
     int reported = 0;
     while (fgets(line, sizeof(line), f)) {
+        // Clang and GCC 14 both fail the COMPILE and quote with '...'. GCC 13
+        // only warns, so it reaches the LINKER, which quotes with `...' -- hence
+        // the separate open-quote character per wording.
+        char open_q = '\'';
+        bool from_linker = false;
         const char* m = strstr(line, "call to undeclared function '");
         if (!m) m = strstr(line, "implicit declaration of function '");
+        if (!m) {
+            m = strstr(line, "undefined reference to `");
+            if (m) { open_q = '`'; from_linker = true; }
+        }
         if (!m) continue;
-        const char* q = strchr(m, '\'');
+        const char* q = strchr(m, open_q);
         if (!q) continue;
         q++;
         const char* end = strchr(q, '\'');
@@ -770,6 +789,16 @@ static int wyn_report_undeclared_namespace_call(const char* cc_err_path) {
             }
         }
         if (!ns) continue;
+        // A LINK failure is ambiguous in a way a compile failure is not: an
+        // `extern fn Foo_bar` that is declared but never linked produces exactly
+        // the same "undefined reference" as a namespace typo, and the corpus has
+        // 84 such declarations (Raylib_*, Win_*). Claiming "Foo.bar is not a
+        // function Wyn knows about" for a genuine missing library symbol would be
+        // worse than the bare message it replaces, so the linker path is
+        // restricted to names that really are builtin namespaces. The compile
+        // path needs no such gate: reaching it at all means no declaration
+        // existed, which an `extern fn` would have provided.
+        if (from_linker && !is_builtin_module(ns)) continue;
         if (!reported) {
             fprintf(stderr,
                 "Error: unknown method '%s.%s' on namespace '%s'\n",
