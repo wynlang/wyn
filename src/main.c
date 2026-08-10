@@ -707,16 +707,53 @@ static void wynter_encourage(void) {
 // only - it never changes which programs compile, and it stays silent unless the
 // leaked symbol really looks like `Namespace_method` (capitalised first segment),
 // so an ordinary missing FFI function is reported the old way.
+//
+// FOUR namespaces lower to a LOWERCASE C prefix instead (`HashMap.has` ->
+// `hashmap_has`), so the capitalised-first-letter test above skipped them and
+// they fell through to a bare "compilation failed (internal codegen error)" with
+// no name, no line and nothing to act on. Measured, not guessed: these are the
+// only four `emit("<lowercase>_%.*s(")` blind prefixes in codegen_expr.c, and a
+// probe of all 43 builtin namespaces reported exactly these four as untranslated.
+// The table maps the C prefix back to the Wyn spelling; an unlisted lowercase
+// symbol is still reported the old way, because it is far more likely to be a
+// genuine missing FFI function than a namespace typo.
+//
+// THREE C-toolchain wordings must be handled, which is a cross-platform trap
+// rather than a style choice. Clang says "call to undeclared function 'f'" and
+// GCC 14 says "implicit declaration of function 'f'", both ERRORS. On GCC 13 an
+// implicit declaration is only a WARNING, so the compile SUCCEEDS and the program
+// dies at LINK time with a third wording that quotes differently:
+//   undefined reference to `hashmap_contains'
+// i.e. a backtick open-quote and a plain close-quote. Handling only the two
+// compile wordings made this translator silent on the whole GCC-13 platform --
+// found by CI (ubuntu-latest is GCC 13), not by local testing on clang.
+static const struct { const char* c_prefix; const char* wyn_ns; } wyn_lowercase_namespaces[] = {
+    {"hashmap_", "HashMap"},
+    {"hashset_", "HashSet"},
+    {"regex_",   "Regex"},
+    {"random_",  "Random"},
+    {NULL, NULL}
+};
+
 static int wyn_report_undeclared_namespace_call(const char* cc_err_path) {
     FILE* f = fopen(cc_err_path, "r");
     if (!f) return 0;
     char line[2048];
     int reported = 0;
     while (fgets(line, sizeof(line), f)) {
+        // Clang and GCC 14 both fail the COMPILE and quote with '...'. GCC 13
+        // only warns, so it reaches the LINKER, which quotes with `...' -- hence
+        // the separate open-quote character per wording.
+        char open_q = '\'';
+        bool from_linker = false;
         const char* m = strstr(line, "call to undeclared function '");
         if (!m) m = strstr(line, "implicit declaration of function '");
+        if (!m) {
+            m = strstr(line, "undefined reference to `");
+            if (m) { open_q = '`'; from_linker = true; }
+        }
         if (!m) continue;
-        const char* q = strchr(m, '\'');
+        const char* q = strchr(m, open_q);
         if (!q) continue;
         q++;
         const char* end = strchr(q, '\'');
@@ -725,14 +762,43 @@ static int wyn_report_undeclared_namespace_call(const char* cc_err_path) {
         size_t n = (size_t)(end - q);
         memcpy(sym, q, n);
         sym[n] = '\0';
-        // Require Namespace_method: an uppercase first letter and an underscore
-        // with a non-empty method after it.
-        if (!(sym[0] >= 'A' && sym[0] <= 'Z')) continue;
+        // The `Namespace_method` shape: an uppercase first letter and an
+        // underscore with a non-empty method after it. Failing that, one of the
+        // four known lowercase prefixes, which name the same kind of typo.
+        const char* ns = NULL;
+        const char* method = NULL;
         char* us = strchr(sym, '_');
-        if (!us || us == sym || us[1] == '\0') continue;
-        *us = '\0';
-        const char* ns = sym;
-        const char* method = us + 1;
+        if (sym[0] >= 'A' && sym[0] <= 'Z' && us && us != sym && us[1] != '\0') {
+            *us = '\0';
+            ns = sym;
+            method = us + 1;
+        } else {
+            for (int li = 0; wyn_lowercase_namespaces[li].c_prefix; li++) {
+                size_t pl = strlen(wyn_lowercase_namespaces[li].c_prefix);
+                // The `sym[pl]` test is defensive, not load-bearing: the parser
+                // rejects an empty method name ("Expected field or method name
+                // after '.'"), so a bare `hashmap_` cannot be emitted. Mutating
+                // it out changes no test, which is why it is called out here
+                // rather than left looking covered.
+                if (strncmp(sym, wyn_lowercase_namespaces[li].c_prefix, pl) == 0 &&
+                    sym[pl] != '\0') {
+                    ns = wyn_lowercase_namespaces[li].wyn_ns;
+                    method = sym + pl;
+                    break;
+                }
+            }
+        }
+        if (!ns) continue;
+        // A LINK failure is ambiguous in a way a compile failure is not: an
+        // `extern fn Foo_bar` that is declared but never linked produces exactly
+        // the same "undefined reference" as a namespace typo, and the corpus has
+        // 84 such declarations (Raylib_*, Win_*). Claiming "Foo.bar is not a
+        // function Wyn knows about" for a genuine missing library symbol would be
+        // worse than the bare message it replaces, so the linker path is
+        // restricted to names that really are builtin namespaces. The compile
+        // path needs no such gate: reaching it at all means no declaration
+        // existed, which an `extern fn` would have provided.
+        if (from_linker && !is_builtin_module(ns)) continue;
         if (!reported) {
             fprintf(stderr,
                 "Error: unknown method '%s.%s' on namespace '%s'\n",
