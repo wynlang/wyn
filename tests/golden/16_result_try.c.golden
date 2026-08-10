@@ -4,7 +4,6 @@
 #endif
 
 
-// Lambda functions (defined before use)
 __attribute__((hot)) static inline ResultInt parse(const char* s);
 __attribute__((hot)) static inline ResultInt run();
 long long wyn_main();

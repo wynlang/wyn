@@ -962,6 +962,62 @@ void veto_scan_program(Program* prog) {
 // S2: Emit a lambda function using the real codegen_expr pipeline instead of the
 // string-based mini-emitter. This gives string concat, string methods, float ops,
 // and block bodies for free - everything codegen_expr already handles.
+// Emit ONLY a prototype for a lambda, no body.
+//
+// Lambda bodies must come AFTER the user-function forward declarations (a lambda
+// body may call a user function -- otherwise C sees an implicit declaration then a
+// conflicting static one), but BEFORE anything that references the lambda. A
+// MODULE function is emitted earlier than either, so no single body position can
+// satisfy both: moving the bodies late broke `pub fn f(xs) { xs.map((v) => ...) }`
+// with "use of undeclared identifier '__lambda_1'".
+//
+// A prototype resolves it. Deliberately duplicates only the SIGNATURE shape of
+// emit_lambda_via_codegen below - the two must agree or C reports a conflicting
+// type, which is a loud failure rather than a silent one. Kept adjacent so a
+// change to one is visible from the other.
+static void emit_lambda_prototype(LambdaFunction* lf) {
+    Expr* expr = lf->ast;
+    if (!expr || expr->type != EXPR_LAMBDA) return;
+
+    const char* ret_c_type = "long long";
+    if (expr->expr_type && expr->expr_type->kind == TYPE_FUNCTION &&
+        expr->expr_type->fn_type.return_type) {
+        const char* inferred = codegen_c_type_from_type(expr->expr_type->fn_type.return_type);
+        if (inferred) ret_c_type = inferred;
+    }
+    const char* param_c_types[16];
+    for (int i = 0; i < expr->lambda.param_count && i < 16; i++) {
+        param_c_types[i] = "long long";
+        if (expr->expr_type && expr->expr_type->kind == TYPE_FUNCTION &&
+            i < expr->expr_type->fn_type.param_count &&
+            expr->expr_type->fn_type.param_types[i]) {
+            const char* inferred = codegen_c_type_from_type(expr->expr_type->fn_type.param_types[i]);
+            if (inferred) param_c_types[i] = inferred;
+        }
+    }
+
+    // A capturing closure takes a leading void* env; a plain lambda does not.
+    // Mirrors the two shapes in emit_lambda_via_codegen exactly.
+    if (lf->capture_count > 0 && lf->is_closure) {
+        emit("%s __lambda_%d(void* __env", ret_c_type, lf->id);
+        for (int i = 0; i < expr->lambda.param_count; i++) {
+            emit(", %s", i < 16 ? param_c_types[i] : "long long");
+        }
+        emit(");\n");
+    } else {
+        emit("%s __lambda_%d(", ret_c_type, lf->id);
+        if (expr->lambda.param_count == 0) {
+            emit("void");
+        } else {
+            for (int i = 0; i < expr->lambda.param_count; i++) {
+                if (i > 0) emit(", ");
+                emit("%s", i < 16 ? param_c_types[i] : "long long");
+            }
+        }
+        emit(");\n");
+    }
+}
+
 static void emit_lambda_via_codegen(LambdaFunction* lf) {
     Expr* expr = lf->ast;
     if (!expr || expr->type != EXPR_LAMBDA) return;

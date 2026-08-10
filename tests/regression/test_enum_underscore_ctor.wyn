@@ -1,0 +1,91 @@
+// Regression: the UNDERSCORE enum-constructor spelling emitted a DOUBLE prefix.
+//
+// THE DEFECT
+//
+//   enum MyRes { Ok(int), Err(string) }
+//   fn main() { var a = MyRes_Ok(42) }
+//
+// passed `wyn check` cleanly, then failed the C compile with
+//   error: call to undeclared function 'MyRes_MyRes_Ok'
+// The constructor `MyRes_Ok` was emitted correctly; the CALL SITE prefixed the enum name
+// onto an identifier that already WAS the C symbol.
+//
+// This is the third spelling of one trap. #298 fixed the `::` form, where the parser folds
+// `MyRes::Ok` into a single identifier and prefixing produced `MyRes_MyRes::Ok`. The
+// underscore form sat in the same branch, two lines away, and nobody covered it.
+//
+// The enum's NAME is irrelevant. I first met this in examples/v1_5_0_showcase.wyn, which
+// declares its own `enum Result`, and suspected a collision with the builtin `Result`. It is
+// not: `MyRes` behaves identically. Checking that before theorising is what kept the fix
+// from being aimed at name shadowing.
+//
+// Verified pre-existing: also fails at 4a15328, before #298, so it is not a regression from
+// that fix -- it is the part of it that was never finished.
+//
+// EXPECT: underscore ctor, int payload: 42
+// EXPECT: underscore ctor, string payload: boom
+// EXPECT: dot ctor still works: 7
+// EXPECT: colon-colon ctor still works: 9
+// EXPECT: bare variant still works: 5
+// EXPECT: underscore ctor for a PLAIN enum: 1
+// EXPECT: a real fn whose name starts with the enum name is NOT stripped: 42
+// EXPECT: underscore ctor stored in an array: 3 4
+// EXPECT: underscore ctor returned from a fn: 11
+
+enum MyRes { Ok(int), Err(string) }
+enum Shape { Circle(int), Sq(int) }
+enum Plain { A, B }
+
+// An ordinary function whose name happens to begin with "MyRes_", pinned because it is the
+// obvious way for this fix to misfire. It passes either way, and that is worth stating: such
+// a call never reaches the rewriting branch at all, because the enclosing condition already
+// requires !user_fn_defined(callee). The variant check in the fix is therefore defensive
+// rather than load-bearing -- mutating it out changes no assertion here. Noted at the code
+// too, so neither place implies coverage it does not have.
+fn MyRes_helper(n: int) -> int { return n + 1 }
+
+fn make(n: int) -> MyRes { return MyRes_Ok(n) }
+
+fn show(r: MyRes) -> string {
+    match r {
+        MyRes.Ok(v) => { return "${v}" }
+        MyRes.Err(e) => { return e }
+    }
+}
+
+fn main() {
+    // Both payload types: the constructor's parameter type is part of the emitted symbol's
+    // signature, so a fix that only worked for int would still break the string arm.
+    var a = MyRes_Ok(42)
+    print("underscore ctor, int payload: ${show(a)}")
+
+    var b = MyRes_Err("boom")
+    print("underscore ctor, string payload: ${show(b)}")
+
+    // The three spellings that already worked, pinned so this change cannot regress them.
+    var c = MyRes.Ok(7)
+    print("dot ctor still works: ${show(c)}")
+
+    var d = MyRes::Ok(9)
+    print("colon-colon ctor still works: ${show(d)}")
+
+    var e = Circle(5)
+    match e {
+        Shape.Circle(r) => print("bare variant still works: ${r}")
+        Shape.Sq(x) => print("bare variant still works: sq${x}")
+    }
+
+    // A payload-FREE enum lowers to a plain C int rather than a tagged struct, so it takes a
+    // different path to the same prefixing code.
+    var p = Plain_B
+    print("underscore ctor for a PLAIN enum: ${p}")
+
+    print("a real fn whose name starts with the enum name is NOT stripped: ${MyRes_helper(41)}")
+
+    // In an array literal and as a return value: the two positions where #298's `::` bug
+    // actually surfaced, so the underscore form is pinned in both.
+    var xs = [MyRes_Ok(3), MyRes_Ok(4)]
+    print("underscore ctor stored in an array: ${show(xs[0])} ${show(xs[1])}")
+
+    print("underscore ctor returned from a fn: ${show(make(11))}")
+}

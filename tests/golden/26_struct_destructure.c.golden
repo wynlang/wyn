@@ -18,7 +18,6 @@ static int __wyn_eq_Pt(Pt __l, Pt __r) {
     return 1;
 }
 
-// Lambda functions (defined before use)
 __attribute__((hot)) static inline char* classify(Pt p);
 long long wyn_main();
 

@@ -1190,7 +1190,28 @@ void codegen_expr(Expr* expr) {
                 // was typed int and never entered this branch at all.)
                 char* _bvcc = strstr(_bv, "::");
                 if (_bvcc) memmove(_bv, _bvcc + 2, strlen(_bvcc + 2) + 1);
-                emit("%s_%s(", _ben, _bv);
+                // The UNDERSCORE spelling `MyRes_Ok(42)` is a THIRD form of the same
+                // trap, and it is already the C symbol: prefixing produced
+                // `MyRes_MyRes_Ok(42)` -> "call to undeclared function", after passing
+                // `wyn check` cleanly. Emit it unprefixed when the callee already
+                // begins with "<EnumName>_" and the remainder names a real variant.
+                //
+                // The variant check is DEFENSIVE, not load-bearing: mutating it out
+                // changes no test, and that is stated here rather than left looking
+                // verified. A call to a real function named `MyRes_helper` cannot reach
+                // this code at all - the enclosing `if` requires
+                // !user_fn_defined(callee), so any declared function is already
+                // excluded. What the check still guards is an identifier the checker
+                // typed as this enum whose suffix is NOT a variant, where stripping
+                // the prefix would emit a symbol that does not exist.
+                size_t _benl = strlen(_ben);
+                extern bool wyn_enum_declares_variant(const char*, const char*);
+                if (strncmp(_bv, _ben, _benl) == 0 && _bv[_benl] == '_' &&
+                    wyn_enum_declares_variant(_ben, _bv + _benl + 1)) {
+                    emit("%s(", _bv);
+                } else {
+                    emit("%s_%s(", _ben, _bv);
+                }
                 for (int i = 0; i < expr->call.arg_count; i++) {
                     if (i > 0) emit(", ");
                     codegen_expr(expr->call.args[i]);

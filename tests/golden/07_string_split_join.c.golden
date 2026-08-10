@@ -4,7 +4,6 @@
 #endif
 
 
-// Lambda functions (defined before use)
 long long wyn_main();
 
 /* 07_string_split_join.wyn:2 */ 

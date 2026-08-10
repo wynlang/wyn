@@ -4,7 +4,6 @@
 #endif
 
 
-// Lambda functions (defined before use)
 __attribute__((hot)) static inline long long square(long long n);
 __attribute__((hot)) static inline char* greet(const char* who);
 long long wyn_main();

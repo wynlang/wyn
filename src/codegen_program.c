@@ -848,24 +848,29 @@ void codegen_program(Program* prog) {
         }
     }
     
-    // Emit lambda functions that were collected in pre-scan
+    // Lambda PROTOTYPES here; the BODIES are emitted further down, after the
+    // user-function forward declarations.
+    //
+    // Why split: a lambda body may CALL a user-defined function
+    // (`var f = (v) => dbl(v)`), so emitting the body before `dbl`'s prototype
+    // gave C an implicit declaration followed by a conflicting static one --
+    //   error: call to undeclared function 'dbl'
+    //   error: static declaration of 'dbl' follows non-static declaration
+    // -- and ANY such lambda failed to build after passing `wyn check` cleanly.
+    // But a MODULE function is emitted EARLIER than the forward declarations and
+    // may reference a lambda (`pub fn f(xs) { xs.map((v) => v * 2) }`), so simply
+    // moving the bodies late produced "use of undeclared identifier '__lambda_1'"
+    // instead - caught by tests/module_tests/run_lambda_in_module_test.sh, 6 fail.
+    // No single body position satisfies both orderings; a prototype does.
+    // Same class of fix as #286 (struct typedefs in dependency order).
     if (lambda_count > 0) {
-        emit("// Lambda functions\n");
+        emit("// Lambda prototypes (bodies follow the function declarations)\n");
         for (int i = 0; i < lambda_count; i++) {
-            if (lambda_functions[i].ast) {
-                emit_lambda_via_codegen(&lambda_functions[i]);
-                emit("\n");
-            }
+            if (lambda_functions[i].ast) emit_lambda_prototype(&lambda_functions[i]);
         }
         emit("\n");
     }
-    
-    // Pre-declare lambda functions with generic signatures
-    // Actual definitions will be emitted right after this
-    emit("// Lambda functions (defined before use)\n");
-    // Don't emit forward declarations - just emit definitions here
-    // But we can't because lambdas aren't collected yet!
-    
+
     // Generate monomorphic instances of generic functions (after structs are defined)
     wyn_generate_monomorphic_instances_for_codegen(prog);
     
@@ -1365,6 +1370,22 @@ void codegen_program(Program* prog) {
     // Vtable wrappers and instances are generated inline during main codegen
     // (after trait and impl statements have been processed)
     
+    // Lambda bodies, emitted HERE rather than before the forward declarations
+    // above: a lambda body may call a user-defined function or an impl method, and
+    // both are only declared by the loops above. See the note at the old site.
+    // Bodies still precede wyn_main and every other function DEFINITION, so a
+    // lambda referenced from any of them is still defined before use.
+    if (lambda_count > 0) {
+        emit("// Lambda functions\n");
+        for (int i = 0; i < lambda_count; i++) {
+            if (lambda_functions[i].ast) {
+                emit_lambda_via_codegen(&lambda_functions[i]);
+                emit("\n");
+            }
+        }
+        emit("\n");
+    }
+
     // Emit spawn wrapper functions (after forward declarations)
     if (spawn_wrapper_count > 0) {
         emit("\n// Spawn wrapper functions\n");

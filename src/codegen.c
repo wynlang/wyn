@@ -69,6 +69,50 @@ const char* wyn_collection_c_type(Token t) {
     return NULL;
 }
 
+// Does enum `enum_name` declare a variant called `variant`?
+//
+// Used to recognise the UNDERSCORE constructor spelling `MyRes_Ok(42)`, which is
+// already the C symbol and must not be prefixed again (it produced
+// `MyRes_MyRes_Ok` -> "call to undeclared function", after passing `wyn check`).
+// A name test alone is not enough: an ordinary function called `MyRes_helper`
+// also starts with "MyRes_", and stripping the prefix there would emit a call to
+// a symbol that does not exist. The variant must really be declared.
+//
+// Walks the main program AND every loaded module, like the checker's
+// find_enum_for_bare_variant, so an enum imported from a module is found too.
+bool wyn_enum_declares_variant(const char* enum_name, const char* variant) {
+    // Defined further down in this file; declared here so the helper can sit
+    // beside wyn_collection_c_type / wyn_ffi_ptr_c_type rather than far from them.
+    extern Program* current_program;
+    if (!current_program || !enum_name || !variant) return false;
+    Program* progs[64]; int np = 0;
+    progs[np++] = current_program;
+    extern int get_module_count(void);
+    extern Program* get_module_at(int index);
+    int mc = get_module_count();
+    for (int m = 0; m < mc && np < 64; m++) {
+        Program* mod = get_module_at(m);
+        if (mod) progs[np++] = mod;
+    }
+    size_t enl = strlen(enum_name), vnl = strlen(variant);
+    for (int p = 0; p < np; p++) {
+        Program* prog = progs[p];
+        for (int i = 0; i < prog->count; i++) {
+            Stmt* st = prog->stmts[i];
+            if (st->type == STMT_EXPORT && st->export.stmt &&
+                st->export.stmt->type == STMT_ENUM) st = st->export.stmt;
+            if (st->type != STMT_ENUM) continue;
+            if (st->enum_decl.name.length != (int)enl ||
+                memcmp(st->enum_decl.name.start, enum_name, enl) != 0) continue;
+            for (int vi = 0; vi < st->enum_decl.variant_count; vi++) {
+                Token v = st->enum_decl.variants[vi];
+                if (v.length == (int)vnl && memcmp(v.start, variant, vnl) == 0) return true;
+            }
+        }
+    }
+    return false;
+}
+
 // Map an `extern fn` C type expression to the C type emitted in the prototype.
 // `is_return` distinguishes a string return (`char*`, caller may own) from a
 // string param (`const char*`). NULL type = void (no `-> T`). A pointer type
