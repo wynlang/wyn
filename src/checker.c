@@ -862,6 +862,35 @@ static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
                     return builtin_ptr;
                 } else if (type_name.length == 4 && memcmp(type_name.start, "cstr", 4) == 0) {
                     return builtin_string;
+                } else if (type_name.length == 7 && memcmp(type_name.start, "HashMap", 7) == 0) {
+                    // The builtin COLLECTIONS are the same omission the `ptr`/`cstr`
+                    // comment above describes, one layer up: without these three the
+                    // name reached the user-struct fallback and a `HashMap` field was
+                    // typed as "a struct named HashMap". Passing it to a parameter of
+                    // that same type was then rejected --
+                    //   Expected: map (HashMap<string, int>)  Got: struct (struct)
+                    // -- even though a plain local passed fine and `HashMap.len(s.m)`
+                    // used inline passed fine, which is what made it read as a call
+                    // bug rather than a field-type bug.
+                    //
+                    // The kinds match what an annotation on a LOCAL already resolves to
+                    // (HashMap -> TYPE_MAP, HashSet -> TYPE_SET; see the generic-type
+                    // branch in check_expr), so the field and the local now agree.
+                    // codegen's half of this pair is wyn_collection_c_type() (#304).
+                    return make_type(TYPE_MAP);
+                } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
+                    return make_type(TYPE_SET);
+                } else if (type_name.length == 4 && memcmp(type_name.start, "Json", 4) == 0) {
+                    // NOT covered by a test, and mutating this line out changes
+                    // nothing -- stated plainly rather than left looking verified.
+                    // A `Json` PARAMETER fails type-check even when passed a plain
+                    // local ("Expected: int, Got: unknown"), because Json has two
+                    // incompatible representations: WynJson* for new/set and a
+                    // long long node index for parse/get. So no program can reach
+                    // this line's effect yet. It is mapped anyway so the three
+                    // collections stay consistent and the field is already correct
+                    // when that wart is fixed.
+                    return make_type(TYPE_JSON);
                 } else {
                     // Check if it's an enum type
                     Symbol* type_symbol = find_symbol(global_scope, type_name);
