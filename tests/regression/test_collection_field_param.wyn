@@ -1,0 +1,88 @@
+// Regression: a collection-typed struct FIELD was typed as "a struct named HashMap".
+//
+// THE DEFECT
+//
+//   struct S { m: HashMap }
+//   fn count(m: HashMap) -> int { return HashMap.len(m) }
+//   count(s.m)   ->  Type mismatch: Expected map (HashMap<string, int>), Got struct (struct)
+//
+// get_struct_field_type() in checker.c resolves int/char/string/bool/float/ptr/cstr and then
+// falls through to "unrecognised name means user struct". The three builtin COLLECTIONS were
+// not listed, so a `HashMap` field resolved to a TYPE_STRUCT *named* HashMap and no longer
+// matched the type it was declared as.
+//
+// What made this read as a CALL bug rather than a FIELD bug -- and why the three shapes below
+// are each pinned separately:
+//   a plain local  -> a HashMap param   PASSED
+//   HashMap.len(s.m) used inline        PASSED
+//   the field      -> a HashMap param   FAILED
+// Only the third fails, so it is the field's recorded TYPE that was wrong. Comparing the three
+// shapes is what located it; reading the error alone points at the call.
+//
+// The `ptr`/`cstr` comment immediately above the fix describes this exact trap one layer up
+// ("these are BUILTINS", ahead of the user-struct fallback), and #304 fixed codegen's half of
+// the same pair (wyn_collection_c_type, the field's C TYPE NAME). Two halves, two PRs: #304
+// made the program compile, this makes it type-check.
+//
+// The kinds match what an annotation on a LOCAL already resolves to (HashMap -> TYPE_MAP,
+// HashSet -> TYPE_SET), so a field and a local now agree by construction rather than by
+// coincidence.
+//
+// NOT COVERED, and pre-existing rather than a gap in this fix: a `Json` PARAMETER fails
+// type-check even when passed a plain local (`Expected: int, Got: unknown`), because Json has
+// two incompatible representations -- WynJson* for new/set and a long long node index for
+// parse/get. That is the documented Json wart, unrelated to field typing, so no Json arm is
+// asserted here. `Json` IS mapped alongside the other two so the three stay consistent when
+// that wart is fixed.
+//
+// EXPECT: a map field passed to a HashMap param: 2
+// EXPECT: a set field passed to a HashSet param: true false
+// EXPECT: through two calls, still a map: 2
+// EXPECT: a map field beside other fields, passed on: name=s1 n=1
+// EXPECT: a plain local still works: 1
+// EXPECT: inline use of the field still works: 2
+// EXPECT: an ordinary struct field is still a struct: inner=7
+
+struct Store { m: HashMap }
+struct Tags { s: HashSet }
+struct Shop { name: string, index: HashMap, items: [int] }
+struct Inner { n: int }
+// The user-struct fallback must still apply to a REAL user struct: a fix that mapped too
+// eagerly would break every ordinary struct-typed field, which is the opposite bug.
+struct HasInner { i: Inner }
+
+fn count(m: HashMap) -> int { return HashMap.len(m) }
+fn has(s: HashSet, k: string) -> bool { return HashSet.contains(s, k) }
+// Forwarded once more: the param's own type must survive being passed along, or only the
+// first hop would be pinned.
+fn count_twice(m: HashMap) -> int { return count(m) }
+fn inner_n(h: HasInner) -> int { return h.i.n }
+
+fn main() {
+    var st = Store { m: HashMap.new() }
+    HashMap.set(st.m, "a", "1")
+    HashMap.set(st.m, "b", "2")
+    print("a map field passed to a HashMap param: ${count(st.m)}")
+
+    var t = Tags { s: HashSet.new() }
+    HashSet.add(t.s, "x")
+    print("a set field passed to a HashSet param: ${has(t.s, "x")} ${has(t.s, "zz")}")
+
+    print("through two calls, still a map: ${count_twice(st.m)}")
+
+    // A collection field surrounded by ordinary fields: a wrong field type here would also
+    // disturb the neighbours, so the string field is read back in the same line.
+    var shop = Shop { name: "s1", index: HashMap.new(), items: [] }
+    HashMap.set(shop.index, "k", "v")
+    print("a map field beside other fields, passed on: name=${shop.name} n=${count(shop.index)}")
+
+    // The two shapes that already worked before the fix, pinned so this change cannot
+    // regress them while the new case passes.
+    var plain = HashMap.new()
+    HashMap.set(plain, "only", "1")
+    print("a plain local still works: ${count(plain)}")
+    print("inline use of the field still works: ${HashMap.len(st.m)}")
+
+    var h = HasInner { i: Inner { n: 7 } }
+    print("an ordinary struct field is still a struct: inner=${inner_n(h)}")
+}
