@@ -51,6 +51,24 @@ const char* wyn_ffi_ptr_c_type(Token t) {
     return NULL;
 }
 
+// The C type for one of Wyn's BUILTIN COLLECTION type NAMES, or NULL otherwise.
+//
+// Exactly the same trap as wyn_ffi_ptr_c_type above, and its comment predicted
+// this one: these are builtins, so an emitter that omits them sends the name to
+// its user-struct fallback and emits it VERBATIM as an undefined C type name.
+// `struct Store { index: HashMap }` produced `HashMap index;` and died as
+// "unknown type name 'HashMap'" -- after passing `wyn check` cleanly.
+//
+// The values are not guessed; they are what the compiler already emits for a
+// LOCAL of each type (`WynHashMap* m = hashmap_new();`), which is also what the
+// parameter site in this file and the return site in codegen_program.c use.
+const char* wyn_collection_c_type(Token t) {
+    if (t.length == 7 && memcmp(t.start, "HashMap", 7) == 0) return "WynHashMap*";
+    if (t.length == 7 && memcmp(t.start, "HashSet", 7) == 0) return "WynHashSet*";
+    if (t.length == 4 && memcmp(t.start, "Json", 4) == 0) return "WynJson*";
+    return NULL;
+}
+
 // Map an `extern fn` C type expression to the C type emitted in the prototype.
 // `is_return` distinguishes a string return (`char*`, caller may own) from a
 // string param (`const char*`). NULL type = void (no `-> T`). A pointer type

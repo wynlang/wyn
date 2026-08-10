@@ -1,0 +1,118 @@
+// Regression: a builtin COLLECTION as a struct FIELD type emitted an undefined C type.
+//
+// THE DEFECT
+//
+//   struct Store { index: HashMap }
+//
+// passed `wyn check` cleanly, then died as a bare "compilation failed (internal codegen
+// error)". Under WYN_DEBUG the real cause was `unknown type name 'HashMap'`: the field-type
+// ladder in codegen_stmt.c handles int/float/string/bool/ptr/cstr, arrays, fn-types and
+// Option<T>, but had NO case for the three builtin collections -- so the name fell through to
+// the "unrecognised name means user struct" fallback and was emitted VERBATIM.
+//
+// All three were broken identically: HashMap, HashSet, Json.
+//
+// A FIELD was the only position missing it. Parameters (codegen.c) and return types
+// (codegen_program.c) already mapped these names, which is what made this look supported:
+// `fn load(text: string, into: HashMap)` works and is used by sample-apps/sysadmin/envdiff,
+// so the type name is clearly meant to be spellable. Across the whole corpus ZERO structs
+// declare a collection field -- the same zero-usage signal as the `mut` gap (#301).
+//
+// The fix routes through wyn_collection_c_type(), placed beside wyn_ffi_ptr_c_type() whose
+// own comment had already predicted this ("every emitter that turns a type annotation into a
+// C type must consult this BEFORE its user-struct fallback"). `ptr` was the same bug, fixed
+// for signatures in #235 and for fields later; the collections were the remaining omission.
+//
+// EXPECT: HashMap field: get=v2 len=1
+// EXPECT: two structs do not share one map: a=1 b=0
+// EXPECT: HashSet field: has_a=1 has_z=0
+// EXPECT: Json field: {"n": "x"}
+// EXPECT: struct with a map field inside an array: v
+// EXPECT: nested struct, map on the inner: deep
+// EXPECT: a map field beside ordinary fields: name=s1 count=2 first=a
+// EXPECT: a param of the same type still works: 1
+//
+// WHAT THIS TEST DOES AND DOES NOT PROVE
+//
+// Mutation-verified honestly. Disabling the new branch restores the original defect and every
+// arm here fails ("internal codegen error"), so the fix is load-bearing.
+//
+// But forcing the field to `long long` instead SURVIVES this test, and that is worth stating
+// rather than papering over: `wyn run` compiles the generated C with `-w`, so the
+// "incompatible integer to pointer conversion" is suppressed, and on a 64-bit target the
+// pointer fits in a long long and the program behaves correctly. Compiling the generated
+// `.wyn.c` by hand WITHOUT `-w` does report it:
+//   error: incompatible integer to pointer conversion passing 'long long' to parameter of
+//   type 'WynHashMap *' [-Wint-conversion]
+// So a wrong-but-word-sized field type is a latent portability bug that no EXPECT file can
+// catch. What is asserted here is the part that is observable: the field works, holds
+// per-instance state, survives being read back, and does not disturb neighbouring fields.
+//
+// STILL BROKEN, deliberately not fixed here (a CHECKER bug, this is a codegen fix):
+// passing a collection-typed FIELD to a parameter of that type fails type-check --
+//   fn c(m: HashMap) ...; c(s.m)  ->  "Expected: map (HashMap<string, int>) Got: struct"
+// A plain local passes fine, and `HashMap.len(s.m)` used inline passes fine, so it is the
+// field's recorded TYPE that is wrong, not the call. Filed separately; mixing it in would
+// make this PR two concerns and hide which change fixed which symptom.
+
+struct Store { m: HashMap }
+struct Tags { s: HashSet }
+struct Doc { j: Json }
+struct Inner { m: HashMap }
+struct Outer { i: Inner }
+struct Item { sku: string }
+// A collection field must coexist with ordinary fields: emitting the wrong C type for one
+// field shifts every following field's offset, so a value-correct read here is the check.
+struct Shop { name: string, items: [Item], index: HashMap }
+
+// The PARAMETER position already worked before the fix. Pinned so a change to the shared
+// helper cannot silently break it while the field case passes. Called with a plain LOCAL,
+// not a field: passing a field is the separate checker bug noted at the top.
+fn count(m: HashMap) -> int { return HashMap.len(m) }
+
+fn main() {
+    // Assign twice: a field that was merely declared (not written through) could pass a
+    // "it compiles" check while dropping the write, so the SECOND value is what is asserted.
+    var st = Store { m: HashMap.new() }
+    HashMap.set(st.m, "k", "v1")
+    HashMap.set(st.m, "k", "v2")
+    print("HashMap field: get=${HashMap.get(st.m, "k")} len=${HashMap.len(st.m)}")
+
+    // Two instances must hold two distinct maps. If the field were emitted as some shared or
+    // zero-initialised handle, both would report the same length.
+    var a = Store { m: HashMap.new() }
+    var b = Store { m: HashMap.new() }
+    HashMap.set(a.m, "x", "1")
+    print("two structs do not share one map: a=${HashMap.len(a.m)} b=${HashMap.len(b.m)}")
+
+    // HashSet has no `len` (only new/add/contains/remove/free), so membership is the assertion.
+    var t = Tags { s: HashSet.new() }
+    HashSet.add(t.s, "a")
+    print("HashSet field: has_a=${HashSet.contains(t.s, "a")} has_z=${HashSet.contains(t.s, "z")}")
+
+    var d = Doc { j: Json.new() }
+    Json.set_string(d.j, "n", "x")
+    print("Json field: ${Json.stringify(d.j)}")
+
+    // Through an array element and through a nested struct: both reach the field by a
+    // different access path than a plain local.
+    var xs = [Store { m: HashMap.new() }]
+    HashMap.set(xs[0].m, "k", "v")
+    print("struct with a map field inside an array: ${HashMap.get(xs[0].m, "k")}")
+
+    var o = Outer { i: Inner { m: HashMap.new() } }
+    HashMap.set(o.i.m, "k", "deep")
+    print("nested struct, map on the inner: ${HashMap.get(o.i.m, "k")}")
+
+    // The layout check: a string field and an array field on either side of the map field.
+    var shop = Shop { name: "s1", items: [], index: HashMap.new() }
+    shop.items.push(Item { sku: "a" })
+    shop.items.push(Item { sku: "b" })
+    HashMap.set(shop.index, "a", "1")
+    HashMap.set(shop.index, "b", "2")
+    print("a map field beside ordinary fields: name=${shop.name} count=${shop.items.len()} first=${shop.items[0].sku}")
+
+    var plain = HashMap.new()
+    HashMap.set(plain, "only", "1")
+    print("a param of the same type still works: ${count(plain)}")
+}
