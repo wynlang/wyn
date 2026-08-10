@@ -29,7 +29,6 @@ const char* Color_toString(Color val) {
 }
 
 
-// Lambda functions (defined before use)
 __attribute__((hot)) static inline char* name(Color c);
 long long wyn_main();
 

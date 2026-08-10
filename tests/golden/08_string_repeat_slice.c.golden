@@ -4,7 +4,6 @@
 #endif
 
 
-// Lambda functions (defined before use)
 long long wyn_main();
 
 /* 08_string_repeat_slice.wyn:2 */ 

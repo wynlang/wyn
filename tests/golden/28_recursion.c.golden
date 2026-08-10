@@ -4,7 +4,6 @@
 #endif
 
 
-// Lambda functions (defined before use)
 __attribute__((hot)) static inline long long fib(long long n);
 __attribute__((hot)) static inline long long fact(long long n);
 long long wyn_main();

@@ -4,7 +4,6 @@
 #endif
 
 
-// Lambda functions (defined before use)
 typedef struct {
     long long first;
     long long second;

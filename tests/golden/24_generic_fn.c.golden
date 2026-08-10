@@ -4,7 +4,6 @@
 #endif
 
 
-// Lambda functions (defined before use)
 const char* identity_string(const char* x);
 long long identity_int(long long x);
 // Monomorphic instance of identity

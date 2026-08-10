@@ -4,7 +4,6 @@
 #endif
 
 
-// Lambda functions (defined before use)
 __attribute__((hot)) long long compute(long long n);
 long long wyn_main();
 
