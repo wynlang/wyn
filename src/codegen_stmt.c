@@ -3621,6 +3621,16 @@ void codegen_stmt(Stmt* stmt) {
                             // `buf: ptr` field emitted the undefined C type name
                             // `ptr`. Same omission #235 fixed for signatures.
                             c_type = wyn_ffi_ptr_c_type(type_name);
+                        } else if (wyn_collection_c_type(type_name)) {
+                            // The BUILTIN COLLECTIONS are the same omission again,
+                            // and the `ptr` comment above predicted it: a name not
+                            // listed here reaches the user-struct fallback and is
+                            // emitted verbatim, so `struct Store { index: HashMap }`
+                            // produced `HashMap index;` -> "unknown type name
+                            // 'HashMap'". A field is the only position that was
+                            // missing it: parameters (codegen.c) and returns
+                            // (codegen_program.c) already mapped these three.
+                            c_type = wyn_collection_c_type(type_name);
                         } else {
                             // Custom struct type - use the type name as-is
                             static char custom_type[64]; token_to_cstr(custom_type, sizeof(custom_type), type_name);
