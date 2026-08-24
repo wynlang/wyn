@@ -1,0 +1,72 @@
+// "${p}" on a STRUCT value type-checked clean and then failed the C compile
+// with "passing 'P' to parameter of incompatible type 'long long'"
+// (PLAN_v1.21 S1). to_string is a _Generic macro whose `default:` arm is
+// int_to_string, so the struct was passed by value to a long long parameter.
+// println(p) already rendered a struct, but by emitting inline printf calls that
+// print directly and yield no string, so interpolation had nothing to call.
+// codegen now emits one __wyn_str_<Name> per INTERPOLATED struct (and its
+// struct-typed fields), returning a fresh RC string in println's exact format.
+// EXPECT: P { x: 1, y: 2 }
+// EXPECT: P { x: 1, y: 2 }
+// EXPECT: Outer { i: Inner { a: 7 }, s: "hi", f: 2.5, b: true, n: -3 }
+// EXPECT: HasArr { xs: [1, 2, 3] }
+// EXPECT: WithEnum { c: 1, n: 4 }
+// EXPECT: WithData { s: <Shape>, n: 5 }
+// EXPECT: Empty { }
+// EXPECT: from fn: P { x: 9, y: 8 }
+// EXPECT: twice: P { x: 1, y: 2 } and P { x: 9, y: 8 }
+// EXPECT: 0.1234567890123
+
+struct P { x: int, y: int }
+struct Inner { a: int }
+struct Outer { i: Inner, s: string, f: float, b: bool, n: int }
+struct HasArr { xs: [int] }
+enum Color { Red, Green }
+struct WithEnum { c: Color, n: int }
+enum Shape { Circle(int), Square(int) }
+struct WithData { s: Shape, n: int }
+struct Empty { }
+struct Prec { v: float }
+
+fn mk() -> P { return P { x: 9, y: 8 } }
+
+fn main() {
+    p = P { x: 1, y: 2 }
+    // Interpolation must agree with println byte for byte - the two spellings
+    // rendering a struct differently is its own defect.
+    println("${p}")
+    println(p)
+
+    // Every supported field kind in one struct, including a NESTED struct (whose
+    // helper is only emitted because of the closure over field types), a quoted
+    // string, a float that must keep full round-trip precision, and a negative int.
+    o = Outer { i: Inner { a: 7 }, s: "hi", f: 2.5, b: true, n: -3 }
+    println("${o}")
+
+    // An array field goes through array_to_string.
+    println("${ HasArr { xs: [1, 2, 3] } }")
+
+    // A payload-less enum is a plain C enum, so it prints its ordinal, exactly
+    // as println does for one.
+    println("${ WithEnum { c: Color::Green, n: 4 } }")
+
+    // A DATA-carrying enum has no string form yet: it must render a
+    // self-describing <Shape> placeholder rather than invent a value, and above
+    // all must still BUILD.
+    println("${ WithData { s: Shape::Circle(2), n: 5 } }")
+
+    // A field-less struct renders with a single space, not the doubled one the
+    // "{ " / " }" pair would otherwise produce.
+    println("${ Empty { } }")
+
+    // A struct returned from a function, not just a local.
+    println("from fn: ${mk()}")
+
+    // Two struct temps in ONE interpolation: each helper returns a fresh +1 RC
+    // string and the release loop must free both exactly once.
+    println("twice: ${p} and ${mk()}")
+
+    // float_to_string routes through wyn_format_float, so a struct field keeps
+    // the precision the v1.20.0 float round-trip fix established.
+    println("${ Prec { v: 0.1234567890123 } }".replace("Prec { v: ", "").replace(" }", ""))
+}
