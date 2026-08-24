@@ -130,4 +130,102 @@ got=$(echo "$out" | grep -v 'Compiled in\|Building\|Built')
 if [ $rc -eq 0 ] && [ "$got" = "$(printf '0\n[]')" ]; then ok "input_line at EOF is the empty string"
 else bad "input_line at EOF is the empty string (rc=$rc) [$(echo "$got" | tr '\n' '|')]"; fi
 
+# --- input() / input_float() ----------------------------------------------
+# input() reads an INTEGER via scanf("%d"). Two defects shared one error path:
+#   (a) a non-numeric line returned 0 at exit 0 - the silent-wrong class this
+#       whole file exists to close, on the first line of any tutorial program;
+#   (b) the buffer drain was `while (getchar() != '\n')`, which at EOF spins on
+#       getchar() returning EOF forever - an UNBOUNDED HANG on empty stdin.
+# Both now panic like to_int does (str_parse_int), naming input_line() for text,
+# with WYN_LENIENT=1 restoring the old return-0 behavior. Every case below is
+# wrapped in alarm() because (b) was a hang: a regression here must FAIL, not
+# wedge the suite.
+
+# 17. A non-numeric line panics instead of silently yielding 0.
+printf 'n = input()\nprint("got: ${n}")\n' > "$TMP/in_int.wyn"
+out=$(printf 'hello\n' | perl -e 'alarm(20); exec @ARGV' -- "$WYN" run "$TMP/in_int.wyn" 2>&1); rc=$?
+if [ $rc -ne 0 ] && echo "$out" | grep -q 'input(): "hello" is not a valid integer' \
+   && echo "$out" | grep -q 'input_line()' && ! echo "$out" | grep -q 'got: 0'; then
+    ok "input() on non-numeric panics and names input_line()"
+else bad "input() on non-numeric panics and names input_line() (rc=$rc) [$(echo "$out" | tail -1)]"; fi
+
+# 18. EOF terminates instead of hanging. rc=142 would be the alarm firing.
+printf 'n = input()\nprint("got: ${n}")\n' > "$TMP/in_eof.wyn"
+out=$(printf '' | perl -e 'alarm(20); exec @ARGV' -- "$WYN" run "$TMP/in_eof.wyn" 2>&1); rc=$?
+if [ $rc -ne 0 ] && [ $rc -ne 142 ] && echo "$out" | grep -q 'input(): end of input'; then
+    ok "input() at EOF panics instead of hanging"
+else bad "input() at EOF panics instead of hanging (rc=$rc) [$(echo "$out" | tail -1)]"; fi
+
+# 19. Positive: a valid integer still reads correctly (guard the happy path).
+out=$(printf '42\n' | perl -e 'alarm(20); exec @ARGV' -- "$WYN" run "$TMP/in_int.wyn" 2>&1); rc=$?
+got=$(echo "$out" | grep -v 'Compiled in\|Building\|Built')
+if [ $rc -eq 0 ] && [ "$got" = "got: 42" ]; then ok "input() still reads a valid integer"
+else bad "input() still reads a valid integer (rc=$rc) [$(echo "$got" | tr '\n' '|')]"; fi
+
+# 20. WYN_LENIENT=1 restores the old behavior, exactly as it does for to_int.
+out=$(printf 'hello\n' | WYN_LENIENT=1 perl -e 'alarm(20); exec @ARGV' -- "$WYN" run "$TMP/in_int.wyn" 2>&1); rc=$?
+if [ $rc -eq 0 ] && echo "$out" | grep -q 'got: 0'; then ok "WYN_LENIENT=1 restores input()'s old 0"
+else bad "WYN_LENIENT=1 restores input()'s old 0 (rc=$rc) [$(echo "$out" | tail -1)]"; fi
+
+# 21. input_float() shares the error path and must be fixed with it.
+printf 'x = input_float()\nprint("got: ${x}")\n' > "$TMP/in_flt.wyn"
+out=$(printf 'abc\n' | perl -e 'alarm(20); exec @ARGV' -- "$WYN" run "$TMP/in_flt.wyn" 2>&1); rc=$?
+if [ $rc -ne 0 ] && echo "$out" | grep -q 'input_float(): "abc" is not a valid float'; then
+    ok "input_float() on non-numeric panics"
+else bad "input_float() on non-numeric panics (rc=$rc) [$(echo "$out" | tail -1)]"; fi
+
+# 22. input_float() at EOF terminates rather than hanging (same drain loop).
+out=$(printf '' | perl -e 'alarm(20); exec @ARGV' -- "$WYN" run "$TMP/in_flt.wyn" 2>&1); rc=$?
+if [ $rc -ne 0 ] && [ $rc -ne 142 ] && echo "$out" | grep -q 'input_float(): end of input'; then
+    ok "input_float() at EOF panics instead of hanging"
+else bad "input_float() at EOF panics instead of hanging (rc=$rc) [$(echo "$out" | tail -1)]"; fi
+
+# 23. Positive: a valid float still reads correctly.
+out=$(printf '2.5\n' | perl -e 'alarm(20); exec @ARGV' -- "$WYN" run "$TMP/in_flt.wyn" 2>&1); rc=$?
+if [ $rc -eq 0 ] && echo "$out" | grep -q 'got: 2.5'; then ok "input_float() still reads a valid float"
+else bad "input_float() still reads a valid float (rc=$rc) [$(echo "$out" | tail -1)]"; fi
+
+# 24. A trailing non-numeric TAIL is a parse error too, not a silently accepted
+#     prefix: scanf("%d") on "12abc" consumes 12 and returns 1, so the tail was
+#     swallowed. This is the same class as to_int's `end != '\0'` check.
+out=$(printf '12abc\n' | perl -e 'alarm(20); exec @ARGV' -- "$WYN" run "$TMP/in_int.wyn" 2>&1); rc=$?
+if [ $rc -ne 0 ] && echo "$out" | grep -q 'input():'; then ok "input() rejects a trailing non-numeric tail"
+else bad "input() rejects a trailing non-numeric tail (rc=$rc) [$(echo "$out" | tail -1)]"; fi
+
+# 26. input() must not leave its newline in the buffer: scanf("%d") did, so a
+#     FOLLOWING input_line() returned "" instead of the next line, at exit 0.
+printf 'n = input()\nrest = input_line()\nprint("n=${n} rest=[${rest}]")\n' > "$TMP/in_mix.wyn"
+out=$(printf '1\ntwo\n' | perl -e 'alarm(20); exec @ARGV' -- "$WYN" run "$TMP/in_mix.wyn" 2>&1); rc=$?
+if [ $rc -eq 0 ] && echo "$out" | grep -q 'n=1 rest=\[two\]'; then
+    ok "input() then input_line() reads the NEXT line"
+else bad "input() then input_line() reads the NEXT line (rc=$rc) [$(echo "$out" | tail -1)]"; fi
+
+# 27. A Wyn int is 64-bit, but the runtime declared `int input()` (C 32-bit), so
+#     4294967297 came back as 1 - a wrong answer at exit 0, not an overflow error.
+out=$(printf '4294967297\n' | perl -e 'alarm(20); exec @ARGV' -- "$WYN" run "$TMP/in_int.wyn" 2>&1); rc=$?
+if [ $rc -eq 0 ] && echo "$out" | grep -q 'got: 4294967297'; then ok "input() reads a full 64-bit int"
+else bad "input() reads a full 64-bit int (rc=$rc) [$(echo "$out" | tail -1)]"; fi
+
+# 28. A Wyn float is a C double, but the runtime declared `float input_float()`,
+#     so 0.1234567890123 came back as 0.12345679104328156 (float32 rounding).
+#     Same class as the v1.20.0 float-printing round-trip fix, in the stdin path.
+out=$(printf '0.1234567890123\n' | perl -e 'alarm(20); exec @ARGV' -- "$WYN" run "$TMP/in_flt.wyn" 2>&1); rc=$?
+if [ $rc -eq 0 ] && echo "$out" | grep -q 'got: 0.1234567890123$'; then ok "input_float() keeps double precision"
+else bad "input_float() keeps double precision (rc=$rc) [$(echo "$out" | tail -1)]"; fi
+
+# 29. An int that genuinely overflows 64 bits is an ERROR, not a clamp or a wrap
+#     (to_int's ERANGE arm, same posture).
+out=$(printf '99999999999999999999\n' | perl -e 'alarm(20); exec @ARGV' -- "$WYN" run "$TMP/in_int.wyn" 2>&1); rc=$?
+if [ $rc -ne 0 ] && echo "$out" | grep -q 'input(): .* does not fit'; then ok "input() rejects a 64-bit overflow"
+else bad "input() rejects a 64-bit overflow (rc=$rc) [$(echo "$out" | tail -1)]"; fi
+
+# 25. Guard the shadowing contract: a USER function named `input` must still win
+#     over the builtin (tests/expect/test_user_function_names.wyn relies on it,
+#     and the panic must not fire for it).
+printf 'fn input(prompt: string) -> string {\n  return "u:" + prompt\n}\nprint(input("hi"))\n' \
+    > "$TMP/in_shadow.wyn"
+out=$(printf '' | perl -e 'alarm(20); exec @ARGV' -- "$WYN" run "$TMP/in_shadow.wyn" 2>&1); rc=$?
+if [ $rc -eq 0 ] && echo "$out" | grep -q '^u:hi$'; then ok "a user fn named input still shadows the builtin"
+else bad "a user fn named input still shadows the builtin (rc=$rc) [$(echo "$out" | tail -1)]"; fi
+
 echo ""; echo "silent-wrong: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]

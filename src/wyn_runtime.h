@@ -2512,8 +2512,7 @@ void print_debug(const char* label, int val) { printf("%s: %d\n", label, val); }
     WynValue: print_value, \
     default: print_int_no_nl)(x)
 
-int input() { int x = 0; if (scanf("%d", &x) != 1) { while(getchar() != '\n') { /* clear input buffer */ } return 0; } return x; }
-float input_float() { float x = 0.0f; if (scanf("%f", &x) != 1) { while(getchar() != '\n') { /* clear input buffer */ } return 0.0f; } return x; }
+// input() / input_float() are defined AFTER input_line(), which they now use.
 // Read one line from stdin as a real Wyn string.
 // Ownership: returns a FRESH +1 RC string (wyn_str_alloc), exactly like
 // file_read / int_to_string / wyn_strdup. Codegen's `is_fresh_string_temp`
@@ -2545,6 +2544,95 @@ char* input_line() {
     if (len > 0 && buf[len - 1] == '\r') buf[--len] = '\0';
     wyn_rc_set_length(buf, (unsigned int)len);
     return buf;
+}
+
+// input() / input_float() read ONE LINE via input_line() and then validate the
+// WHOLE line, instead of scanf-ing a token. Six defects shared one root cause -
+// a token reader with the wrong C return types that could not validate or bound
+// what it consumed. Every one of them was a wrong answer at exit 0 or a hang:
+//   (a) a non-numeric line returned 0            ("hello" -> 0);
+//   (b) the drain loop `while (getchar() != '\n')` never terminated at EOF,
+//       because getchar() keeps returning EOF - an UNBOUNDED HANG on empty stdin;
+//   (c) a trailing tail was swallowed            ("12abc" -> 12);
+//   (d) the newline was left in the buffer, so a FOLLOWING input_line() returned
+//       "" rather than the next line;
+//   (e) the C return type was `int` while a Wyn int is 64-bit, so 4294967297
+//       truncated to 1;
+//   (f) the C return type was `float` while a Wyn float is a C double, so
+//       0.1234567890123 came back as 0.12345679104328156.
+// Validating the entire line is exactly what str_parse_int (`to_int`) does, and
+// this reuses its panic posture too: report the offending value on stderr, exit
+// 1, and let WYN_LENIENT=1 restore the old return-0 behavior. The upshot is that
+// input() now means int(input_line()), which is also why (d) disappears.
+//
+// input_line() alone cannot express "no input at all": EOF and an empty line
+// both come back as a zero-length string. feof() disambiguates, and is consulted
+// ONLY when nothing was read - a final line lacking its newline sets the EOF
+// flag too, and must still be parsed rather than reported as end of input.
+static int wyn_stdin_at_eof(const char* line) {
+    return (line[0] == '\0' && feof(stdin)) ? 1 : 0;
+}
+
+long long input() {
+    char* line = input_line();
+    if (wyn_stdin_at_eof(line)) {
+        fprintf(stderr, "panic: input(): end of input (expected an integer)\n");
+        wyn_rc_release(line);
+        if (!wyn_lenient_mode()) exit(1);
+        return 0;
+    }
+    char* end;
+    errno = 0;
+    long long val = strtoll(line, &end, 10);
+    int unparsed = (end == line);
+    while (*end == ' ' || *end == '\t' || *end == '\r') end++;
+    if (*end != '\0') unparsed = 1;
+    if (errno == ERANGE) {
+        fprintf(stderr, "panic: input(): \"%s\" does not fit in a 64-bit int\n", line);
+        wyn_rc_release(line);
+        if (!wyn_lenient_mode()) exit(1);
+        return 0;
+    }
+    if (unparsed) {
+        fprintf(stderr, "panic: input(): \"%s\" is not a valid integer; "
+                        "use input_line() to read text\n", line);
+        wyn_rc_release(line);
+        if (!wyn_lenient_mode()) exit(1);
+        return 0;
+    }
+    wyn_rc_release(line);
+    return val;
+}
+
+double input_float() {
+    char* line = input_line();
+    if (wyn_stdin_at_eof(line)) {
+        fprintf(stderr, "panic: input_float(): end of input (expected a float)\n");
+        wyn_rc_release(line);
+        if (!wyn_lenient_mode()) exit(1);
+        return 0.0;
+    }
+    char* end;
+    errno = 0;
+    double val = strtod(line, &end);
+    int unparsed = (end == line);
+    while (*end == ' ' || *end == '\t' || *end == '\r') end++;
+    if (*end != '\0') unparsed = 1;
+    if (errno == ERANGE) {
+        fprintf(stderr, "panic: input_float(): \"%s\" is out of range for a float\n", line);
+        wyn_rc_release(line);
+        if (!wyn_lenient_mode()) exit(1);
+        return 0.0;
+    }
+    if (unparsed) {
+        fprintf(stderr, "panic: input_float(): \"%s\" is not a valid float; "
+                        "use input_line() to read text\n", line);
+        wyn_rc_release(line);
+        if (!wyn_lenient_mode()) exit(1);
+        return 0.0;
+    }
+    wyn_rc_release(line);
+    return val;
 }
 void printf_wyn(const char* format, ...) { va_list args; va_start(args, format); vprintf(format, args); va_end(args); }
 // string_format / "...".format(a, b, ...) - the runtime substitution engine.
