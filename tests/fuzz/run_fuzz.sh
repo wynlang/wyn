@@ -52,12 +52,23 @@ for f in corpus/*.wyn; do
         if [ "$sig" = 14 ]; then HANG=$((HANG+1)); else CRASH=$((CRASH+1)); fi
         FAILED_FILES="$FAILED_FILES build:$f(rc=$rc)"
     elif [ $rc -ne 0 ]; then
-        if grep -qi "internal codegen error\|error: incompatible\|error: use of undeclared\|ld: symbol" build.log; then
-            ICE=$((ICE+1))
-            FAILED_FILES="$FAILED_FILES ice:$f"
-        else
-            REJECTED=$((REJECTED+1))   # clean rejection at build stage
-        fi
+        # ANY build failure after `wyn check` passed is a soundness violation.
+        #
+        # This used to flag one only when build.log matched an ALLOWLIST of four
+        # C-error phrasings ("internal codegen error", "error: incompatible",
+        # "error: use of undeclared", "ld: symbol") and counted everything else as
+        # a "clean rejection at build stage". There is no such thing: the invariant
+        # in this file's own header is "a program that PASSES check must BUILD", so
+        # the allowlist was silently excusing exactly the class it exists to catch.
+        # It had been excusing a real one - `-71.to_string()` fails with "invalid
+        # argument type 'char *' to unary expression", which is not in the list, so
+        # every run reported 0 violations while the defect sat in the corpus.
+        # Fixed in the preceding commit; the allowlist is why nobody knew.
+        #
+        # A new C-error phrasing must never be able to buy silence, so the test is
+        # now the rc, not the wording.
+        ICE=$((ICE+1))
+        FAILED_FILES="$FAILED_FILES buildfail:$f"
     else
         BUILT=$((BUILT+1))
     fi
@@ -66,7 +77,7 @@ done
 
 echo ""
 echo "fuzz(seed=$SEED,n=$COUNT): $CHECKED check-pass, $BUILT built, $REJECTED cleanly rejected"
-echo "fuzz invariants: $CRASH crash, $HANG hang, $ICE internal-codegen-error"
+echo "fuzz invariants: $CRASH crash, $HANG hang, $ICE check-passed-but-build-failed"
 if [ -n "$FAILED_FILES" ]; then
     echo "FAILING INPUTS:$FAILED_FILES"
     # Preserve repros for debugging.
