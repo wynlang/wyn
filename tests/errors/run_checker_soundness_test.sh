@@ -118,4 +118,47 @@ expect_check_ok "exhaustive bool match still ok" "$TMP/ok_bool_match.wyn"
 printf 'fn g() -> int? { return 5 }\nfn main(){ y = match g() { Some(v) => v, None => -1 }\n print(y) }\n' > "$TMP/ok_opt_match.wyn"
 expect_check_ok "exhaustive Some+None match still ok" "$TMP/ok_opt_match.wyn"
 
+# --- K12: unary '-' on a non-number ------------------------------------------
+# FOUND BY THE FUZZER, once its generator started emitting method calls on int
+# literals. `-71.to_string()` checked clean and died in the C compiler:
+#
+#     error: invalid argument type 'char *' to unary expression
+#
+# A method call binds tighter than unary minus, so that expression is
+# `-(71.to_string())` - negating a STRING. Measured across types: string, array
+# and struct operands all check-pass and fail to build, while int, float and bool
+# all build, so exactly the first three are rejected.
+#
+# Worth recording how it hid: the fuzz oracle tolerated it, because it flagged a
+# build failure only when the log matched an allowlist of four known C-error
+# phrasings and "invalid argument type" was not among them. The generator could
+# not produce the program AND the oracle would not have reported it - both halves
+# had to be fixed to surface a defect that had been reachable all along.
+printf 'fn main() {\n  println(-71.to_string())\n}\n' > "$TMP/neg_method.wyn"
+expect_check_error "negating a method-call string is rejected" "$TMP/neg_method.wyn" "cannot negate string"
+
+printf 'fn main() {\n  var s = "a"\n  println(-s)\n}\n' > "$TMP/neg_str.wyn"
+expect_check_error "negating a string variable is rejected" "$TMP/neg_str.wyn" "cannot negate string"
+
+printf 'fn main() {\n  var a = [1,2]\n  var b = -a\n  print(1)\n}\n' > "$TMP/neg_arr.wyn"
+expect_check_error "negating an array is rejected" "$TMP/neg_arr.wyn" "cannot negate"
+
+printf 'struct P { x: int }\nfn main() {\n  var p = P { x: 1 }\n  var q = -p\n  print(1)\n}\n' > "$TMP/neg_struct.wyn"
+expect_check_error "negating a struct is rejected" "$TMP/neg_struct.wyn" "cannot negate"
+
+# The diagnostic must name the fix, and the fix must actually work - the whole
+# point is that the user wanted to negate the NUMBER.
+printf 'fn main() {\n  println(-71.to_string())\n}\n' > "$TMP/neg_help.wyn"
+out=$(perl -e 'alarm(10); exec @ARGV' -- "$WYN" check "$TMP/neg_help.wyn" 2>&1)
+if echo "$out" | grep -q "(-n).to_string()"; then ok "diagnostic suggests parenthesising the number"
+else bad "diagnostic suggests parenthesising the number [$(echo "$out" | head -1)]"; fi
+
+# Over-rejection guards: every operand that legitimately negates must still pass.
+printf 'fn main() {\n  var n = 5\n  println(-n)\n  println(-5)\n  println(-n + 1)\n}\n' > "$TMP/ok_neg_int.wyn"
+expect_check_ok "negating an int still ok" "$TMP/ok_neg_int.wyn"
+printf 'fn main() {\n  var f = 1.5\n  println(-f)\n}\n' > "$TMP/ok_neg_float.wyn"
+expect_check_ok "negating a float still ok" "$TMP/ok_neg_float.wyn"
+printf 'fn main() {\n  println((-71).to_string())\n}\n' > "$TMP/ok_neg_paren.wyn"
+expect_check_ok "the suggested (-n).to_string() form is accepted" "$TMP/ok_neg_paren.wyn"
+
 echo ""; echo "checker-soundness: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]

@@ -5243,6 +5243,46 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             
             // For numeric negation (-), return the operand type
             if (expr->unary.op.type == TOKEN_MINUS) {
+                // NEGATING A NON-NUMBER type-checked clean and then died in the C
+                // compiler, which is the v1.21 soundness rule broken:
+                //
+                //   println(-71.to_string())   // wyn check: no errors
+                //   -> error: invalid argument type 'char *' to unary expression
+                //
+                // because a method call binds tighter than unary minus, so this is
+                // `-(71.to_string())` - negating a string. Measured: string, array
+                // and struct operands all check-pass and fail to build; int, float
+                // and bool all build. So exactly the first three are rejected here.
+                //
+                // Found by the FUZZER once the generator emitted method calls on
+                // int literals, and it is the reason the fuzz oracle's allowlist of
+                // C-error phrasings is being replaced with "any build failure after
+                // check is a violation" - this error text was not in that list, so
+                // the fuzzer had been silently tolerating it.
+                //
+                // Anything the checker could not resolve is left alone: a false
+                // rejection here would be worse than the hole, and an unresolved
+                // type is not evidence of a bad operand.
+                if (operand_type->kind == TYPE_STRING || operand_type->kind == TYPE_ARRAY ||
+                    operand_type->kind == TYPE_STRUCT || operand_type->kind == TYPE_MAP ||
+                    operand_type->kind == TYPE_SET || operand_type->kind == TYPE_JSON) {
+                    // expr->token.line is 0 for a unary node; the OPERATOR token
+                    // carries the position, with the operand as a fallback.
+                    int _uline = expr->unary.op.line;
+                    if (_uline == 0 && expr->unary.operand) _uline = expr->unary.operand->token.line;
+                    fprintf(stderr, "Error at line %d: cannot negate ", _uline);
+                    print_type_name(operand_type);
+                    fprintf(stderr, " - unary '-' applies to int and float\n");
+                    show_source_line(_uline);
+                    if (operand_type->kind == TYPE_STRING) {
+                        fprintf(stderr, "  \033[34mHelp:\033[0m a method call binds tighter than "
+                                        "unary minus, so \033[1m-n.to_string()\033[0m negates the "
+                                        "STRING. Write \033[1m(-n).to_string()\033[0m to negate the "
+                                        "number first.\n");
+                    }
+                    had_error = true;
+                    return builtin_int;
+                }
                 expr->expr_type = operand_type;
                 return operand_type;
             }
