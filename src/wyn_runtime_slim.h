@@ -560,8 +560,11 @@ void print_value(WynValue v);
 void print_hex(int x);
 void print_bin(int x);
 void print_debug(const char* label, int val);
-int input();
-float input_float();
+// long long / double, not int / float: a Wyn int is 64-bit and a Wyn float is a
+// C double, so the narrower C types silently truncated (4294967297 -> 1) and lost
+// precision. Must match the definitions in wyn_runtime.h.
+long long input();
+double input_float();
 char* input_line();
 void printf_wyn(const char* format, ...);
 char* string_format(const char* format, ...);
