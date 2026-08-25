@@ -46,7 +46,31 @@ endif
 # body calls _chsize, which -O2 causes to be emitted and gcc 14+ treats as a hard
 # error when implicitly declared). Override OPT, never CFLAGS.
 OPT?=-g
-CFLAGS=-Wall -Wextra -std=c11 -D_GNU_SOURCE $(OPT) $(PLATFORM_CFLAGS) -DWYN_VERSION=\"$(shell cat VERSION 2>/dev/null || echo 0.0.0-dev)\"
+
+# RELEASE_BUILD marks a binary as an official release. It DEFAULTS TO OFF, so every
+# ordinary `make` produces a binary that reports e.g. "v1.20.0-dev". Only the release
+# workflow passes RELEASE_BUILD=1, which drops the suffix.
+#
+# The default is off ON PURPOSE. A dev build and a released build previously reported
+# the identical string, so there was no way to tell whether the compiler you were
+# running contained a fix — the Wynshop dogfood session hit exactly this: its suite
+# was green against the INSTALLED v1.20.0 binary, which did not contain the fixes
+# under test, and only a byte-size comparison revealed it.
+#
+# Deliberately NOT `git describe --exact-match`: release.yml checks out with
+# actions/checkout@v4 at fetch-depth 1 and does not fetch tags, so describe would
+# fail there and label genuine releases as "-dev". An explicit opt-in flag cannot
+# fail that way, and if it is ever forgotten the error is in the honest direction:
+# a real release mislabelled as dev, never a dev build passing itself off as
+# official.
+RELEASE_BUILD?=0
+ifeq ($(RELEASE_BUILD),1)
+    VERSION_SUFFIX=
+else
+    VERSION_SUFFIX=-dev
+endif
+
+CFLAGS=-Wall -Wextra -std=c11 -D_GNU_SOURCE $(OPT) $(PLATFORM_CFLAGS) -DWYN_VERSION=\"$(shell cat VERSION 2>/dev/null || echo 0.0.0)$(VERSION_SUFFIX)\"
 OPTFLAGS=-O2
 
 all: wyn$(EXE_EXT) runtime
@@ -61,7 +85,7 @@ platform-info:
 	@echo "Platform flags: $(PLATFORM_CFLAGS)"
 
 # C-based compiler
-CORE_SRCS = src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/async_runtime.c src/concurrency.c src/optional.c src/result.c src/type_inference.c src/module_loader.c src/module.c src/module_registry.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/stdlib_array.c src/stdlib_string.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c src/cmd_compile.c src/cmd_test.c src/cmd_other.c src/cmd_ui.c src/hashmap.c src/hashset.c src/json.c src/types.c src/patterns.c src/closures.c  src/toml.c src/file_watch.c src/package.c src/pkgspec.c src/lsp.c src/bindgen.c src/cpkg.c src/tcc_backend.c src/wyn_arena.c src/wyn_rc.c src/coroutine.c
+CORE_SRCS = src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string_runtime.c src/arc_runtime.c src/async_runtime.c src/concurrency.c src/optional.c src/result.c src/type_inference.c src/module_loader.c src/module.c src/module_registry.c src/io.c src/net.c src/stdlib_array.c src/stdlib_string.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c src/cmd_compile.c src/cmd_test.c src/cmd_other.c src/cmd_ui.c src/hashmap.c src/hashset.c src/json.c src/types.c src/patterns.c  src/toml.c src/package.c src/pkgspec.c src/lsp.c src/bindgen.c src/cpkg.c src/tcc_backend.c src/wyn_arena.c src/wyn_rc.c src/coroutine.c
 # NOTE: src/spawn.c is deliberately NOT linked into the compiler. The compiler
 # only registers Task_send/Task_recv/etc. as builtin NAME strings (checker.c) -
 # it never calls the spawn runtime in-process; compiled programs get it from
@@ -72,9 +96,14 @@ CORE_SRCS = src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/
 # are NOT in CORE_SRCS (compiling them standalone would duplicate symbols). List
 # them here as prerequisites so editing one triggers a rebuild - otherwise make
 # sees no changed prerequisite and silently keeps a stale binary.
-CODEGEN_INCLUDED_SRCS = src/codegen_expr.c src/codegen_stmt.c src/codegen_lambda.c src/codegen_program.c
+# Sources #included directly into another translation unit (codegen.c pulls in the
+# codegen_* files, checker.c pulls in checker_builtins.c). They are NOT in CORE_SRCS -
+# compiling them standalone would duplicate symbols - but they must be prerequisites,
+# or make sees no changed prerequisite and silently keeps a stale binary.
+TU_INCLUDED_SRCS = src/codegen_expr.c src/codegen_stmt.c src/codegen_lambda.c src/codegen_program.c \
+                   src/checker_builtins.c
 
-wyn$(EXE_EXT): $(CORE_SRCS) $(CODEGEN_INCLUDED_SRCS) $(wildcard src/*.h)
+wyn$(EXE_EXT): $(CORE_SRCS) $(TU_INCLUDED_SRCS) $(wildcard src/*.h)
 	$(CC) $(CFLAGS) -I src -I vendor/tcc/include -I vendor/minicoro -o $@ $(CORE_SRCS) vendor/tcc/lib/libtcc.a $(PLATFORM_LIBS)
 
 # Platform-specific targets
@@ -82,21 +111,21 @@ wyn-windows: PLATFORM_CFLAGS += -DWYN_PLATFORM_WINDOWS
 wyn-windows: PLATFORM_LIBS = -lws2_32 -lpthread -lm
 wyn-windows: CC = x86_64-w64-mingw32-gcc
 wyn-windows: EXE_EXT = .exe
-wyn-windows: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/module_loader.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
+wyn-windows: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/module_loader.c src/io.c src/net.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
 	$(CC) $(CFLAGS) -I src -o wyn$(EXE_EXT) $^ $(PLATFORM_LIBS)
 
 wyn-linux: PLATFORM_CFLAGS += -DWYN_PLATFORM_LINUX
 wyn-linux: PLATFORM_LIBS = -lpthread -lm
 wyn-linux: CC = gcc
 wyn-linux: EXE_EXT =
-wyn-linux: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/module_loader.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
+wyn-linux: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/module_loader.c src/io.c src/net.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
 	$(CC) $(CFLAGS) -I src -o wyn$(EXE_EXT) $^ $(PLATFORM_LIBS)
 
 wyn-macos: PLATFORM_CFLAGS += -DWYN_PLATFORM_MACOS
 wyn-macos: PLATFORM_LIBS = -lpthread -lm
 wyn-macos: CC = clang
 wyn-macos: EXE_EXT =
-wyn-macos: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/module_loader.c src/collections.c src/io.c src/net.c src/system.c src/stdlib_advanced.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
+wyn-macos: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/module_loader.c src/io.c src/net.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
 	$(CC) $(CFLAGS) -I src -o wyn$(EXE_EXT) $^ $(PLATFORM_LIBS)
 
 # Phase 2 Integration Testing
@@ -117,7 +146,7 @@ phase2-gates:
 phase2-status:
 	@./scripts/phase2_monitor_simple.sh status
 
-wyn-release: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string.c
+wyn-release: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/safe_memory.c src/error.c src/security.c src/memory.c
 	$(CC) $(CFLAGS) $(OPTFLAGS) -I src -o wyn $^
 	strip wyn
 
@@ -134,7 +163,7 @@ test_string_memory: tests/memory/test_string_memory
 	@echo "=== Running String Memory Tests ==="
 	@./tests/memory/test_string_memory
 
-tests/memory/test_string_memory: tests/memory/test_string_memory.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/safe_memory.c src/string.c src/error.c
+tests/memory/test_string_memory: tests/memory/test_string_memory.c src/string_runtime.c src/arc_runtime.c src/safe_memory.c src/error.c
 	@mkdir -p tests/memory
 	$(CC) $(CFLAGS) -I src -o $@ $^ -lpthread
 
@@ -142,7 +171,7 @@ test_string_leaks: tests/memory/test_string_leaks
 	@echo "=== Running String Leak Detection Tests ==="
 	@./tests/memory/test_string_leaks
 
-tests/memory/test_string_leaks: tests/memory/test_string_leaks.c src/string_memory.c src/string_runtime.c src/arc_runtime.c src/safe_memory.c src/string.c src/error.c
+tests/memory/test_string_leaks: tests/memory/test_string_leaks.c src/string_runtime.c src/arc_runtime.c src/safe_memory.c src/error.c
 	@mkdir -p tests/memory
 	$(CC) $(CFLAGS) -I src -o $@ $^ -lpthread
 
@@ -248,6 +277,48 @@ test: wyn
 	@WYN=./wyn bash tests/gpu/run_gpu_test.sh
 	@echo "=== Running bindgen test ==="
 	@WYN=./wyn bash tests/bindgen/run_bindgen_test.sh
+	@echo "=== Running module struct-array return test ==="
+	@WYN=./wyn bash tests/module_tests/run_struct_array_return_test.sh
+	@echo "=== Running lambda-in-imported-module test ==="
+	@WYN=./wyn bash tests/module_tests/run_lambda_in_module_test.sh
+	@echo "=== Running module global-initializer test ==="
+	@WYN=./wyn bash tests/module_tests/run_module_global_init_test.sh
+	@echo "=== Running src/ module-layout resolution test ==="
+	@WYN=./wyn bash tests/module_tests/run_src_layout_test.sh
+	@echo "=== Running module extern-fn naming test ==="
+	@WYN=./wyn bash tests/module_tests/run_extern_prefix_test.sh
+	@echo "=== Running cross-module struct/enum type test ==="
+	@WYN=./wyn bash tests/module_tests/run_cross_module_type_test.sh
+	@echo "=== Running imported-type checker test ==="
+	@WYN=./wyn bash tests/module_tests/run_imported_type_test.sh
+	@echo "=== Running multi-module package test ==="
+	@WYN=./wyn bash tests/module_tests/run_pkg_multimodule_test.sh
+	@echo "=== Running argv-forwarding test ==="
+	@WYN=./wyn bash tests/errors/run_argv_forward_test.sh
+	@echo "=== Running cc-error isolation test (parallel wyn run) ==="
+	@WYN=./wyn bash tests/errors/run_cc_err_isolation_test.sh
+	@echo "=== Running unresolved-import abort test ==="
+	@WYN=./wyn bash tests/errors/run_unresolved_import_test.sh
+	@echo "=== Running selective-import alias rejection test ==="
+	@WYN=./wyn bash tests/errors/run_selective_import_alias_test.sh
+	@echo "=== Running mut-param non-lvalue rejection test ==="
+	@WYN=./wyn bash tests/errors/run_mut_param_nonlvalue_test.sh
+	@echo "=== Running namespace-typo message test ==="
+	@WYN=./wyn bash tests/errors/run_namespace_typo_message_test.sh
+	@echo "=== Running for-in-string check-time rejection test ==="
+	@WYN=./wyn bash tests/errors/run_for_in_string_test.sh
+	@echo "=== Running run-cache import-staleness test ==="
+	@WYN=./wyn bash tests/errors/run_run_cache_imports_test.sh
+	@echo "=== Running --release link/parity test ==="
+	@WYN=./wyn bash tests/errors/run_release_link_test.sh
+	@echo "=== Running native app-bundle (wyn build --app) test ==="
+	@WYN=./wyn bash tests/errors/run_app_bundle_test.sh
+	@echo "=== Running assert_eq float-comparison test ==="
+	@WYN=./wyn bash tests/errors/run_assert_eq_float_test.sh
+	@echo "=== Running wyn design subcommand test ==="
+	@WYN=./wyn bash tests/errors/run_design_cmd_test.sh
+	@echo "=== Running test-name percent-escaping test ==="
+	@WYN=./wyn bash tests/errors/run_test_name_percent_test.sh
 	@echo "=== Running C-package (wyn add) test ==="
 	@WYN=./wyn bash tests/cpkg/run_cpkg_test.sh
 	@echo "=== Running SQLite dogfood (wyn add sqlite3) test ==="
@@ -280,6 +351,58 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_module_codegen_test.sh
 	@echo "=== Running pub-visibility enforcement test ==="
 	@WYN=./wyn bash tests/errors/run_pub_visibility_test.sh
+	@echo "=== Running module-call arity test ==="
+	@WYN=./wyn bash tests/errors/run_module_arity_test.sh
+	@echo "=== Running bool/int argument test ==="
+	@WYN=./wyn bash tests/errors/run_bool_int_arg_test.sh
+	@echo "=== Running module struct type test ==="
+	@WYN=./wyn bash tests/errors/run_module_struct_test.sh
+	@echo "=== Running clean-output test ==="
+	@WYN=./wyn bash tests/errors/run_clean_output_test.sh
+	@echo "=== Running interpolated-receiver method test ==="
+	@WYN=./wyn bash tests/errors/run_interp_method_test.sh
+	@echo "=== Running UTF-8 padding test ==="
+	@WYN=./wyn bash tests/errors/run_pad_utf8_test.sh
+	@echo "=== Running struct string-field ownership test ==="
+	@WYN=./wyn bash tests/errors/run_struct_string_field_test.sh
+	@echo "=== Running parenthesized-condition test ==="
+	@WYN=./wyn bash tests/errors/run_paren_condition_test.sh
+	@echo "=== Running enum variant-name collision test ==="
+	@WYN=./wyn bash tests/errors/run_enum_variant_name_test.sh
+	@echo "=== Running lambda-in-interpolation test ==="
+	@WYN=./wyn bash tests/errors/run_lambda_interp_test.sh
+	@echo "=== Running struct-array return-type test ==="
+	@WYN=./wyn bash tests/errors/run_struct_array_return_test.sh
+	@echo "=== Running int-array var-leak test ==="
+	@WYN=./wyn bash tests/errors/run_int_array_var_leak_test.sh
+	@echo "=== Running mut-self mutation test ==="
+	@WYN=./wyn bash tests/errors/run_mut_self_test.sh
+	@echo "=== Running shadowed-string retain test ==="
+	@WYN=./wyn bash tests/errors/run_shadowed_string_retain_test.sh
+	@echo "=== Running global string-assign leak test ==="
+	@WYN=./wyn bash tests/errors/run_global_string_leak_test.sh
+	@echo "=== Running global string-copy lifetime test ==="
+	@WYN=./wyn bash tests/errors/run_global_string_copy_test.sh
+	@echo "=== Running pub-declaration parse test ==="
+	@WYN=./wyn bash tests/errors/run_pub_decl_test.sh
+	@echo "=== Running enum-value representation test ==="
+	@WYN=./wyn bash tests/errors/run_enum_value_repr_test.sh
+	@echo "=== Running handle-in-array-literal test ==="
+	@WYN=./wyn bash tests/errors/run_handle_in_array_literal_test.sh
+	@echo "=== Running module enum-type test ==="
+	@WYN=./wyn bash tests/errors/run_module_enum_type_test.sh
+	@echo "=== Running module array-param test ==="
+	@WYN=./wyn bash tests/errors/run_module_array_param_test.sh
+	@echo "=== Running import-list size test ==="
+	@WYN=./wyn bash tests/errors/run_import_list_test.sh
+	@echo "=== Running GUI build-link test ==="
+	@WYN=./wyn bash tests/errors/run_gui_build_test.sh
+	@echo "=== Running var-type-scope test ==="
+	@WYN=./wyn bash tests/errors/run_var_type_scope_test.sh
+	@echo "=== Running bool-method formatting test ==="
+	@WYN=./wyn bash tests/errors/run_bool_method_format_test.sh
+	@echo "=== Running python/shared-library build test ==="
+	@WYN=./wyn bash tests/errors/run_python_lib_test.sh
 	@echo "=== Running pkg search test ==="
 	@WYN=./wyn bash tests/errors/run_search_test.sh
 	@echo "=== Running scaffold (wyn new) test ==="
@@ -334,10 +457,23 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_install_layout_test.sh
 	@echo "=== Running unsupported-field-type honesty gates ==="
 	@WYN=./wyn bash tests/errors/run_unsupported_field_type_test.sh
+	@echo "=== Running function-typed struct field test ==="
+	@WYN=./wyn bash tests/errors/run_fn_field_test.sh
+	@echo "=== Running unused-variable shadowing test ==="
+	@WYN=./wyn bash tests/errors/run_unused_shadow_test.sh
+	@echo "=== Running StringBuilder aliasing test ==="
+	@WYN=./wyn bash tests/errors/run_stringbuilder_test.sh
 	@echo "=== Running Task.select diagnostic gate ==="
 	@WYN=./wyn bash tests/errors/run_task_select_diagnostic_test.sh
 	@echo "=== Running HTTP server concurrent-load gate ==="
 	@WYN=./wyn bash tests/errors/run_http_server_load_test.sh
+	@echo "=== Running v1.21 ACCEPTANCE gate (PLAN_v1.21 §10) ==="
+	@# The release's own exit criterion: ONE realistic CLI tool that reads stdin,
+	@# parses JSON, formats numbers, propagates errors across DIFFERENT Result
+	@# families, passes structs across boundaries and uses a HashMap from a
+	@# spawned handler - all at once. Every other suite here was green while the
+	@# three defects this tool found were live, which is exactly §10's argument.
+	@WYN=./wyn bash tests/acceptance/run_acceptance_test.sh
 	@echo "=== Running fuzz smoke (seed 1) ==="
 	@WYN=./wyn bash tests/fuzz/run_fuzz.sh 1 60
 	# tests/stdlib/ (68 files) used to be run by NOTHING - not run_bdd.sh (which
@@ -493,7 +629,7 @@ tests/test_lexer: tests/test_lexer.c src/lexer.c
 tests/test_parser: tests/test_parser.c src/parser.c src/lexer.c src/security.c src/safe_memory.c
 	$(CC) $(CFLAGS) -I src -o $@ $^
 
-tests/test_checker: tests/test_checker.c src/checker.c src/parser.c src/lexer.c src/security.c src/safe_memory.c src/error.c src/patterns.c src/closures.c src/type_inference.c src/generics.c src/traits.c src/memory.c src/string.c
+tests/test_checker: tests/test_checker.c src/checker.c src/parser.c src/lexer.c src/security.c src/safe_memory.c src/error.c src/patterns.c src/type_inference.c src/generics.c src/traits.c src/memory.c
 	$(CC) $(CFLAGS) -I src -o $@ $^
 
 tests/test_codegen: tests/test_codegen.c src/codegen.c src/safe_memory.c src/error.c src/parser.c src/lexer.c src/security.c
@@ -539,9 +675,6 @@ tests/test_bootstrap: tests/test_bootstrap.c
 
 
 tests/test_checker_rewrite: tests/test_checker_rewrite.c
-	$(CC) $(CFLAGS) -I src -o $@ $^
-
-tests/test_stdlib_advanced: tests/test_stdlib_advanced.c src/stdlib_advanced.c
 	$(CC) $(CFLAGS) -I src -o $@ $^
 
 tests/test_documentation_system: tests/test_documentation_system.c
@@ -602,9 +735,18 @@ tools/formatter.wyn.out: tools/formatter.wyn wyn
 
 
 # Precompile runtime library for fast compilation
-# runtime_exports.c compiles all inline functions from wyn_runtime.h
+# runtime_exports.c is the ONLY translation unit that includes wyn_runtime.h, so
+# it is where every runtime function defined *in that header* becomes a linkable
+# symbol. The default path does not need it (the generated program .c includes
+# wyn_runtime.h itself and so defines them all locally), but `--release` emits
+# `#include "wyn_runtime_slim.h"` - declarations only - and then has nothing to
+# link against. Omitting it here made EVERY --release build fail at link
+# (Math_pow, System_args, __wyn_argc, print_float_no_nl, array_push_float, ...).
+# It is safe on the default path because the linker only pulls an archive member
+# in to resolve an undefined symbol, and the program's own object already defines
+# all of them; see tests/regression/test_release_link.sh, which guards both paths.
 # Additional .c files provide functions NOT in the header
-RT_SRCS = src/wyn_arena.c src/wyn_rc.c src/wyn_wrapper.c \
+RT_SRCS = src/wyn_arena.c src/wyn_rc.c src/runtime_exports.c src/wyn_wrapper.c \
           src/wyn_interface.c src/coroutine.c src/spawn_fast.c src/spawn.c src/future.c \
           src/io.c src/io_loop.c src/optional.c src/result.c \
           src/arc_runtime.c src/concurrency.c src/async_runtime.c \
@@ -749,8 +891,19 @@ tsan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_tsan.a
 # dev compile in main.c exactly - clang refuses a pch whose flags differ.
 ifeq ($(shell uname),Darwin)
 runtime: runtime/wyn_runtime.pch
-runtime/wyn_runtime.pch: src/wyn_runtime.h
-	@$(CC) -x c-header -std=c11 -O0 -w -Wno-int-conversion -ffunction-sections -fdata-sections -I src \
+# Depends on the MAKEFILE as well as the header: the pch must be rebuilt when the
+# FLAGS change, not only when the header does. clang hard-errors if the pch's
+# flags differ from the including file's ("signed integer overflow handling
+# differs in precompiled file"), so when -fwrapv was added to both the compile
+# line and this rule, every tree with an EXISTING pch kept using the old one and
+# every build broke until the pch was deleted by hand. Anyone pulling that change
+# would have hit it. Listing the Makefile makes the rebuild automatic.
+runtime/wyn_runtime.pch: src/wyn_runtime.h Makefile
+	@# -fwrapv must match the flags `wyn build` uses for the program that
+	@# INCLUDES this pch. clang hard-errors on a mismatch ("signed integer
+	@# overflow handling differs in precompiled file"), so adding -fwrapv to the
+	@# build without adding it here breaks every macOS dev-loop build.
+	@$(CC) -x c-header -std=c11 -O0 -fwrapv -w -Wno-int-conversion -ffunction-sections -fdata-sections -I src \
 		src/wyn_runtime.h -o runtime/wyn_runtime.pch 2>/dev/null && \
 		echo "Built runtime/wyn_runtime.pch ($$(du -h runtime/wyn_runtime.pch | cut -f1))" || true
 endif

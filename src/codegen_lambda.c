@@ -87,6 +87,14 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
             break;
         case STMT_FOR:
             if (stmt->for_stmt.array_expr) scan_expr_for_lambdas(stmt->for_stmt.array_expr);
+            // A RANGE loop (`for i in 0..f((n) => n + 1)`) is desugared by the
+            // parser into init/condition/increment, so the bound expressions live
+            // there and NOT in array_expr - which is why scanning only array_expr
+            // and body missed a lambda in a range bound. The desugared `init` is a
+            // STMT_VAR holding the start expression; the end lands in `condition`.
+            if (stmt->for_stmt.init) scan_stmt_for_lambdas(stmt->for_stmt.init);
+            if (stmt->for_stmt.condition) scan_expr_for_lambdas(stmt->for_stmt.condition);
+            if (stmt->for_stmt.increment) scan_expr_for_lambdas(stmt->for_stmt.increment);
             if (stmt->for_stmt.body) scan_stmt_for_lambdas(stmt->for_stmt.body);
             break;
         case STMT_SPAWN:
@@ -127,6 +135,22 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
                 }
             }
             break;
+        case STMT_EXPORT:
+            // Unwrap `export fn` / `export var`. A selective import
+            // (`import { f } from m`) merges the module's statement in as a
+            // STMT_EXPORT wrapper, so without this arm the wrapped body fell to
+            // `default: break` and any lambda inside it was never registered.
+            // The sibling scanner in this file (veto_scan_stmt) has always
+            // unwrapped its wrapper cases; this one simply never did.
+            if (stmt->export.stmt) {
+                Stmt* _inner = stmt->export.stmt;
+                if (_inner->type == STMT_FN) {
+                    scan_stmt_for_lambdas(_inner->fn.body);
+                } else {
+                    scan_stmt_for_lambdas(_inner);
+                }
+            }
+            break;
         default:
             break;
     }
@@ -152,6 +176,64 @@ static void collect_idents(Expr* expr, char idents[][64], int* count, int max) {
     // Interpolation segments reference outer vars too - "${n}" inside a lambda
     // used to skip capture collection entirely (C error: undeclared 'n').
     else if (expr->type == EXPR_STRING_INTERP) { for (int i = 0; i < expr->string_interp.count; i++) collect_idents(expr->string_interp.expressions[i], idents, count, max); }
+    // The REST of the grammar. Same root cause as #279 one function over: a walker
+    // that must enumerate every expression kind, listing only nine. A kind missing
+    // here HIDES a captured variable - it gets no env-struct field, while the body
+    // still emits a use of it, so the generated C failed with
+    // "use of undeclared identifier 'c'". The EXPR_STRING_INTERP arm above was
+    // added for precisely this reason once already.
+    //
+    // WHICH ARMS ARE PROVEN, precisely - the walk is exhaustive by design (that is
+    // the #279 lesson: a partial whitelist rots), but not every arm has a live
+    // repro, and saying otherwise is how a stale claim gets believed later:
+    //
+    //   * MUTATION-VERIFIED, each with a case in tests/regression/
+    //     test_lambda_capture_exprs.wyn that compiles WITHOUT a capture and ICE'd
+    //     WITH one: TERNARY, FIELD_ACCESS, ARRAY, TUPLE_INDEX, STRUCT_INIT, MATCH,
+    //     INDEX_ASSIGN. That asymmetry is what pins the fault on THIS walker rather
+    //     than on a miscompile of the surrounding expression.
+    //   * BLOCKED BY A SEPARATE DEFECT, so untestable here but correct once it is
+    //     fixed: SOME/OK/ERR and AWAIT. A lambda whose body is `Some(...)` or
+    //     `await ...` ICEs on unmodified dev with NO capture at all.
+    //   * COMPLETENESS ONLY, no repro found: FIELD_ASSIGN, HASHMAP/HASHSET_LITERAL,
+    //     TUPLE, MAP, INDEX, RANGE, TRY, OPT_CHAIN, LAMBDA. `ys[idx]` in particular
+    //     already worked before this change, so INDEX reaches idents by some other
+    //     path; the arm is kept for uniformity, not because it fixes a known bug.
+    //
+    // THE CAP IS UNCHANGED AND STILL LOW. The caller passes max=32 and filters into
+    // a captured_vars[16][64], so a lambda with MORE THAN 16 captures is an ICE -
+    // measured: 16 works, 17 does not. That ceiling is identical before and after
+    // this change (verified against an unmodified binary): widening the walk finds
+    // the captures that were being missed, it does not raise how many can be held.
+    // Growing those arrays is a separate change with its own risk, deliberately not
+    // bundled here.
+    else if (expr->type == EXPR_TERNARY) { collect_idents(expr->ternary.condition, idents, count, max); collect_idents(expr->ternary.then_expr, idents, count, max); collect_idents(expr->ternary.else_expr, idents, count, max); }
+    // The OBJECT is the ident to capture (`h` in `h.v`); the field name is a
+    // token on the node, not a sub-expression, so there is nothing else to walk.
+    else if (expr->type == EXPR_FIELD_ACCESS) { collect_idents(expr->field_access.object, idents, count, max); }
+    else if (expr->type == EXPR_FIELD_ASSIGN) { collect_idents(expr->field_assign.object, idents, count, max); collect_idents(expr->field_assign.value, idents, count, max); }
+    else if (expr->type == EXPR_ARRAY || expr->type == EXPR_HASHMAP_LITERAL ||
+             expr->type == EXPR_HASHSET_LITERAL) { for (int i = 0; i < expr->array.count; i++) collect_idents(expr->array.elements[i], idents, count, max); }
+    else if (expr->type == EXPR_TUPLE) { for (int i = 0; i < expr->tuple.count; i++) collect_idents(expr->tuple.elements[i], idents, count, max); }
+    else if (expr->type == EXPR_TUPLE_INDEX) { collect_idents(expr->tuple_index.tuple, idents, count, max); }
+    else if (expr->type == EXPR_STRUCT_INIT) { for (int i = 0; i < expr->struct_init.field_count; i++) collect_idents(expr->struct_init.field_values[i], idents, count, max); }
+    else if (expr->type == EXPR_MAP) { for (int i = 0; i < expr->map.count; i++) { collect_idents(expr->map.keys[i], idents, count, max); collect_idents(expr->map.values[i], idents, count, max); } }
+    else if (expr->type == EXPR_INDEX) { collect_idents(expr->index.array, idents, count, max); collect_idents(expr->index.index, idents, count, max); }
+    else if (expr->type == EXPR_INDEX_ASSIGN) { collect_idents(expr->index_assign.object, idents, count, max); collect_idents(expr->index_assign.index, idents, count, max); collect_idents(expr->index_assign.value, idents, count, max); }
+    else if (expr->type == EXPR_RANGE) { collect_idents(expr->range.start, idents, count, max); collect_idents(expr->range.end, idents, count, max); }
+    else if (expr->type == EXPR_SOME || expr->type == EXPR_OK || expr->type == EXPR_ERR) { collect_idents(expr->option.value, idents, count, max); }
+    else if (expr->type == EXPR_TRY) { collect_idents(expr->try_expr.value, idents, count, max); }
+    else if (expr->type == EXPR_OPT_CHAIN) { collect_idents(expr->opt_chain.object, idents, count, max); }
+    else if (expr->type == EXPR_AWAIT) { collect_idents(expr->await.expr, idents, count, max); }
+    // ARM RESULTS ONLY, deliberately - never `arms[i].pattern`. A pattern-bound
+    // name (`Some(x) => x + c`) is a binding LOCAL to the arm, not an outer
+    // variable; collecting it would declare a bogus env field named after it and
+    // shadow the real binding. Same reason lambda params are filtered by the
+    // caller rather than skipped here.
+    else if (expr->type == EXPR_MATCH) { collect_idents(expr->match.value, idents, count, max); for (int i = 0; i < expr->match.arm_count; i++) collect_idents(expr->match.arms[i].result, idents, count, max); }
+    // A NESTED lambda's body can reference the outer lambda's captures, so the
+    // outer must capture them too in order to pass them down.
+    else if (expr->type == EXPR_LAMBDA) { collect_idents(expr->lambda.body, idents, count, max); }
 }
 static void scan_expr_for_lambdas(Expr* expr) {
     if (!expr) return;
@@ -330,10 +412,158 @@ static void scan_expr_for_lambdas(Expr* expr) {
                 }
             }
             break;
+        case EXPR_HASHMAP_LITERAL:
+        case EXPR_HASHSET_LITERAL:
+            // A `{"k": v}` / `{a, b}` literal stores its parts in `array.elements`
+            // (for the hashmap: key at even index, value at odd), so it shares the
+            // EXPR_ARRAY walk below. These are DISTINCT kinds from EXPR_MAP - the
+            // `map { }` form - and neither is covered by veto_scan_expr, so the
+            // thirty-kind sibling walker was not a complete reference either:
+            //     var m = {"a": apply((n) => n + 7)}   // ICE'd
+            // Fallthrough is deliberate.
+            /* fallthrough */
         case EXPR_ARRAY:
             for (int i = 0; i < expr->array.count; i++) {
                 scan_expr_for_lambdas(expr->array.elements[i]);
             }
+            break;
+        case EXPR_STRUCT_INIT:
+            // A lambda in a struct initializer - `Button { on_click: () => ... }`,
+            // the event-handler shape. Without this arm the lambda is never
+            // visited here, so it gets no id and no top-level function is emitted,
+            // while the initializer still emits a reference to it: the generated C
+            // failed with `use of undeclared identifier '__lambda_1'`.
+            //
+            // Field VALUES only. Field types are type expressions, not values, so
+            // they can hold no lambda.
+            for (int i = 0; i < expr->struct_init.field_count; i++) {
+                scan_expr_for_lambdas(expr->struct_init.field_values[i]);
+            }
+            break;
+        case EXPR_STRING_INTERP:
+            // The SAME omission as EXPR_STRUCT_INIT above, in the one place a
+            // reader is most likely to write a pipeline:
+            //
+            //     print("top: ${xs.filter((n) => n > 2)}")
+            //
+            // An interpolated expression is a value like any other, but this
+            // scanner never descended into the parts, so the lambda got no id
+            // and no top-level function - while the interpolation still emitted
+            // a call referencing it. The generated C failed with `use of
+            // undeclared identifier '__lambda_1'`, surfaced to the user only as
+            // "compilation failed (internal codegen error)".
+            //
+            // Assigning the pipeline to a variable first worked, which is why
+            // this survived: it reads as a rule about interpolation rather than
+            // a missing traversal. Every other walker in this file (collect_idents,
+            // veto_scan_expr, veto_all_idents_in) already handles this node.
+            for (int i = 0; i < expr->string_interp.count; i++) {
+                scan_expr_for_lambdas(expr->string_interp.expressions[i]);
+            }
+            break;
+        case EXPR_UNARY:
+            // The THIRD instance of the same omission, and the one that proves it is a
+            // family rather than three accidents:
+            //
+            //     if not xs.all((n) => n > 100) { ... }
+            //
+            // A negated predicate is the ordinary way to write "some element fails".
+            // EXPR_BINARY was handled, EXPR_UNARY was not, so the lambda under the
+            // `not` was never visited. Worse than a plain miscompile: the id counter
+            // still advanced elsewhere, so a LATER lambda in the same function emitted
+            // a reference to `__lambda_2` while only `__lambda_1` existed - the failure
+            // surfaced on a different line than the code that caused it.
+            scan_expr_for_lambdas(expr->unary.operand);
+            break;
+        // The REST of the expression grammar. The three arms above were each added
+        // as an individual fix for one reported shape, and EXPR_UNARY's note that
+        // this is "a family rather than three accidents" was right - but the arms
+        // kept being added one at a time, leaving a whitelist of ten kinds out of
+        // ~45. Every unlisted kind hides a lambda the same way: no id, no emitted
+        // body, and a surrounding expression that still emits a call to it.
+        //
+        // These arms are taken from veto_scan_expr in this same file, which has
+        // always walked thirty kinds - the traversal was already written correctly
+        // next door. Kept in that function's order so the two can be diffed.
+        //
+        // What is deliberately left on `default:` is now only: the literals
+        // (IDENT/INT/FLOAT/STRING/BOOL/CHAR/NONE), the type-expression kinds
+        // (FN_TYPE/OPTIONAL_TYPE/RESULT_TYPE/UNION_TYPE/PATTERN - types, not
+        // values), and SPREAD/DESTRUCTURE/CHANNEL, which carry no child Expr at
+        // all (they sit with the literals in memory.c's free_expr). None can hold
+        // a lambda. That list plus the arms above is the WHOLE ExprType enum, so
+        // adding a new expression kind to the grammar is the only way to reopen
+        // this hole - check this switch when you do.
+        case EXPR_INDEX:
+            scan_expr_for_lambdas(expr->index.array);
+            scan_expr_for_lambdas(expr->index.index);
+            break;
+        case EXPR_INDEX_ASSIGN:
+            scan_expr_for_lambdas(expr->index_assign.object);
+            scan_expr_for_lambdas(expr->index_assign.index);
+            scan_expr_for_lambdas(expr->index_assign.value);
+            break;
+        case EXPR_ASSIGN:
+            scan_expr_for_lambdas(expr->assign.value);
+            break;
+        case EXPR_FIELD_ACCESS:
+            scan_expr_for_lambdas(expr->field_access.object);
+            break;
+        case EXPR_FIELD_ASSIGN:
+            scan_expr_for_lambdas(expr->field_assign.object);
+            scan_expr_for_lambdas(expr->field_assign.value);
+            break;
+        case EXPR_TERNARY:
+            scan_expr_for_lambdas(expr->ternary.condition);
+            scan_expr_for_lambdas(expr->ternary.then_expr);
+            scan_expr_for_lambdas(expr->ternary.else_expr);
+            break;
+        case EXPR_IF_EXPR:
+            scan_expr_for_lambdas(expr->if_expr.condition);
+            scan_expr_for_lambdas(expr->if_expr.then_expr);
+            scan_expr_for_lambdas(expr->if_expr.else_expr);
+            break;
+        case EXPR_RANGE:
+            scan_expr_for_lambdas(expr->range.start);
+            scan_expr_for_lambdas(expr->range.end);
+            break;
+        case EXPR_TUPLE:
+            for (int i = 0; i < expr->tuple.count; i++)
+                scan_expr_for_lambdas(expr->tuple.elements[i]);
+            break;
+        case EXPR_TUPLE_INDEX:
+            scan_expr_for_lambdas(expr->tuple_index.tuple);
+            break;
+        case EXPR_MAP:
+            for (int i = 0; i < expr->map.count; i++) {
+                scan_expr_for_lambdas(expr->map.keys[i]);
+                scan_expr_for_lambdas(expr->map.values[i]);
+            }
+            break;
+        case EXPR_SOME: case EXPR_OK: case EXPR_ERR:
+            scan_expr_for_lambdas(expr->option.value);
+            break;
+        case EXPR_TRY:
+            scan_expr_for_lambdas(expr->try_expr.value);
+            break;
+        case EXPR_OPT_CHAIN:
+            scan_expr_for_lambdas(expr->opt_chain.object);
+            break;
+        case EXPR_MATCH:
+            scan_expr_for_lambdas(expr->match.value);
+            for (int i = 0; i < expr->match.arm_count; i++)
+                scan_expr_for_lambdas(expr->match.arms[i].result);
+            break;
+        case EXPR_BLOCK:
+            for (int i = 0; i < expr->block.stmt_count; i++)
+                scan_stmt_for_lambdas(expr->block.stmts[i]);
+            scan_expr_for_lambdas(expr->block.result);
+            break;
+        case EXPR_LIST_COMP:
+            scan_expr_for_lambdas(expr->list_comp.iter_start);
+            scan_expr_for_lambdas(expr->list_comp.iter_end);
+            scan_expr_for_lambdas(expr->list_comp.body);
+            scan_expr_for_lambdas(expr->list_comp.condition);
             break;
         default:
             break;
@@ -732,6 +962,62 @@ void veto_scan_program(Program* prog) {
 // S2: Emit a lambda function using the real codegen_expr pipeline instead of the
 // string-based mini-emitter. This gives string concat, string methods, float ops,
 // and block bodies for free - everything codegen_expr already handles.
+// Emit ONLY a prototype for a lambda, no body.
+//
+// Lambda bodies must come AFTER the user-function forward declarations (a lambda
+// body may call a user function -- otherwise C sees an implicit declaration then a
+// conflicting static one), but BEFORE anything that references the lambda. A
+// MODULE function is emitted earlier than either, so no single body position can
+// satisfy both: moving the bodies late broke `pub fn f(xs) { xs.map((v) => ...) }`
+// with "use of undeclared identifier '__lambda_1'".
+//
+// A prototype resolves it. Deliberately duplicates only the SIGNATURE shape of
+// emit_lambda_via_codegen below - the two must agree or C reports a conflicting
+// type, which is a loud failure rather than a silent one. Kept adjacent so a
+// change to one is visible from the other.
+static void emit_lambda_prototype(LambdaFunction* lf) {
+    Expr* expr = lf->ast;
+    if (!expr || expr->type != EXPR_LAMBDA) return;
+
+    const char* ret_c_type = "long long";
+    if (expr->expr_type && expr->expr_type->kind == TYPE_FUNCTION &&
+        expr->expr_type->fn_type.return_type) {
+        const char* inferred = codegen_c_type_from_type(expr->expr_type->fn_type.return_type);
+        if (inferred) ret_c_type = inferred;
+    }
+    const char* param_c_types[16];
+    for (int i = 0; i < expr->lambda.param_count && i < 16; i++) {
+        param_c_types[i] = "long long";
+        if (expr->expr_type && expr->expr_type->kind == TYPE_FUNCTION &&
+            i < expr->expr_type->fn_type.param_count &&
+            expr->expr_type->fn_type.param_types[i]) {
+            const char* inferred = codegen_c_type_from_type(expr->expr_type->fn_type.param_types[i]);
+            if (inferred) param_c_types[i] = inferred;
+        }
+    }
+
+    // A capturing closure takes a leading void* env; a plain lambda does not.
+    // Mirrors the two shapes in emit_lambda_via_codegen exactly.
+    if (lf->capture_count > 0 && lf->is_closure) {
+        emit("%s __lambda_%d(void* __env", ret_c_type, lf->id);
+        for (int i = 0; i < expr->lambda.param_count; i++) {
+            emit(", %s", i < 16 ? param_c_types[i] : "long long");
+        }
+        emit(");\n");
+    } else {
+        emit("%s __lambda_%d(", ret_c_type, lf->id);
+        if (expr->lambda.param_count == 0) {
+            emit("void");
+        } else {
+            for (int i = 0; i < expr->lambda.param_count; i++) {
+                if (i > 0) emit(", ");
+                emit("%s", i < 16 ? param_c_types[i] : "long long");
+            }
+        }
+        emit(");\n");
+    }
+}
+
 static void emit_lambda_via_codegen(LambdaFunction* lf) {
     Expr* expr = lf->ast;
     if (!expr || expr->type != EXPR_LAMBDA) return;

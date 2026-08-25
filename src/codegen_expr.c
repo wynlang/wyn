@@ -15,6 +15,24 @@
 // Other string builtins (len/substring/concat) survive because they are method
 // calls; `str()` survives via a dedicated intercept. Only the free-function
 // *_to_string family reaches the generic prefix path, so guard it here.
+// Should a user struct name take the module prefix when emitted?
+//
+// NO if the struct is declared in the program being emitted. A struct declared in
+// a module is merged into the target (merge_module_exports) and its typedef comes
+// out UNPREFIXED, so prefixing a use of it names a type nothing declares - which
+// is what made any module returning or taking its own struct fail to compile with
+// "unknown type name '<module>_<Struct>'". One predicate, used by every site that
+// spells a struct type, so the prototype and the body cannot disagree.
+static int wyn_struct_needs_prefix(Token name) {
+    extern int is_known_struct(const char* nm);
+    if (!current_module_prefix) return 0;
+    char buf[128];
+    int n = name.length < 127 ? name.length : 127;
+    memcpy(buf, name.start, (size_t)n);
+    buf[n] = 0;
+    return is_known_struct(buf) ? 0 : 1;
+}
+
 static bool is_builtin_runtime_fn(const char* name) {
     static const char* builtins[] = {
         "int_to_string", "float_to_string", "bool_to_string",
@@ -23,6 +41,21 @@ static bool is_builtin_runtime_fn(const char* name) {
     };
     for (int i = 0; builtins[i] != NULL; i++) {
         if (strcmp(name, builtins[i]) == 0) return true;
+    }
+    // An `extern fn` declared by a module is likewise never a module member: it
+    // names a symbol that already exists in a C library, so there is no
+    // `mathlib_sqrt` in libm, only `sqrt`.
+    //
+    // This predicate is the right seam because it is the ONE thing every bare-
+    // identifier prefix site consults - the two `is_module_function(f) ||
+    // is_builtin_runtime_fn(f)` guards, and the EXPR_IDENT early-out. Those
+    // sites emit the prefix and the name SEPARATELY (the caller writes
+    // "mathlib_", then recurses to write "sqrt"), so a check placed in the
+    // recursion cannot suppress a prefix that has already been written. It has
+    // to be decided before the prefix is emitted, which is here.
+    {
+        extern bool is_module_extern_fn(const char*, const char*);
+        if (is_module_extern_fn(NULL, name)) return true;
     }
     return false;
 }
@@ -61,8 +94,58 @@ static const char* hashmap_insert_fn_for(Expr* value_expr) {
 // after this statement, otherwise RETAIN it (the array now co-owns a reference).
 // Fresh temporaries (literals, concat results) are not tracked vars, so nothing
 // is emitted for them. Call this AFTER the push expression has been emitted.
+// Is `value` a BORROWED string - a pointer the expression does not own?
+//
+// `array_get_str` (emitted for `other[i]`) hands back a pointer INTO the source array
+// without retaining it. The two sinks that TAKE OWNERSHIP of a string - `array_push_str`
+// and indexed assignment `xs[i] = v` - store that pointer as if it were theirs, so one
+// allocation ends up with two owners and the source's `array_free` pulls it out from
+// under the destination:
+//
+//     for pair in ["a=x", "b=y"] {
+//         var parts = pair.split("=")
+//         names.push(parts[0])        // borrowed pointer stored as owned
+//     }                               // array_free(&parts) releases it
+//
+// `names` then read as garbage ("[", "") instead of "a"/"b". A SILENTLY WRONG answer
+// with exit 0, which is why it survived; ASan names it a heap-use-after-free freed by
+// array_free. Found by writing cli-tools/depgraph, where accumulating `split()` results
+// into an array is the ordinary shape.
+//
+// The retain is emitted at the two SINKS rather than at `array_get_str` itself: the read
+// appears at 16 codegen sites, most of them transient (printing, comparing) where an
+// extra reference would leak. Only a sink that keeps the pointer needs to own one.
+static bool wyn_string_expr_is_borrowed(Expr* value) {
+    if (!value) return false;
+    // Direct: `xs.push(other[i])`.
+    if (value->type == EXPR_INDEX) {
+        Type* bt = value->index.array ? value->index.array->expr_type : NULL;
+        return bt && bt->kind == TYPE_ARRAY && bt->array_type.element_type &&
+               bt->array_type.element_type->kind == TYPE_STRING;
+    }
+    // Via a local that HOLDS a borrowed element: `var v = other[i]` then
+    // `xs.push(v)`. Registered at the var-decl site in codegen_stmt.c; without this
+    // the one-line-longer spelling of the same program was still a use-after-free,
+    // which is the trap in fixing only the direct form.
+    if (value->type == EXPR_IDENT) {
+        char _n[256]; token_to_cstr(_n, sizeof(_n), value->token);
+        extern int is_borrowed_string_local(const char*);
+        return is_borrowed_string_local(_n) != 0;
+    }
+    return false;
+}
+
 static void codegen_string_push_transfer(Expr* value) {
-    if (!value || value->type != EXPR_IDENT) return;
+    if (!value) return;
+    if (wyn_string_expr_is_borrowed(value)) {
+        // Retain so the destination owns a reference of its own, balancing the
+        // source array's eventual array_free.
+        emit("; wyn_rc_retain((void*)(intptr_t)");
+        codegen_expr(value);
+        emit(")");
+        return;
+    }
+    if (value->type != EXPR_IDENT) return;
     char _pvn[256]; token_to_cstr(_pvn, sizeof(_pvn), value->token);
     extern int is_string_var(const char*);
     if (!is_string_var(_pvn)) return;
@@ -99,6 +182,26 @@ static const char* wyn_ctor_family(Type* payload, const char* kind) {
     // Option<Struct>/Result<Struct> family emitted per-program), everything else
     // (int/…) falls back to the Int family.
     static char buf[128];
+    // Option: route the payload's own type name through THE authority, so a bare
+    // `Some(x)` outside any annotated context picks the same family the declaration
+    // would. It handles struct / plain-enum / data-enum / primitive uniformly.
+    if (payload && strcmp(kind, "Option") == 0) {
+        const char* pn = NULL;
+        char nbuf[96];
+        if (payload->kind == TYPE_STRUCT && payload->struct_type.name.length > 0) {
+            token_to_cstr(nbuf, sizeof(nbuf), payload->struct_type.name); pn = nbuf;
+        } else if (payload->kind == TYPE_ENUM && payload->name.length > 0) {
+            token_to_cstr(nbuf, sizeof(nbuf), payload->name); pn = nbuf;
+        } else if (payload->kind == TYPE_STRING) pn = "string";
+        else if (payload->kind == TYPE_FLOAT)    pn = "float";
+        else if (payload->kind == TYPE_BOOL)     pn = "bool";
+        else if (payload->kind == TYPE_INT)      pn = "int";
+        if (pn) {
+            extern const char* wyn_option_family(const char*, const char**, int*);
+            snprintf(buf, sizeof(buf), "%s", wyn_option_family(pn, NULL, NULL));
+            return buf;
+        }
+    }
     if (payload && payload->kind == TYPE_STRUCT && payload->struct_type.name.length > 0) {
         char sname[96]; token_to_cstr(sname, sizeof(sname), payload->struct_type.name);
         // Both Option and Result support a monomorphic struct-payload family.
@@ -1079,7 +1182,36 @@ void codegen_expr(Expr* expr) {
                 // two stay in lockstep when a variant name is shared across enums.
                 char _bv[128]; token_to_cstr(_bv, sizeof(_bv), expr->call.callee->token);
                 char _ben[128]; token_to_cstr(_ben, sizeof(_ben), expr->expr_type->name);
-                emit("%s_%s(", _ben, _bv);
+                // The callee may already be QUALIFIED: the parser folds `Shape::Circle` into
+                // one ident, so _bv is "Shape::Circle" and prefixing it again produced
+                // `Shape_Shape::Circle(1.0)` -- an undeclared identifier plus a C syntax
+                // error. Keep only the variant half. (This became reachable when the checker
+                // started typing a `::` constructor call as its enum; before that the call
+                // was typed int and never entered this branch at all.)
+                char* _bvcc = strstr(_bv, "::");
+                if (_bvcc) memmove(_bv, _bvcc + 2, strlen(_bvcc + 2) + 1);
+                // The UNDERSCORE spelling `MyRes_Ok(42)` is a THIRD form of the same
+                // trap, and it is already the C symbol: prefixing produced
+                // `MyRes_MyRes_Ok(42)` -> "call to undeclared function", after passing
+                // `wyn check` cleanly. Emit it unprefixed when the callee already
+                // begins with "<EnumName>_" and the remainder names a real variant.
+                //
+                // The variant check is DEFENSIVE, not load-bearing: mutating it out
+                // changes no test, and that is stated here rather than left looking
+                // verified. A call to a real function named `MyRes_helper` cannot reach
+                // this code at all - the enclosing `if` requires
+                // !user_fn_defined(callee), so any declared function is already
+                // excluded. What the check still guards is an identifier the checker
+                // typed as this enum whose suffix is NOT a variant, where stripping
+                // the prefix would emit a symbol that does not exist.
+                size_t _benl = strlen(_ben);
+                extern bool wyn_enum_declares_variant(const char*, const char*);
+                if (strncmp(_bv, _ben, _benl) == 0 && _bv[_benl] == '_' &&
+                    wyn_enum_declares_variant(_ben, _bv + _benl + 1)) {
+                    emit("%s(", _bv);
+                } else {
+                    emit("%s_%s(", _ben, _bv);
+                }
                 for (int i = 0; i < expr->call.arg_count; i++) {
                     if (i > 0) emit(", ");
                     codegen_expr(expr->call.args[i]);
@@ -1097,14 +1229,36 @@ void codegen_expr(Expr* expr) {
                     break;
                 }
                 if (fn.length == 9 && memcmp(fn.start, "assert_eq", 9) == 0 && expr->call.arg_count == 2) {
-                    // Type dispatch: string vs int
+                    // Type dispatch: string vs FLOAT vs int.
+                    //
+                    // The float arm is not a nicety. Without it a float comparison
+                    // went to wyn_assert_eq_int and both sides were TRUNCATED, so
+                    // assert_eq(0.0, -0.1875) PASSED - any two values inside one
+                    // unit interval truncate alike, and the assertion was vacuous.
+                    // Whole suites of opacity/coverage assertions were green while
+                    // the values were wrong.
+                    //
+                    // EITHER side decides it, checked both by static type and by
+                    // literal form: a mismatch like assert_eq(x_float, 1) must not
+                    // silently pick the int arm and truncate x, and the type is
+                    // often unknown for one side (a module fn's return) while the
+                    // other is a plain 1.0 literal.
                     Type* arg_type = expr->call.args[0]->expr_type;
-                    bool is_str = (arg_type && arg_type->kind == TYPE_STRING);
+                    Type* arg_type1 = expr->call.args[1]->expr_type;
+                    bool is_str = (arg_type && arg_type->kind == TYPE_STRING) ||
+                                  (arg_type1 && arg_type1->kind == TYPE_STRING);
                     // Also check if first arg is a string literal or method returning string
                     if (!is_str && expr->call.args[0]->type == EXPR_STRING) is_str = true;
                     if (!is_str && expr->call.args[1]->type == EXPR_STRING) is_str = true;
+                    bool is_flt = !is_str &&
+                        ((arg_type && arg_type->kind == TYPE_FLOAT) ||
+                         (arg_type1 && arg_type1->kind == TYPE_FLOAT) ||
+                         expr->call.args[0]->type == EXPR_FLOAT ||
+                         expr->call.args[1]->type == EXPR_FLOAT);
                     if (is_str) {
                         emit("wyn_assert_eq_str(");
+                    } else if (is_flt) {
+                        emit("wyn_assert_eq_float(");
                     } else {
                         emit("wyn_assert_eq_int(");
                     }
@@ -1841,11 +1995,31 @@ void codegen_expr(Expr* expr) {
                             extern int find_lambda_var(const char*);
                             _callee_is_lambda_var = (find_lambda_var(_lvn) >= 0);
                         }
+                        // Is this an unqualified call to a function of the CURRENT
+                        // module? If so it must be emitted by that module's own C
+                        // name, never an overload-mangled one - even when some
+                        // OTHER imported module exports a same-named function of a
+                        // different arity. All module `pub fn`s share global_scope,
+                        // so add_function_overload chains those cross-module
+                        // namesakes into one overload list; without this guard the
+                        // mangled branch below emits e.g. `handle_string` into a
+                        // module whose `handle` is defined as `<mod>_handle`, a
+                        // callee nothing defines. (OPEN-12.)
+                        bool _resolves_to_internal_module_fn = false;
+                        if (current_module_prefix && expr->call.callee->type == EXPR_IDENT) {
+                            char _imn[256]; token_to_cstr(_imn, sizeof(_imn), expr->call.callee->token);
+                            bool _qual = false;
+                            for (int _qi = 0; _qi < expr->call.callee->token.length - 1; _qi++)
+                                if (_imn[_qi] == ':' && _imn[_qi+1] == ':') { _qual = true; break; }
+                            if (!_qual) _resolves_to_internal_module_fn = is_module_function(_imn);
+                        }
                         // T1.5.3: Use mangled name only for actually overloaded functions
                         if (expr->call.selected_overload && !_callee_is_lambda_var) {
                             Symbol* overload = (Symbol*)expr->call.selected_overload;
                             // Only use mangled name if there are multiple overloads
-                            if (overload->mangled_name && overload->next_overload) {
+                            // AND this is not an internal module call (see above).
+                            if (overload->mangled_name && overload->next_overload
+                                && !_resolves_to_internal_module_fn) {
                                 emit("%s", overload->mangled_name);
                             } else {
                                 // Check if we're in a module and need to prefix
@@ -1983,6 +2157,39 @@ void codegen_expr(Expr* expr) {
                     // No cast needed for array_push second arg - 
                     // array_push takes long long, array_push_str takes const char*
                     
+                    // A `mut` parameter is passed by POINTER -- `fn bump(mut s: S)` emits
+                    // `void bump(S *s)` -- so the call must take the address. Nothing did, and
+                    // the two symptoms looked like different bugs:
+                    //
+                    //   struct arg: the C compiler REJECTS it --
+                    //     "passing 'S' to parameter of incompatible type 'S *'"
+                    //   int arg:    C accepts the implicit conversion and the callee
+                    //               dereferences the VALUE as an address -> SEGFAULT
+                    //               (`bump_int(i)` with i==5 dereferences address 5).
+                    //
+                    // One cause: `mut` on a free-function parameter was unusable for every
+                    // type. The METHOD form (`impl S { fn bump(mut self) }`) already handled
+                    // this via struct_method_takes_mut_self; this is its free-function
+                    // counterpart, and the int case is why it cannot be scoped to structs.
+                    //
+                    // Scoped to an ADDRESSABLE argument: `&` on a temporary or a literal is
+                    // not valid C. This list MUST match expr_is_addressable() in checker.c,
+                    // which rejects everything else at check time -- a form the checker allows
+                    // but this misses gets no `&` and the callee dereferences a value
+                    // (`bump(o.i.n)` did exactly that while this was EXPR_IDENT-only).
+                    // EXPR_INDEX is excluded on both sides: `xs[0]` lowers to
+                    // `array_get_int(xs, 0)`, a call, so `&xs[0]` is not valid C.
+                    if (expr->call.callee->type == EXPR_IDENT && !is_array_push && !is_array_pop) {
+                        char _mcb[128];
+                        token_to_cstr(_mcb, sizeof(_mcb), expr->call.callee->token);
+                        extern bool fn_param_is_mut(const char*, int);
+                        ExprType _at = expr->call.args[i]->type;
+                        if (fn_param_is_mut(_mcb, i) &&
+                            (_at == EXPR_IDENT || _at == EXPR_FIELD_ACCESS)) {
+                            emit("&");
+                        }
+                    }
+
                     // Check if this argument needs trait object wrapping
                     if (expr->call.callee->type == EXPR_IDENT) {
                         char callee_buf[64];
@@ -2035,6 +2242,125 @@ void codegen_expr(Expr* expr) {
             break;
         case EXPR_METHOD_CALL: {
             Token method = expr->method_call.method;
+
+            // Calling a function-typed STRUCT FIELD: `b.on_click()` - the VB-style
+            // event-handler shape. `obj.name(...)` parses as a METHOD call, so this
+            // must be checked BEFORE method dispatch: otherwise the field name is
+            // treated as a method and we emit `Button_on_click(b)`, a symbol that
+            // does not exist. That leaked raw-C error is exactly why fn-typed struct
+            // fields used to be rejected at check time.
+            //
+            // The field holds a WynClosure {fn, env} (see the EXPR_FN_TYPE branch in
+            // codegen_stmt.c), so call through it the same way the closure-VARIABLE
+            // path does. Cast from the checker-resolved type rather than assuming
+            // the int ABI - assuming it is the bug that made `fn(float) -> float`
+            // return garbage bits on the variable path.
+            // Resolve the struct NAME two ways, because the checker's
+            // struct_type.field_count is 0 on a method-call object (field arrays are
+            // not populated there), so the AST declaration is the reliable source.
+            if (expr->method_call.object) {
+                const char* _sname = NULL;
+                char _snbuf[96];
+                if (expr->method_call.object->expr_type &&
+                    expr->method_call.object->expr_type->kind == TYPE_STRUCT) {
+                    token_to_cstr(_snbuf, sizeof(_snbuf),
+                                  expr->method_call.object->expr_type->struct_type.name);
+                    _sname = _snbuf;
+                } else if (expr->method_call.object->type == EXPR_IDENT) {
+                    char _vn[96]; token_to_cstr(_vn, sizeof(_vn), expr->method_call.object->token);
+                    extern const char* get_struct_var_type(const char*);
+                    _sname = get_struct_var_type(_vn);
+                }
+                extern Program* current_program;
+                if (_sname && current_program) {
+                    Expr* _fty = NULL;
+                    for (int _si = 0; _si < current_program->count && !_fty; _si++) {
+                        Stmt* _s = current_program->stmts[_si];
+                        if (_s->type == STMT_EXPORT && _s->export.stmt) _s = _s->export.stmt;
+                        if (_s->type != STMT_STRUCT) continue;
+                        char _dn[96]; token_to_cstr(_dn, sizeof(_dn), _s->struct_decl.name);
+                        if (strcmp(_dn, _sname) != 0) continue;
+                        for (int _fi = 0; _fi < _s->struct_decl.field_count; _fi++) {
+                            Token _f = _s->struct_decl.fields[_fi];
+                            if (_f.length == method.length &&
+                                memcmp(_f.start, method.start, method.length) == 0) {
+                                _fty = _s->struct_decl.field_types[_fi];
+                                break;
+                            }
+                        }
+                    }
+                    if (_fty && _fty->type == EXPR_FN_TYPE) {
+                        // Emit the C return type straight from the annotation.
+                        const char* _rc = "void";
+                        Expr* _rt = _fty->fn_type.return_type;
+                        if (_rt && _rt->type == EXPR_IDENT) {
+                            Token t = _rt->token;
+                            if (t.length == 3 && memcmp(t.start, "int", 3) == 0) _rc = "long long";
+                            else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) _rc = "const char*";
+                            else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) _rc = "double";
+                            else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) _rc = "bool";
+                        }
+                        // Per-argument C types, from the annotation. Resolve once:
+                        // both call forms below must agree on them, and a
+                        // hand-copied second list is a silent-miscompile waiting to
+                        // happen (the variable path's forced int ABI is exactly that
+                        // bug - it made `fn(float) -> float` return garbage bits).
+                        const char* _pcs[16];
+                        int _na = expr->method_call.arg_count;
+                        if (_na > 16) _na = 16;
+                        for (int _ai = 0; _ai < _na; _ai++) {
+                            _pcs[_ai] = "long long";
+                            if (_ai < _fty->fn_type.param_count &&
+                                _fty->fn_type.param_types[_ai] &&
+                                _fty->fn_type.param_types[_ai]->type == EXPR_IDENT) {
+                                Token t = _fty->fn_type.param_types[_ai]->token;
+                                if (t.length == 6 && memcmp(t.start, "string", 6) == 0) _pcs[_ai] = "const char*";
+                                else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) _pcs[_ai] = "double";
+                                else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) _pcs[_ai] = "bool";
+                            }
+                        }
+                        // TWO calling conventions have to work through this ONE
+                        // field, because only a lambda that was `return`ed gets an
+                        // env parameter (codegen_lambda.c:212 sets is_closure, :794
+                        // vs :807 emit the two signatures):
+                        //
+                        //   env != NULL  ->  fn(void* env, args...)   capturing closure
+                        //   env == NULL  ->  fn(args...)              plain fn / non-capturing
+                        //
+                        // Passing env unconditionally shifted every argument by one
+                        // slot, so `h.f(21)` printed 0 rather than 42. Calling
+                        // through the wrong prototype is undefined behaviour, not
+                        // merely a wrong value, so branch at runtime on the tag the
+                        // struct-init path sets (see EXPR_STRUCT_INIT, ~:4605).
+                        emit("({ WynClosure __c = ");
+                        codegen_expr(expr->method_call.object);
+                        emit(".%.*s; __c.env ? ", method.length, method.start);
+                        // --- with env ---
+                        emit("((%s(*)(void*", _rc);
+                        for (int _ai = 0; _ai < _na; _ai++) emit(",%s", _pcs[_ai]);
+                        emit("))__c.fn)(__c.env");
+                        for (int _ai = 0; _ai < _na; _ai++) {
+                            emit(", ");
+                            codegen_expr(expr->method_call.args[_ai]);
+                        }
+                        emit(") : ");
+                        // --- without env ---
+                        emit("((%s(*)(", _rc);
+                        if (_na == 0) emit("void");
+                        for (int _ai = 0; _ai < _na; _ai++) {
+                            if (_ai > 0) emit(",");
+                            emit("%s", _pcs[_ai]);
+                        }
+                        emit("))__c.fn)(");
+                        for (int _ai = 0; _ai < _na; _ai++) {
+                            if (_ai > 0) emit(", ");
+                            codegen_expr(expr->method_call.args[_ai]);
+                        }
+                        emit("); })");
+                        break;
+                    }
+                }
+            }
 
             // Channel methods: ch.send(v) / ch.recv() / ch.close() lower to the
             // Task_* runtime. The channel value is a long long handle and the
@@ -2221,6 +2547,14 @@ void codegen_expr(Expr* expr) {
                 if (_svt) {
                     Token method = expr->method_call.method;
                     emit("%s_%.*s(", _svt, method.length, method.start);
+                    // A `mut self` receiver is passed by pointer -- the definition
+                    // emits `Counter_bump(Counter *self)`, so take the address here
+                    // or the callee mutates a copy and the caller sees nothing.
+                    {
+                        extern bool struct_method_takes_mut_self(const char*, const char*);
+                        char _mn[128]; token_to_cstr(_mn, sizeof(_mn), method);
+                        if (struct_method_takes_mut_self(_svt, _mn)) emit("&");
+                    }
                     codegen_expr(expr->method_call.object);
                     for (int i = 0; i < expr->method_call.arg_count; i++) {
                         emit(", "); codegen_expr(expr->method_call.args[i]);
@@ -2256,9 +2590,20 @@ void codegen_expr(Expr* expr) {
                     if (strcmp(_tn, _on) == 0) is_static_call = true;
                 }
                 
-                emit("%.*s_%.*s(", type_name.length, type_name.start, 
+                emit("%.*s_%.*s(", type_name.length, type_name.start,
                      method.length, method.start);
                 if (!is_static_call) {
+                    // A `mut self` receiver is passed by pointer -- the definition
+                    // emits `Counter_bump(Counter *self)`, so take the address or
+                    // the callee mutates a copy and the caller sees nothing. That
+                    // was the visible half of the `mut self` defect: two calls to
+                    // `bump()` left the value at 1, with a clean `wyn check`.
+                    {
+                        extern bool struct_method_takes_mut_self(const char*, const char*);
+                        char _mst[128]; token_to_cstr(_mst, sizeof(_mst), type_name);
+                        char _msm[128]; token_to_cstr(_msm, sizeof(_msm), method);
+                        if (struct_method_takes_mut_self(_mst, _msm)) emit("&");
+                    }
                     codegen_expr(expr->method_call.object);
                     if (expr->method_call.arg_count > 0) emit(", ");
                 }
@@ -2283,6 +2628,8 @@ void codegen_expr(Expr* expr) {
                         // We stored param types during STMT_FN processing
                         // (current_param_types is the growable array defined in codegen.c;
                         // this file is #included into codegen.c so it is in scope)
+
+
                         if (current_param_types[pi][0] && is_trait_type(current_param_types[pi], strlen(current_param_types[pi]))) {
                             emit("(");
                             codegen_expr(expr->method_call.object);
@@ -2369,6 +2716,18 @@ void codegen_expr(Expr* expr) {
                             emit("hashmap_set(");
                         } else if (method.length == 3 && memcmp(method.start, "has", 3) == 0) {
                             emit("hashmap_has(");
+                        // set_int / set_string / set_float / set_bool: the runtime
+                        // spells these hashmap_insert_*, so the blanket
+                        // `hashmap_<method>` mangling below emitted hashmap_set_int
+                        // and friends - undeclared, so a program using the obvious
+                        // name (`set` and `get_int` both exist) passed `wyn check`
+                        // and failed the C compile. types.c registers map.set_int
+                        // as a real method, so the checker was right to accept it.
+                        } else if ((method.length == 7 && memcmp(method.start, "set_int", 7) == 0) ||
+                                   (method.length == 10 && memcmp(method.start, "set_string", 10) == 0) ||
+                                   (method.length == 9 && memcmp(method.start, "set_float", 9) == 0) ||
+                                   (method.length == 8 && memcmp(method.start, "set_bool", 8) == 0)) {
+                            emit("hashmap_insert_%.*s(", method.length - 4, method.start + 4);
                         } else {
                             emit("hashmap_%.*s(", method.length, method.start);
                         }
@@ -2432,8 +2791,26 @@ void codegen_expr(Expr* expr) {
                     } else if (strcmp(module_name, "Shared") == 0) {
                         emit("Shared_%.*s(", method.length, method.start);
                     } else {
-                        // Use resolved module name if available (e.g., "lib/utils" -> "lib_utils")
-                        if (resolved_mod_name[0]) {
+                        // An `extern fn` declared by the module names a symbol
+                        // that already exists in a C library, so it must be
+                        // called UNPREFIXED - there is no `mymod_Thing_do` in
+                        // libthing, only `Thing_do`. The declaration was already
+                        // being emitted unprefixed (correctly); only the call
+                        // site prefixed, so the two disagreed and the program
+                        // failed to link. That made it impossible to put an FFI
+                        // binding behind a Wyn module.
+                        char _mfn[256]; token_to_cstr(_mfn, sizeof(_mfn), method);
+                        extern bool is_module_extern_fn(const char*, const char*);
+                        const char* _mn = resolved_mod_name[0] ? resolved_mod_name : NULL;
+                        char _obuf[128];
+                        if (!_mn) {
+                            token_to_cstr(_obuf, sizeof(_obuf), obj_name);
+                            _mn = _obuf;
+                        }
+                        if (is_module_extern_fn(_mn, _mfn)) {
+                            emit("%.*s(", method.length, method.start);
+                        } else if (resolved_mod_name[0]) {
+                            // Use resolved module name if available (e.g., "lib/utils" -> "lib_utils")
                             const char* c_mod = module_to_c_ident(resolved_mod_name);
                             emit("%s_%.*s(", c_mod, method.length, method.start);
                         } else {
@@ -2507,7 +2884,7 @@ void codegen_expr(Expr* expr) {
                             
                             // The struct initializer codegen adds current_module_prefix
                             // We need to do the same here to match
-                            if (current_module_prefix) {
+                            if (wyn_struct_needs_prefix(type_name)) {
                                 emit("%s_%.*s", current_module_prefix, type_name.length, type_name.start);
                             } else {
                                 emit("%.*s", type_name.length, type_name.start);
@@ -2515,7 +2892,7 @@ void codegen_expr(Expr* expr) {
                         } else {
                             // Fallback
                             Token type_name = elem_type->struct_type.name;
-                            if (current_module_prefix) {
+                            if (wyn_struct_needs_prefix(type_name)) {
                                 emit("%s_%.*s", current_module_prefix, type_name.length, type_name.start);
                             } else {
                                 emit("%.*s", type_name.length, type_name.start);
@@ -2985,15 +3362,19 @@ void codegen_expr(Expr* expr) {
                 // arr_contains - otherwise `["a"].contains("a")` was always 0.
                 if (method.length == 8 && memcmp(method.start, "contains", 8) == 0 && expr->method_call.arg_count == 1) {
                     Type* _et = object_type->array_type.element_type;
+                    // Both helpers are declared `int`, but `contains` is `bool` in Wyn:
+                    // without the cast, to_string()/print() dispatched on the integer
+                    // branch and printed `1` rather than `true`. Same reason as
+                    // any()/all() below.
                     if (_et && _et->kind == TYPE_STRING) {
-                        emit("array_contains_str(");
+                        emit("(bool)array_contains_str(");
                         codegen_expr(expr->method_call.object);
                         emit(", ");
                         codegen_expr(expr->method_call.args[0]);
                         emit(")");
                         break;
                     }
-                    emit("arr_contains(");
+                    emit("(bool)arr_contains(");
                     codegen_expr(expr->method_call.object);
                     emit(", ");
                     codegen_expr(expr->method_call.object);
@@ -3069,14 +3450,19 @@ void codegen_expr(Expr* expr) {
                     emit("array_concat("); codegen_expr(expr->method_call.object);
                     emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
                 }
-                // arr.any(fn)
+                // arr.any(fn) / arr.all(fn) return `bool` in Wyn, but their runtime
+                // helpers are declared `long long`, so print()/to_string()'s _Generic
+                // dispatch picked the INTEGER branch and `print(ns.any(...))` printed
+                // `1` instead of `true`. The same (bool) cast the comparison operators
+                // already use above (see _is_bool_op) makes the C type match the Wyn
+                // type at the one place that knows both.
                 if (method.length == 3 && memcmp(method.start, "any", 3) == 0 && expr->method_call.arg_count == 1) {
-                    emit("wyn_arr_any("); codegen_expr(expr->method_call.object);
+                    emit("(bool)wyn_arr_any("); codegen_expr(expr->method_call.object);
                     emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
                 }
                 // arr.all(fn)
                 if (method.length == 3 && memcmp(method.start, "all", 3) == 0 && expr->method_call.arg_count == 1) {
-                    emit("wyn_arr_all("); codegen_expr(expr->method_call.object);
+                    emit("(bool)wyn_arr_all("); codegen_expr(expr->method_call.object);
                     emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
                 }
                 
@@ -3258,6 +3644,21 @@ void codegen_expr(Expr* expr) {
                     (inner.length == 9 && memcmp(inner.start, "to_string", 9) == 0))
                     receiver_type = "string";
             }
+            // AN INTERPOLATED STRING LITERAL IS A STRING, by construction.
+            //
+            // `"a${x}b".pad_right(20, " ")` type-checked fine and then died in codegen
+            // with "Unknown method 'pad_right' (no type info)": every other receiver
+            // shape above is special-cased here, and this one was not, so the receiver
+            // type stayed NULL and the dispatch fell through to the error. The same
+            // call on a plain literal, or on a variable holding the interpolation,
+            // worked - so the rule was "you may not call a method on an interpolated
+            // literal", which is not a rule anyone can learn.
+            //
+            // No inference needed: EXPR_STRING_INTERP produces a string whatever its
+            // pieces are.
+            if (!receiver_type && expr->method_call.object->type == EXPR_STRING_INTERP)
+                receiver_type = "string";
+
             // Method chaining: function calls that return arrays
             if (!receiver_type && expr->method_call.object->type == EXPR_CALL) {
                 // await_all returns array
@@ -3451,16 +3852,20 @@ void codegen_expr(Expr* expr) {
                     emit(")");
                     break;
                 }
-                // Json-style methods on map-typed objects
-                if (strcmp(method_name, "set_string") == 0 && expr->method_call.arg_count == 2) {
-                    emit("json_set_string(");
-                    codegen_expr(expr->method_call.object);
-                    emit(", "); codegen_expr(expr->method_call.args[0]);
-                    emit(", "); codegen_expr(expr->method_call.args[1]);
-                    emit(")"); break;
-                }
-                if (strcmp(method_name, "set_int") == 0 && expr->method_call.arg_count == 2) {
-                    emit("json_set_int(");
+                // TYPED SETTERS ON A MAP: hashmap_insert_*, NOT json_set_*.
+                // These four used to emit json_set_string / json_set_int, handing a
+                // WynHashMap* to a function that writes through it as a WynJson*.
+                // That is the SAME type confusion as #291 (where hashmap_free walked
+                // a WynJson), in the other direction, and it is not merely a wrong
+                // answer: ASan reports a heap-buffer-overflow in hashmap_len reading
+                // memory json_set_string had allocated. `m.set_int("k",7)` then
+                // HashMap.get_int -> 0, all at exit 0 and with `wyn check` clean.
+                // The GETTERS a few lines below always used hashmap_*, which is why
+                // the pair silently disagreed. set_float/set_bool had no arm at all.
+                if ((strcmp(method_name, "set_int") == 0 || strcmp(method_name, "set_string") == 0 ||
+                     strcmp(method_name, "set_float") == 0 || strcmp(method_name, "set_bool") == 0) &&
+                    expr->method_call.arg_count == 2) {
+                    emit("hashmap_insert_%s(", method_name + 4);   // set_X -> insert_X
                     codegen_expr(expr->method_call.object);
                     emit(", "); codegen_expr(expr->method_call.args[0]);
                     emit(", "); codegen_expr(expr->method_call.args[1]);
@@ -3921,7 +4326,7 @@ void codegen_expr(Expr* expr) {
                     emit("array_push_struct(&__arr_%d, ", arr_id);
                     codegen_expr(elem);
                     emit(", ");
-                    if (current_module_prefix) {
+                    if (wyn_struct_needs_prefix(type_name)) {
                         emit("%s_%.*s", current_module_prefix, type_name.length, type_name.start);
                     } else {
                         emit("%.*s", type_name.length, type_name.start);
@@ -3933,7 +4338,7 @@ void codegen_expr(Expr* expr) {
                     emit("array_push_struct(&__arr_%d, ", arr_id);
                     codegen_expr(elem);
                     emit(", ");
-                    if (current_module_prefix) {
+                    if (wyn_struct_needs_prefix(type_name)) {
                         emit("%s_%.*s", current_module_prefix, type_name.length, type_name.start);
                     } else {
                         emit("%.*s", type_name.length, type_name.start);
@@ -3951,13 +4356,34 @@ void codegen_expr(Expr* expr) {
                     emit("{ WynArray __tmp_%d = ", arr_id * 100 + i);
                     codegen_expr(elem);
                     emit("; array_push_array(&__arr_%d, &__tmp_%d); } ", arr_id, arr_id * 100 + i);
-                } else if ((elem->expr_type && elem->expr_type->kind == TYPE_ENUM) ||
+                } else if ((elem->expr_type && elem->expr_type->kind == TYPE_ENUM &&
+                            elem->expr_type->name.length > 0 &&
+                            ({ char _en[128]; token_to_cstr(_en, sizeof(_en), elem->expr_type->name);
+                               extern int is_data_enum_type(const char*); is_data_enum_type(_en); })) ||
                            (elem->type == EXPR_METHOD_CALL &&
                             elem->method_call.object->type == EXPR_IDENT &&
                             ({ char _en[128]; token_to_cstr(_en, sizeof(_en), elem->method_call.object->token);
                                extern int is_data_enum_type(const char*); is_data_enum_type(_en); }))) {
                     // Data-enum value (a tagged-union struct), e.g. `E.A(5)` - push
                     // by value like a struct, using the enum type as the C type.
+                    //
+                    // The first arm used to accept ANY TYPE_ENUM, contradicting this
+                    // comment: a PAYLOAD-FREE variant is a C enum constant (an int), and
+                    // array_push_struct mallocs sizeof(EnumType) and memcpys a
+                    // `EnumType __temp_val = (value)` into it. So
+                    //
+                    //     var xs = [A.Up, A.Down, A.Reset]
+                    //     for a in xs { print(name(a)) }
+                    //
+                    // read back as A.Up, A.Up, A.Up - EVERY element collapsed to the
+                    // first variant, silently, at exit 0, in both the for-in and the
+                    // indexed form. A list of plain enum values is how you script a
+                    // sequence of actions or states, so this quietly corrupted exactly
+                    // the data it was given.
+                    //
+                    // is_data_enum_type() is the same predicate the for-in loop path
+                    // uses to make this distinction; payload-free variants now fall
+                    // through to array_push_int, which is what they are.
                     char _en[128];
                     if (elem->expr_type && elem->expr_type->kind == TYPE_ENUM && elem->expr_type->name.length > 0)
                         token_to_cstr(_en, sizeof(_en), elem->expr_type->name);
@@ -3968,6 +4394,7 @@ void codegen_expr(Expr* expr) {
                     emit(", %s); ", _en);
                 } else {
                     // Check element type to use correct push function
+                    bool _needs_ll_cast = false;
                     Type* etype = elem->expr_type;
                     if (etype && etype->kind == TYPE_STRING) {
                         emit("array_push_str(&__arr_%d, ", arr_id);
@@ -3977,6 +4404,27 @@ void codegen_expr(Expr* expr) {
                         emit("array_push_bool(&__arr_%d, ", arr_id);
                     } else {
                         emit("array_push_int(&__arr_%d, ", arr_id);
+                        // Cast ONLY where the element is not already an integer
+                        // expression. An int literal or arithmetic needs nothing, and
+                        // casting it churned four golden-C snapshots for no benefit; a
+                        // HANDLE (HashMap/HashSet/...) is a pointer in C and gcc rejects
+                        // the implicit conversion, so those must be cast.
+                        _needs_ll_cast = !(elem->type == EXPR_INT || elem->type == EXPR_BINARY ||
+                                           (elem->expr_type && elem->expr_type->kind == TYPE_INT));
+                        // CAST to the parameter type. array_push_int takes a long long,
+                        // and this arm is the catch-all: the element may be a HashMap, a
+                        // HashSet or any other handle that is a POINTER in C. gcc rejects
+                        // the implicit conversion outright -
+                        //   error: passing argument 2 of 'array_push_int' makes integer
+                        //          from pointer without a cast [-Wint-conversion]
+                        // - so `var m = HashMap.new()  var xs = [m]` did not compile on
+                        // Linux at all, while clang only warned and macOS shipped it. The
+                        // `.push()` path (STMT_EXPR) already casts; only the array LITERAL
+                        // path did not, which is why the two spellings disagreed.
+                        if (_needs_ll_cast) emit("(long long)(");
+                        codegen_expr(elem);
+                        emit(_needs_ll_cast ? ")); " : "); ");
+                        continue;
                     }
                     codegen_expr(elem);
                     emit("); ");
@@ -4181,6 +4629,11 @@ void codegen_expr(Expr* expr) {
                             _nest2 = "array_get_nested_bool";
                             // no triple-bool getter yet; _int is a safe fallback
                             // (bool is stored in int_val) - only formatting differs.
+                        } else if (expr->expr_type->kind == TYPE_STRING) {
+                            // Without this a [[string]] read went through
+                            // _nested_int and returned the char* as an int.
+                            _nest2 = "array_get_nested_str";
+                            _nest3 = "array_get_nested3_str";
                         }
                     }
                     if (expr->index.array->index.array->type == EXPR_INDEX) {
@@ -4225,6 +4678,24 @@ void codegen_expr(Expr* expr) {
                     }
                     if (elem_type) {
                         if (elem_type->kind == TYPE_STRUCT) {
+                            is_struct_array = true;
+                        } else if (elem_type->kind == TYPE_ENUM && elem_type->name.length > 0 &&
+                                   ({ char _een[128];
+                                      token_to_cstr(_een, sizeof(_een), elem_type->name);
+                                      extern int is_data_enum_type(const char*);
+                                      is_data_enum_type(_een); })) {
+                            // A DATA-carrying enum is a C struct (a tagged union), so an
+                            // indexed read needs array_get_struct with the enum's own C type.
+                            // It used to fall through to array_get_int, which handed a
+                            // `long long` to anything expecting the enum:
+                            //   xs = [Shape.Circle(1.5)]
+                            //   name_of(xs[0])   -> passing 'long long' to parameter of
+                            //                       incompatible type 'Shape'
+                            // for-in over the SAME array already worked, because that path
+                            // makes this distinction with the same is_data_enum_type
+                            // predicate -- only the indexed read was missing it.
+                            // A PLAIN enum is an int in C and correctly stays on the int
+                            // path below.
                             is_struct_array = true;
                         } else if (elem_type->kind == TYPE_STRING) {
                             is_string_array = true;
@@ -4289,7 +4760,12 @@ void codegen_expr(Expr* expr) {
                         emit(", ");
                         codegen_expr(expr->index.index);
                         emit(", ");
-                        Token type_name = elem_type->struct_type.name;
+                        // A data-carrying enum reaches this branch too, and its name lives in
+                        // Type.name, not Type.struct_type.name -- reading the struct field for
+                        // an enum Type yields an empty token, emitting `array_get_struct(xs, 0, )`.
+                        Token type_name = (elem_type->kind == TYPE_ENUM)
+                                            ? elem_type->name
+                                            : elem_type->struct_type.name;
                         emit("%.*s", type_name.length, type_name.start);
                         emit(")");
                     } else if (is_float_array) {
@@ -4341,6 +4817,32 @@ void codegen_expr(Expr* expr) {
                 extern int is_string_var(const char*);
                 if (is_string_var(target_name)) _rc_string_assign = true;
             }
+            // Is the target currently holding a BORROWED reference? `var base = path`
+            // aliases a parameter the callee does not own, and that is already recorded
+            // (see the borrow tracking at the string var-decl in codegen_stmt.c). The
+            // release-old below would then decrement a count this function never
+            // incremented, corrupting the CALLER's string:
+            //
+            //     fn shorten(path: string) -> string {
+            //         var base = path                       // borrows the parameter
+            //         var parts = path.split("/")
+            //         if parts.len() > 0 { base = parts[...] }   // released `path`!
+            //         return base
+            //     }
+            //
+            // The damage lands in the caller, so it reads as an unrelated later value
+            // going empty - in the case that found this, an accumulator built in a
+            // sibling loop. Skip the release for the FIRST assignment over a borrow;
+            // afterwards the var holds a retained value and is no longer a borrow.
+            bool _rc_target_borrowed = false;
+            {
+                extern int is_borrowed_string_local(const char*);
+                extern void unregister_borrowed_string_local(const char*);
+                if (is_borrowed_string_local(target_name)) {
+                    _rc_target_borrowed = true;
+                    unregister_borrowed_string_local(target_name);
+                }
+            }
             if (_rc_string_assign) {
                 Expr* rhs = expr->assign.value;
                 bool rhs_is_fresh = (rhs->type == EXPR_BINARY || rhs->type == EXPR_CALL ||
@@ -4350,12 +4852,20 @@ void codegen_expr(Expr* expr) {
                     // If concat reused the buffer (same pointer), don't release
                     emit("({ const char* __rc_tmp = ");
                     codegen_expr(expr->assign.value);
-                    emit("; if (__rc_tmp != %s) { wyn_rc_release(%s); } %s = __rc_tmp; })", target_name, target_name, target_name);
+                    if (_rc_target_borrowed) {
+                        emit("; %s = __rc_tmp; })", target_name);
+                    } else {
+                        emit("; if (__rc_tmp != %s) { wyn_rc_release(%s); } %s = __rc_tmp; })", target_name, target_name, target_name);
+                    }
                 } else {
                     // Shared reference: retain new, release old
                     emit("({ const char* __rc_tmp = ");
                     codegen_expr(expr->assign.value);
-                    emit("; wyn_rc_retain(__rc_tmp); wyn_rc_release(%s); %s = __rc_tmp; })", target_name, target_name);
+                    if (_rc_target_borrowed) {
+                        emit("; wyn_rc_retain(__rc_tmp); %s = __rc_tmp; })", target_name);
+                    } else {
+                        emit("; wyn_rc_retain(__rc_tmp); wyn_rc_release(%s); %s = __rc_tmp; })", target_name, target_name);
+                    }
                 }
                 break;
             }
@@ -4485,7 +4995,7 @@ void codegen_expr(Expr* expr) {
                     snprintf(prefixed_type_name, 128, "%s", temp_name);
                     actual_type_name = prefixed_type_name;
                     actual_type_name_len = strlen(prefixed_type_name);
-                } else if (current_module_prefix) {
+                } else if (wyn_struct_needs_prefix(type_name)) {
                     // Add module prefix if in module context
                     snprintf(prefixed_type_name, 128, "%s_%.*s", current_module_prefix, type_name.length, type_name.start);
                     actual_type_name = prefixed_type_name;
@@ -4514,7 +5024,74 @@ void codegen_expr(Expr* expr) {
                     const char* _prev_kind = current_assign_target_kind;
                     if (get_struct_field_option_family(_sn, _fn, _fam, sizeof(_fam)))
                         current_assign_target_kind = _fam;
-                    codegen_expr(expr->struct_init.field_values[i]);
+                    // A function-typed field holds a WynClosure {fn, env}, but the
+                    // VALUES that can land in one have three different C shapes:
+                    //
+                    //   named fn `dbl`          -> long long dbl(long long)
+                    //   non-capturing lambda    -> long long __lambda_1(long long)
+                    //   returned capturing one  -> long long __lambda_1(void*, long long)
+                    //
+                    // Only the third takes an env parameter (codegen_lambda.c:794
+                    // vs :807, gated on is_closure, which is set only for a lambda
+                    // in a `return` - codegen_lambda.c:212).
+                    //
+                    // Assigning any of them bare left .env uninitialised, and the
+                    // call site passed it as argument 0 regardless, shifting every
+                    // real argument by one slot: `h.f(21)` printed 0 instead of 42,
+                    // and a captured `n=5` printed 5 because it read 0+5. A silent
+                    // wrong answer at exit 0 - the worst failure class.
+                    //
+                    // So normalise here: wrap into a real WynClosure and let
+                    // env == NULL mean "plain function, do not pass env". The call
+                    // site (EXPR_METHOD_CALL, ~:2039) branches on that, so both
+                    // shapes stay callable through one field.
+                    extern Expr* get_struct_field_fn_type(const char*, const char*);
+                    Expr* _ffty = get_struct_field_fn_type(_sn, _fn);
+                    if (_ffty) {
+                        emit("wyn_closure_new((void*)");
+                        codegen_expr(expr->struct_init.field_values[i]);
+                        emit(", NULL)");
+                    } else {
+                        // A STRING FIELD FED FROM A BORROWED POINTER MUST BE COPIED.
+                        //
+                        // array_get_str returns a pointer INTO the array, not a copy.
+                        // So `Row { name: f[0] }` stores a pointer owned by `f`, and
+                        // when `f` is released - which happens on the next iteration of
+                        // a loop that reassigns it - every struct built earlier has an
+                        // empty name. Silently, at exit 0: the numeric fields were
+                        // right and only the strings vanished, which is the worst
+                        // possible shape for a data-processing bug.
+                        //
+                        // `"" + x` is the copy idiom already used elsewhere for exactly
+                        // this (see item_copy/line_copy in the gui toolkit), and
+                        // string_concat allocates a fresh RC string. Applied only to
+                        // declared `string` fields whose value is an INDEX expression,
+                        // so nothing else pays for it: a literal, a variable and a
+                        // function result are all owned already.
+                        Expr* _fv = expr->struct_init.field_values[i];
+                        extern int wyn_struct_field_is_string(const char*, const char*);
+                        // EXPR_INDEX covers `f[0]`; EXPR_IDENT covers a loop
+                        // variable, which borrows from the array being iterated and
+                        // dangles the same way once that array is released. A NESTED
+                        // loop is where that bites: the inner structs outlive the
+                        // per-row array the outer loop reassigns, and all four strings
+                        // in the test came back empty.
+                        //
+                        // Copying an identifier is a retain of something already owned
+                        // in the common case, which costs one allocation per string
+                        // field and buys the guarantee that a struct owns its own
+                        // strings. That trade is worth it here: the alternative is a
+                        // rule about which expressions are safe to store, which nobody
+                        // can be expected to know.
+                        bool _needs_copy = (_fv->type == EXPR_INDEX || _fv->type == EXPR_IDENT);
+                        if (_needs_copy && wyn_struct_field_is_string(_sn, _fn)) {
+                            emit("string_concat(\"\", ");
+                            codegen_expr(_fv);
+                            emit(")");
+                        } else {
+                            codegen_expr(_fv);
+                        }
+                    }
                     current_assign_target_kind = _prev_kind;
                 }
                 emit("})");
@@ -4715,9 +5292,15 @@ void codegen_expr(Expr* expr) {
                 else if (strcmp(_mtn, "OptionFloat") == 0) { opt_kind = 1; opt_val_cty = "double"; }
                 else if (strcmp(_mtn, "OptionBool") == 0) { opt_kind = 1; opt_val_cty = "bool"; }
                 else if (strncmp(_mtn, "Option", 6) == 0) {
-                    // Monomorphic Option<Struct> (OptionUser): payload is the struct
-                    // value, bound by value.
-                    static char _osmcty[96]; snprintf(_osmcty, sizeof(_osmcty), "%s", _mtn + 6);
+                    // Monomorphic Option<Name> (OptionUser, OptionShape): the payload is
+                    // bound by value. Ask THE authority for its C type instead of
+                    // assuming it is the family name minus "Option" — for a DATA-carrying
+                    // enum the payload C type is the enum's own struct typedef.
+                    extern const char* wyn_option_family(const char*, const char**, int*);
+                    const char* _pcty = NULL;
+                    (void)wyn_option_family(_mtn + 6, &_pcty, NULL);
+                    static char _osmcty[96];
+                    snprintf(_osmcty, sizeof(_osmcty), "%s", _pcty ? _pcty : _mtn + 6);
                     opt_kind = 1; opt_val_cty = _osmcty;
                 }
                 else if (strcmp(_mtn, "ResultInt") == 0) { opt_kind = 2; opt_val_cty = "long long"; }
@@ -4759,6 +5342,30 @@ void codegen_expr(Expr* expr) {
                         result_type = "const char*"; break;
                     } else if (arm_result->type == EXPR_FLOAT) {
                         result_type = "double"; break;
+                    } else if (arm_result->type == EXPR_STRUCT_INIT) {
+                        // A match that YIELDS A STRUCT:
+                        //
+                        //     fn apply(c: C, a: A) -> C => match a {
+                        //         A.Up   => C { v: c.v + 1 },
+                        //         A.Down => C { v: c.v - 1 }
+                        //     }
+                        //
+                        // The arms correctly emitted `(C){.v = ...}` but the result
+                        // variable stayed `long long`, so the C compiler rejected every
+                        // arm with "assigning to 'long long' from incompatible type 'C'"
+                        // and the return with an incompatible-result-type error. `wyn
+                        // check` passed, so this only surfaced as an internal codegen
+                        // error.
+                        //
+                        // Taken from the struct-init literal directly rather than from
+                        // expr_type, because a struct-init arm is the spelling that
+                        // occurs in practice and its literal name is always present.
+                        // Reduce-over-a-sum-type - one total function from state and an
+                        // action to new state - is the single most useful shape for
+                        // modelling app logic, and it could not be written.
+                        static char _ms_buf[128];
+                        token_to_cstr(_ms_buf, sizeof(_ms_buf), arm_result->struct_init.type_name);
+                        result_type = _ms_buf; break;
                     } else if (arm_result->expr_type) {
                         if (arm_result->expr_type->kind == TYPE_STRING) {
                             result_type = "const char*"; break;
@@ -4766,6 +5373,14 @@ void codegen_expr(Expr* expr) {
                             result_type = "double"; break;
                         } else if (arm_result->expr_type->kind == TYPE_BOOL) {
                             result_type = "bool"; break;
+                        } else if (arm_result->expr_type->kind == TYPE_STRUCT &&
+                                   arm_result->expr_type->struct_type.name.length > 0) {
+                            // Same case reached via the checker's type instead of a
+                            // literal - e.g. an arm that CALLS a struct-returning fn.
+                            static char _mst_buf[128];
+                            token_to_cstr(_mst_buf, sizeof(_mst_buf),
+                                          arm_result->expr_type->struct_type.name);
+                            result_type = _mst_buf; break;
                         }
                     }
                 }
@@ -5335,7 +5950,30 @@ void codegen_expr(Expr* expr) {
             codegen_expr(expr->try_expr.value);
             extern const char* current_fn_return_kind;
             if (current_fn_return_kind && strncmp(current_fn_return_kind, "Result", 6) == 0) {
-                emit("; if (__try_%d.tag == 1) return __try_%d; __try_%d.data.ok_value; })", _try_id, _try_id, _try_id);
+                // `return __try_N` is only valid when the value's Result family IS the
+                // enclosing function's. Across DIFFERING families it returned the inner
+                // type from a function declared as the outer one:
+                //
+                //     fn inner() -> Result<int, string>
+                //     fn outer() -> Result<string, string> { var v = inner()? ... }
+                //
+                //   -> error: returning 'ResultInt' from a function with incompatible
+                //      result type 'ResultString'
+                //
+                // after passing `wyn check` - the v1.21 soundness rule, and this is its
+                // "S4" item. Propagating an error outward through `?` is THE canonical
+                // use of the operator, so the ok types differing is the normal case, not
+                // an exotic one.
+                //
+                // Re-wrap through the OUTER family's generated _Err constructor, which
+                // every family has. Only when the families actually differ, so the
+                // same-family path (much the commoner one) emits exactly as before.
+                if (strcmp(current_fn_return_kind, _try_fam) != 0) {
+                    emit("; if (__try_%d.tag == 1) return %s_Err(__try_%d.data.err_value); __try_%d.data.ok_value; })",
+                         _try_id, current_fn_return_kind, _try_id, _try_id);
+                } else {
+                    emit("; if (__try_%d.tag == 1) return __try_%d; __try_%d.data.ok_value; })", _try_id, _try_id, _try_id);
+                }
             } else if (_try_err_is_str) {
                 emit("; if (__try_%d.tag == 1) { fprintf(stderr, \"Error: %%s\\n\", __try_%d.data.err_value); exit(1); } __try_%d.data.ok_value; })", _try_id, _try_id, _try_id);
             } else {
@@ -5379,8 +6017,27 @@ void codegen_expr(Expr* expr) {
                 if (expr->string_interp.expressions[i]) {
                     Expr* e = expr->string_interp.expressions[i];
                     emit("const char* __si%d = ", _ti);
+                    // A STRUCT value must not go through to_string: that macro's
+                    // `default:` arm is int_to_string, so the struct was passed by
+                    // value to a `long long` parameter and the generated C failed
+                    // to compile after `wyn check` reported no errors (PLAN_v1.21
+                    // S1). codegen_program emits a __wyn_str_<Name> for each struct
+                    // the CHECKER saw interpolated; call it instead. It returns a
+                    // fresh +1 RC string, which is what the release loop below
+                    // already assumes for a non-string expression, so ownership
+                    // needs no special case. The guard and the emission consult the
+                    // same registry, so a struct without a helper still falls
+                    // through to to_string rather than calling a missing function.
+                    extern int cg_struct_has_str_helper(Token name);
                     if (e->type == EXPR_STRING) {
                         codegen_expr(e);
+                    } else if (e->expr_type && e->expr_type->kind == TYPE_STRUCT &&
+                               e->expr_type->struct_type.name.length > 0 &&
+                               cg_struct_has_str_helper(e->expr_type->struct_type.name)) {
+                        Token _sn = e->expr_type->struct_type.name;
+                        emit("__wyn_str_%.*s(", _sn.length, _sn.start);
+                        codegen_expr(e);
+                        emit(")");
                     } else {
                         emit("to_string(");
                         codegen_expr(e);
@@ -5623,8 +6280,45 @@ void codegen_expr(Expr* expr) {
             break;
         }
         case EXPR_LAMBDA: {
-            lambda_ref_counter++;
-            int lid = lambda_ref_counter;
+            // Bind this reference to its body by AST POINTER, not by a
+            // positional counter.
+            //
+            // There used to be two counters: lambda_id_counter, advanced while
+            // SCANNING for bodies, and lambda_ref_counter, advanced while
+            // EMITTING references. They only agree if scan order equals
+            // emission order, and with an imported module it does not: merged
+            // module statements are appended to the end of prog->stmts (so a
+            // module lambda scans LAST, high id) while module bodies are
+            // emitted before the main file's functions (so it emits FIRST, low
+            // id). The orders are inverted, so a module lambda and a main-file
+            // lambda would silently bind to each other's bodies -- a wrong
+            // answer at exit 0, which is worse than the dangling-symbol
+            // compile error it also caused.
+            //
+            // The definition side is already keyed by pointer:
+            // scan_expr_for_lambdas stores `ast = expr` and the body emitter
+            // walks lambda_functions[i].ast. Look the id up through that and
+            // the whole positional-counter class disappears.
+            int lid = -1;
+            for (int i = 0; i < lambda_count; i++) {
+                if (lambda_functions[i].ast == expr) { lid = lambda_functions[i].id; break; }
+            }
+            if (lid < 0) {
+                // This lambda was never scanned, so no body will be emitted for
+                // it. Previously this emitted a reference to a nonexistent
+                // __lambda_N and left the failure to the C compiler, naming a
+                // symbol absent from the user's source. Fail here instead, where
+                // we still know it is our bug and not theirs.
+                fprintf(stderr, "Internal codegen error: lambda at line %d was never registered, "
+                                "so no body will be emitted for it.\n", expr->token.line);
+                // Emit a name that cannot compile and that says why, so the
+                // failure is attributable even if this stderr line is lost in a
+                // build log. Previously an unregistered lambda emitted a
+                // plausible-looking __lambda_N and the C compiler complained
+                // about a symbol the user never wrote.
+                emit("__wyn_unregistered_lambda_line_%d", expr->token.line);
+                break;
+            }
             // Check if this lambda is a closure (returned from function)
             bool is_closure_lambda = false;
             for (int i = 0; i < lambda_count; i++) {
@@ -5790,7 +6484,45 @@ void codegen_expr(Expr* expr) {
                 emit("].data.array_val; int __idx = ");
                 codegen_expr(expr->index_assign.index);
                 emit("; if (__arr_ptr && __idx >= 0 && __idx < __arr_ptr->count) { ");
-                emit("__arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = ");
+                // The stored WynValue tag must match the element type. Hardcoding
+                // WYN_TYPE_INT here silently truncated `m[0][1] = 9.75` to 9 (the
+                // double was converted to the int_val member) and stored a string
+                // pointer in int_val for `[[string]]`, so the later read through
+                // array_get_nested_* reinterpreted it and printed garbage.
+                // Prefer the assigned value's checked type; fall back to the
+                // element type of the inner array (`m[0]`'s type).
+                // Only string and float need to differ from the historical int
+                // path: bool already round-trips because array_push_bool stores
+                // into int_val too, and structs in a nested array were never
+                // supported by this branch at all.
+                {
+                    int nested_is_string = 0, nested_is_float = 0;
+                    if (expr->index_assign.value->type == EXPR_STRING) {
+                        nested_is_string = 1;
+                    } else if (expr->index_assign.value->expr_type) {
+                        TypeKind vk = expr->index_assign.value->expr_type->kind;
+                        if (vk == TYPE_STRING) nested_is_string = 1;
+                        else if (vk == TYPE_FLOAT) nested_is_float = 1;
+                    }
+                    if (!nested_is_string && !nested_is_float) {
+                        // `m[0]` is the object; its checked type is the inner
+                        // array, so its element_type is what one slot holds.
+                        Type* inner = expr->index_assign.object->expr_type;
+                        if (inner && inner->kind == TYPE_ARRAY &&
+                            inner->array_type.element_type) {
+                            TypeKind ek = inner->array_type.element_type->kind;
+                            if (ek == TYPE_STRING) nested_is_string = 1;
+                            else if (ek == TYPE_FLOAT) nested_is_float = 1;
+                        }
+                    }
+                    if (nested_is_string) {
+                        emit("__arr_ptr->data[__idx].type = WYN_TYPE_STRING; __arr_ptr->data[__idx].data.string_val = (char*)");
+                    } else if (nested_is_float) {
+                        emit("__arr_ptr->data[__idx].type = WYN_TYPE_FLOAT; __arr_ptr->data[__idx].data.float_val = ");
+                    } else {
+                        emit("__arr_ptr->data[__idx].type = WYN_TYPE_INT; __arr_ptr->data[__idx].data.int_val = ");
+                    }
+                }
                 codegen_expr(expr->index_assign.value);
                 emit("; } }");
                 break;
@@ -5857,6 +6589,18 @@ void codegen_expr(Expr* expr) {
                     
                     if (is_string) {
                         emit("__arr_ptr->data[__idx].type = WYN_TYPE_STRING; __arr_ptr->data[__idx].data.string_val = ");
+                        // `xs[i] = other[j]` stores a BORROWED pointer as owned - the
+                        // same ownership mismatch as array_push_str, and the other half
+                        // of the depgraph bug (`names[0] = parts[0]` in the count==0
+                        // branch). Retain so this array owns a reference of its own.
+                        // See wyn_string_expr_is_borrowed.
+                        if (wyn_string_expr_is_borrowed(expr->index_assign.value)) {
+                            emit("(const char*)({ const char* __bs = ");
+                            codegen_expr(expr->index_assign.value);
+                            emit("; wyn_rc_retain((void*)(intptr_t)__bs); __bs; })");
+                            emit("; } }");
+                            break;
+                        }
                     } else if (is_struct && struct_name.start && struct_name.length > 0) {
                         emit("__arr_ptr->data[__idx].type = WYN_TYPE_STRUCT; { ");
                         emit("%.*s __temp_struct = ", struct_name.length, struct_name.start);

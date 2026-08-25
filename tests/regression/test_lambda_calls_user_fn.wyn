@@ -1,0 +1,132 @@
+// Regression: a lambda that CALLS a user-defined function failed to build.
+//
+// THE DEFECT
+//
+//   fn dbl(n: int) -> int { return n * 2 }
+//   fn main() { var f = (v) => dbl(v)  print("${f(3)}") }
+//
+// passed `wyn check` cleanly, then failed the C compile with two errors that name only
+// generated code:
+//
+//   error: call to undeclared function 'dbl'
+//   error: static declaration of 'dbl' follows non-static declaration
+//
+// codegen_program.c emitted the lambda BODIES before the function forward declarations, so
+// C saw `dbl(v)` with no prototype (implicit declaration), then the real
+// `static inline long long dbl(...)` afterwards, which conflicts with the implicit one.
+// The fix moves the lambda bodies to AFTER both the function and impl-method forward
+// declaration loops. Same class as #286 (struct typedefs in dependency order, not source
+// order).
+//
+// WHY IT SURVIVED THIS LONG
+//
+// A lambda calling only BUILTINS (`(s) => s.len()`) and a lambda containing no call at all
+// were unaffected -- those are the only two shapes the corpus uses. Across every repo here
+// there is not one lambda that calls a user-defined function (the ~55 grep hits for
+// `=> name(` are all MATCH ARMS, e.g. `Some(v) => println(v)`, not lambdas). Zero usage of
+// a documented feature is evidence it never worked -- the same signal as the `mut`-parameter
+// gap (#301) and the collection-struct-field gap (#304).
+//
+// Verified pre-existing: this also fails on the released v1.20.0 compiler, so it is not a
+// regression from anything in the unreleased range.
+//
+// EXPECT: expression body calling a user fn: 6
+// EXPECT: block body calling a user fn: 5
+// EXPECT: through .map: 2 4 6
+// EXPECT: through .filter: 2
+// EXPECT: two different user fns in one lambda: 10
+// EXPECT: a lambda calling a fn that calls another fn: 12
+// EXPECT: a user fn declared AFTER the lambda that calls it: 20
+// EXPECT: string-returning user fn: <hi>
+// EXPECT: float-returning user fn: 2.5
+// EXPECT: struct-returning user fn: 7
+// EXPECT: builtins-only lambda still works: 4
+// EXPECT: a lambda with no call still works: called
+// EXPECT: a lambda calling an impl method: 30
+
+struct Box { n: int }
+
+fn dbl(n: int) -> int { return n * 2 }
+fn inc(n: int) -> int { return n + 1 }
+fn add(a: int, b: int) -> int { return a + b }
+// `outer` calls `inner`: the lambda is two hops from the leaf, so a fix that only declared
+// directly-referenced functions would still break here.
+fn inner(n: int) -> int { return n + 2 }
+fn outer(n: int) -> int { return inner(n) * 2 }
+fn wrap(s: string) -> string { return "<" + s + ">" }
+fn half(f: float) -> float { return f / 2.0 }
+fn make_box(n: int) -> Box { return Box { n: n } }
+
+impl Box {
+    fn tripled(self) -> int { return self.n * 3 }
+}
+
+fn main() {
+    // The exact reported shape.
+    var f = (v) => dbl(v)
+    print("expression body calling a user fn: ${f(3)}")
+
+    var g = (v) => { return inc(v) }
+    print("block body calling a user fn: ${g(4)}")
+
+    // Through the array higher-order methods, which is how a lambda is normally written.
+    var xs = [1, 2, 3].map((v) => dbl(v))
+    print("through .map: ${xs[0]} ${xs[1]} ${xs[2]}")
+
+    var ys = [1, 2, 3].filter((v) => is_even(v))
+    print("through .filter: ${ys[0]}")
+
+    // Two DIFFERENT user functions in one body: the ordering must hold for all of them,
+    // not just the first one emitted.
+    var h = (v) => add(dbl(v), inc(v))
+    print("two different user fns in one lambda: ${h(3)}")
+
+    var k = (v) => outer(v)
+    print("a lambda calling a fn that calls another fn: ${k(4)}")
+
+    // Declared AFTER main in source order. Forward declarations are emitted for the whole
+    // program, so this must work too -- and it is the case a "just move the call site" fix
+    // would miss.
+    var late = (v) => quadruple(v)
+    print("a user fn declared AFTER the lambda that calls it: ${late(5)}")
+
+    // Non-int types, each a different type path through the same ordering.
+    //
+    // The parameter types are SPELLED OUT on purpose: an untyped lambda parameter defaults
+    // to `int`, so `(s) => wrap(s)` is a check-time "Expected: int, Got: string" and
+    // `(x) => half(x)` the float equivalent. That is inference scope, not this defect --
+    // noted here because writing them bare is the obvious first attempt and the error names
+    // line 1, not the lambda.
+    var sf = (s: string) => wrap(s)
+    print("string-returning user fn: ${sf("hi")}")
+
+    var ff = (x: float) => half(x)
+    print("float-returning user fn: ${ff(5.0)}")
+
+    var bf = (n: int) => make_box(n).n
+    print("struct-returning user fn: ${bf(7)}")
+
+    // The two shapes that ALREADY worked, pinned so this change cannot regress them while
+    // the new cases pass.
+    var b = (s) => s.len()
+    print("builtins-only lambda still works: ${b("abcd")}")
+
+    var nc = () => { print("a lambda with no call still works: called") }
+    nc()
+
+    // An impl method, declared by a SEPARATE forward-declaration loop from plain functions.
+    // The lambda bodies now follow both loops, so this is pinned to prove it.
+    var box = Box { n: 10 }
+    var im = () => box.tripled()
+    print("a lambda calling an impl method: ${im()}")
+}
+
+fn is_even(n: int) -> bool { return n % 2 == 0 }
+fn quadruple(n: int) -> int { return n * 4 }
+
+// NOT asserted here, and deliberately so: a lambda cannot MUTATE a captured variable.
+// `var x = 0  var f = () => { x = 5 }  f()` leaves x at 0, and a `mut` free function called
+// from a lambda addresses the lambda's copy. That is pre-existing (it reproduces on the
+// released v1.20.0 compiler) and is a capture-semantics question, not an emission-order one
+// -- this fix is what made such programs COMPILE, which is how the semantics became
+// observable at all. Tracked separately.

@@ -1,0 +1,50 @@
+// Regression: float method-dispatch tracking is per-FUNCTION, not per-program.
+//
+// `register_float_var` keys on the variable NAME only. It had no reset at a
+// function boundary (unlike the string/array/hashmap scopes), so the table
+// accumulated every float local in the program. Any LATER local sharing a name
+// with an earlier float was then dispatched as a float, and a string method on
+// it failed to compile: "Unknown method 'len' for type 'float'".
+//
+// Both functions below are individually correct. Only their local variable
+// names collide, which is why this went unnoticed - the bug needs a float `t`
+// and a string `t` in the same compilation unit, in that order.
+//
+// Found by building Visual Wyn's widget toolkit, where a slider's
+// `frac_to_val(f: float)` used `var t = f` and a text helper used `var t = s`.
+// EXPECT: 5
+// EXPECT: 4
+// EXPECT: 3
+// EXPECT: ab
+fn takes_float(f: float) -> int {
+    var t = f
+    if t > 1.0 { t = 1.0 }
+    return (t * 10.0).to_int()
+}
+
+// The string case: `t` must still be a string here.
+fn takes_string(s: string) -> int {
+    var t = s
+    return t.len()
+}
+
+// Ordering matters, so also cover a float AFTER the string use: the reset must
+// not leave the table empty for a function that legitimately needs it.
+fn float_again(f: float) -> int {
+    var t = f
+    return (t * 6.0).to_int()
+}
+
+// A string METHOD returning a string, not just a length - substring dispatches
+// through the same receiver-type path and was the second symptom.
+fn slices(s: string) -> string {
+    var t = s
+    return t.substring(0, 2)
+}
+
+fn main() {
+    println(takes_float(0.5))
+    println(takes_string("abcd"))
+    println(float_again(0.5))
+    println(slices("abcd"))
+}

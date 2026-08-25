@@ -21,9 +21,141 @@ bool has_circular_import(void) {
     return circular_import_detected;
 }
 
+// An import that could not be resolved. Like circular_import_detected, this is a
+// LATCH: load_module already prints a precise error ("Module 'x' not found" /
+// "Package 'x' not installed") and then returns NULL, and every caller treats NULL
+// as "carry on without it" - so the compiler printed an error, said "✓ no errors",
+// exited 0, and emitted C with a hole in it (`long long ui = ;`, because the call
+// on the missing module had no type). Three contradictory statements about one
+// build. The flag lets the entry points stop before codegen, exactly as they
+// already do for circular imports.
+static bool unresolved_import_detected = false;
+
+bool has_unresolved_import(void) {
+    return unresolved_import_detected;
+}
+
 void add_module_path(const char* path) {
     WYN_ENSURE_CAP(module_paths, module_path_count, module_path_cap);
     module_paths[module_path_count++] = strdup(path);
+}
+
+// The mtime of the most recently modified module file actually LOADED this run.
+//
+// `wyn run` keeps <file>.out as an incremental cache and reused it whenever the cache
+// was newer than the ENTRY file and the compiler. It never looked at the imports - so
+// editing a module and re-running a program that imports it silently ran the OLD
+// binary. That is a gate-integrity bug, not a nuisance: a test suite can report green
+// on code it never compiled, and a mutation test can report "no failures" for a
+// mutant that was never built.
+//
+// A single newest-mtime is enough for the cache decision and costs one stat per
+// module, so it does not need a list of paths.
+static time_t newest_module_mtime = 0;
+
+time_t get_newest_module_mtime(void) {
+    return newest_module_mtime;
+}
+
+static void note_module_mtime(const char* path) {
+    struct stat st;
+    if (stat(path, &st) == 0 && st.st_mtime > newest_module_mtime) {
+        newest_module_mtime = st.st_mtime;
+    }
+}
+
+// Skip one string literal, INCLUDING any `${...}` interpolation that nests quotes.
+//
+// `p` must point at the opening quote; returns the character just past the closing one.
+//
+// Both raw-source import scanners in this file skipped `"..."` by running to the next
+// quote of the same kind. That is wrong for an interpolated string, because the
+// interpolation can contain a string of its own:
+//
+//     println("${id("import zzz")}")
+//
+// The naive skip ends at the quote that OPENS the nested literal, so everything from
+// there on is scanned as if it were code - and `import zzz` inside the nested string was
+// read as a real import statement, failing the build with "Module 'zzz' not found" for a
+// module that appears nowhere in the program. Found by writing an app whose whole job is
+// to recognise import lines, so import text inside a string is its NORMAL input.
+//
+// Tracking `${...}` depth is enough: inside an interpolation a quote opens a nested
+// string, which is skipped by the same rule, recursively.
+static const char* skip_string_literal(const char* p) {
+    char quote = *p;
+    p++;                                  // past the opening quote
+    int interp_depth = 0;
+    while (*p) {
+        if (*p == '\\' && *(p + 1)) { p += 2; continue; }   // escape: skip the pair
+        if (*p == '$' && *(p + 1) == '{') { interp_depth++; p += 2; continue; }
+        if (interp_depth > 0) {
+            if (*p == '}') { interp_depth--; p++; continue; }
+            // A quote inside `${...}` opens a nested literal - recurse, so its own
+            // interpolations and escapes are handled by exactly this logic.
+            if (*p == '"' || *p == '\'') { p = skip_string_literal(p); continue; }
+            p++;
+            continue;
+        }
+        if (*p == quote) { p++; return p; }                 // the real closing quote
+        p++;
+    }
+    return p;                                               // unterminated: at the NUL
+}
+
+// Newest mtime among the modules `source` imports, WITHOUT loading them.
+//
+// The `wyn run` cache decision happens before preload_imports, so it cannot use the
+// figure recorded during loading - by then the decision is already made. This walks
+// the same import syntax preload_imports does and only stats what it resolves, which
+// is cheap enough to run on every `wyn run`.
+//
+// Deliberately SHALLOW: it sees a program's direct imports, not their imports. A
+// deeper change is transitive closure, and the shallow answer already fixes the
+// reported bug (edit a module, re-run the program that imports it). A transitively
+// stale cache remains possible and is called out in the test.
+time_t scan_import_mtimes(const char* source) {
+    time_t newest = 0;
+    if (!source) return 0;
+    const char* p = source;
+    bool in_comment = false, in_line_comment = false;
+    while (*p) {
+        if (!in_comment && !in_line_comment && *p == '/' && *(p+1) == '/') { in_line_comment = true; p += 2; continue; }
+        if (!in_comment && !in_line_comment && *p == '/' && *(p+1) == '*') { in_comment = true; p += 2; continue; }
+        if (in_comment && *p == '*' && *(p+1) == '/') { in_comment = false; p += 2; continue; }
+        if (in_line_comment && *p == '\n') { in_line_comment = false; p++; continue; }
+        if (in_comment || in_line_comment) { p++; continue; }
+        // Strings, for the same reason preload_imports skips them: `test "import x"`
+        // is a test NAME, not an import. Interpolation-aware - see skip_string_literal.
+        if (*p == '"' || *p == '\'') { p = skip_string_literal(p); continue; }
+        if (strncmp(p, "import ", 7) == 0) {
+            p += 7;
+            while (*p == ' ' || *p == '\t') p++;
+            if (*p == '{') {   // selective: import { a, b } from mod
+                while (*p && strncmp(p, " from ", 6) != 0) p++;
+                if (strncmp(p, " from ", 6) == 0) { p += 6; while (*p == ' ' || *p == '\t') p++; }
+            }
+            char name[256];
+            int len = 0;
+            while (((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+                    (*p >= '0' && *p <= '9') || *p == '_' || *p == '.') && len < 255) {
+                name[len++] = (*p == '.') ? '/' : *p;
+                p++;
+            }
+            name[len] = '\0';
+            if (len > 0 && !is_builtin_module(name)) {
+                char* mp = resolve_module_path(name);
+                if (mp) {
+                    struct stat st;
+                    if (stat(mp, &st) == 0 && st.st_mtime > newest) newest = st.st_mtime;
+                    free(mp);
+                }
+            }
+            continue;
+        }
+        p++;
+    }
+    return newest;
 }
 
 static bool is_in_loading_stack(const char* module_name) {
@@ -110,7 +242,23 @@ void preload_imports(const char* source) {
             p++;
             continue;
         }
-        
+
+        // SKIP STRING LITERALS. This scanner tracked comments but not strings, so the
+        // word "import" inside any string was read as a real import statement:
+        //
+        //   test "import finds src/mathx.wyn" { ... }   ->   import module "finds"
+        //
+        // It printed a spurious "Module 'finds' not found" and carried on, which is why
+        // it went unnoticed - the error was cosmetic noise on an otherwise passing
+        // build. It stops being cosmetic the moment an unresolved import is fatal, and
+        // a test NAME describing what it tests is a completely reasonable thing to
+        // write. Both quote forms, with backslash escapes honoured.
+        //
+        // The skip is INTERPOLATION-AWARE (see skip_string_literal): running to the next
+        // quote is wrong for `"${id("import zzz")}"`, where it stops at the quote that
+        // opens the nested literal and reads the rest as code.
+        if (*p == '"' || *p == '\'') { p = skip_string_literal(p); continue; }
+
         // Look for "import " keyword
         if (strncmp(p, "import ", 7) == 0) {
             p += 7;
@@ -263,7 +411,20 @@ char* resolve_module_path(const char* module_name) {
     
     // 4. Current directory
     TRY_RESOLVE("%s", module_name);
-    
+
+    // 4b. ./src/ - the layout `wyn init --template lib` scaffolds.
+    //
+    // `wyn test` compiles each test file on its own (cmd_test.c shells out to
+    // `wyn build <file>`), so source_directory is always tests/ and candidates
+    // 1-3 cannot see a sibling src/. Without this the one layout the tooling
+    // itself creates is unimportable from a test, and projects resort to
+    // committing ./<name>.wyn -> src/<name>.wyn symlinks to satisfy candidate 4.
+    //
+    // Consistent with the git-dep branch below, which already tries
+    // `<cache>/src/<name>.wyn`: a fetched dependency's src/ was searched while
+    // the local project's was not.
+    TRY_RESOLVE("./src/%s", module_name);
+
     // 5. ./modules/ directory
     TRY_RESOLVE("./modules/%s", module_name);
     
@@ -382,6 +543,10 @@ Program* load_module(const char* module_name) {
                 fprintf(stderr, "\033[31mError:\033[0m Module '%s' not found\n", resolved_name);
             }
         }
+        // Set OUTSIDE the dedup guard: the guard only suppresses repeat PRINTING, and
+        // a second import of the same missing module must still fail the build.
+        // Builtins returned above without reaching here, so this cannot fire for them.
+        unresolved_import_detected = true;
         pop_loading_stack();
         free(resolved_name);
         return NULL;
@@ -391,10 +556,17 @@ Program* load_module(const char* module_name) {
     FILE* f = fopen(path, "r");
     if (!f) {
         fprintf(stderr, "Error: Could not open module '%s'\n", path);
+        // Resolved to a path that will not open (permissions, a dangling symlink, a
+        // race). Same consequence as not finding it at all: the module's symbols are
+        // absent, so codegen must not run.
+        unresolved_import_detected = true;
         free(path);
         pop_loading_stack();
         return NULL;
     }
+    // Recorded here, on the path that actually OPENED, so the `wyn run` cache
+    // invalidates when any imported module is newer than the cached binary.
+    note_module_mtime(path);
     
     fseek(f, 0, SEEK_END);
     long size = ftell(f);

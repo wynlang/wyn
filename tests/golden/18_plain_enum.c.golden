@@ -4,26 +4,31 @@
 #endif
 
 typedef enum {
-    Red,
-    Green,
-    Blue
+    Color_Red = 0,
+    Color_Green = 1,
+    Color_Blue = 2
 } Color;
 
-#define Color_Red 0
-#define Color_Green 1
-#define Color_Blue 2
+#ifndef Red
+#define Red Color_Red
+#endif
+#ifndef Green
+#define Green Color_Green
+#endif
+#ifndef Blue
+#define Blue Color_Blue
+#endif
 
 const char* Color_toString(Color val) {
     switch(val) {
-        case Red: return "Red";
-        case Green: return "Green";
-        case Blue: return "Blue";
+        case Color_Red: return "Red";
+        case Color_Green: return "Green";
+        case Color_Blue: return "Blue";
     }
     return "Unknown";
 }
 
 
-// Lambda functions (defined before use)
 __attribute__((hot)) static inline char* name(Color c);
 long long wyn_main();
 

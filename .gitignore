@@ -94,3 +94,28 @@ runtime/obj_tsan/
 tests/expect/*
 !tests/expect/*.wyn
 !tests/expect/*.sh
+
+# Compiled example programs - the same trap as tests/ above, and it was still
+# open: `wyn build examples/x.wyn` drops an EXTENSIONLESS binary next to the
+# source, which neither *.out nor *.wyn.out matches. Building every example
+# during the 2026-08-10 release validation left 62 untracked binaries in here.
+# The tests/ rules were added after this bit during v1.20.0 staging; examples/
+# was missed, so it would have bitten again at v1.21.0 staging.
+# Allowlist the SOURCE extensions rather than denylisting binaries: a compiled
+# binary has no extension, so there is nothing to match on. (examples/*.c is
+# allowed because examples/future_examples.c is a tracked source file.)
+examples/*
+!examples/*.wyn
+!examples/*.sh
+!examples/*.md
+!examples/*.c
+!examples/*.h
+# ...but NOT the generated C that `--debug` emits: `x.wyn.c` matches *.c, so the
+# allowlist above would un-ignore 64 generated files. Re-ignore that one shape.
+examples/*.wyn.c
+!examples/*.json
+!examples/*.toml
+!examples/*/
+
+# Agent worktrees and session scratch - never part of the repo.
+.claude/

@@ -1,0 +1,58 @@
+// Regression: an out-of-bounds read on an array of STRUCTS segfaulted, while the same
+// mistake on an array of ints panicked cleanly with a file and line.
+//
+//   xs = []      ; v = xs[0]         -> "panic at f.wyn:N: array index out of bounds: ..."
+//   rs = []      ; v = rs[0].n       -> Segmentation fault, no file, no line
+//
+// Cause: array_get_struct was a raw macro with no check at all --
+//   #define array_get_struct(arr, idx, T) (*(T*)arr.data[idx].data.struct_val)
+// while array_get_int routed through array_get_int_impl(arr, idx, __FILE__, __LINE__),
+// which does the Python-style negative-index fixup and then calls wyn_oob_panic. So a
+// struct array also silently accepted a NEGATIVE index, reading arr.data[-1].
+//
+// Found by running the word-counter sample app on an empty file: it reads ranked[0].n to
+// scale a bar chart and crashed with no indication of where.
+//
+// This test only asserts the IN-BOUNDS behaviour still works, including negative indexing,
+// because a test process cannot survive the panic itself. The panic path is checked
+// separately by tests/errors/run_struct_array_bounds_test.sh, which runs the
+// out-of-bounds cases as subprocesses and requires a clean panic (exit < 128) rather than
+// a signal death.
+//
+// EXPECT: first=10
+// EXPECT: last=30
+// EXPECT: second-last=20
+// EXPECT: nested=7
+// EXPECT: after-push=4
+
+struct Item {
+    label: string
+    n: int
+}
+
+struct Bag {
+    items: [Item]
+}
+
+fn main() {
+    rs = [
+        Item { label: "a", n: 10 },
+        Item { label: "b", n: 20 },
+        Item { label: "c", n: 30 }
+    ]
+
+    print("first=${rs[0].n}")
+
+    // Negative indexing must keep working: the fixup lives in the checked path, so a
+    // naive "just add a bounds check" that forgot it would break this.
+    print("last=${rs[0 - 1].n}")
+    print("second-last=${rs[0 - 2].n}")
+
+    // A struct array reached through another struct's field.
+    b = Bag { items: [Item { label: "x", n: 7 }] }
+    print("nested=${b.items[0].n}")
+
+    // Growing the array must not disturb the check's view of the count.
+    rs.push(Item { label: "d", n: 40 })
+    print("after-push=${rs.len()}")
+}

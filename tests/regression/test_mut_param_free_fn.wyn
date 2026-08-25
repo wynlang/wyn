@@ -1,0 +1,143 @@
+// Regression: `mut` on a FREE FUNCTION parameter was unusable for every type.
+//
+// A `mut` parameter is passed by POINTER -- `fn bump(mut s: S)` emits `void bump(S *s)` --
+// but the call site emitted `bump(s)`, the value. Two symptoms that look like different bugs:
+//
+//   STRUCT arg: the C compiler rejects it outright --
+//     "passing 'S' to parameter of incompatible type 'S *'; take the address with &"
+//   INT arg:    C accepts the implicit conversion, and the callee then dereferences the
+//     VALUE as an address -> SEGFAULT. `bump_int(i)` with i == 5 dereferences address 5.
+//
+// The int case is the dangerous one, and it is why the fix cannot be scoped to structs: it
+// compiles clean and crashes at run time.
+//
+// The METHOD form (`impl S { fn bump(mut self) }`) already worked, via
+// struct_method_takes_mut_self -- whose own comment describes this exact bug for methods
+// ("every mutation went to a copy and was discarded"). Nobody had written the free-function
+// counterpart, so `mut` looked supported and was not. Both symptoms reproduce identically on
+// baseline 97647c4, verified in a separate worktree with its own WYN_ROOT.
+//
+// Found probing what a shopping-cart app would need: `fn add(mut c: Cart, ...)`.
+//
+// EXPECT: struct mut mutates the caller: 2
+// EXPECT: a string field can be set: renamed
+// EXPECT: int mut mutates the caller: 6
+// EXPECT: two mut params: a=1 b=2
+// EXPECT: mut need not be the first param: n=42 name=set
+// EXPECT: push to a struct array field: len=2 first=7
+// EXPECT: a NON-mut param stays by value: 99 99
+// EXPECT: a mut param forwarded to another mut param: 11
+// EXPECT: a mut param passed to a by-value param: 33
+// EXPECT: repeated calls accumulate: 5
+// EXPECT: mixed args do not misfire the guard: n=42 name=lit
+// EXPECT: a nested field arg is addressable: 6
+
+struct S { n: int, name: string }
+struct Box { items: [int] }
+struct Inner { n: int }
+struct Outer { i: Inner }
+
+fn bump(mut s: S) { s.n = s.n + 1 }
+fn rename(mut s: S, v: string) { s.name = v }
+fn bump_int(mut n: int) { n = n + 1 }
+fn two(mut a: S, mut b: S) { a.n = 1  b.n = 2 }
+fn mixed(x: int, mut s: S, y: string) { s.n = x  s.name = y }
+fn push_item(mut b: Box, v: int) { b.items.push(v) }
+fn readonly(s: S) { s.n = 0 }
+fn chain(mut s: S) { bump(s) }
+fn readf(s: S) -> int { return s.n }
+fn via(mut s: S) -> int { return readf(s) }
+
+fn main() {
+    // The mutation must reach the CALLER, not a copy -- two calls, so a per-call copy
+    // would show 1 rather than 2.
+    var s = S { n: 0, name: "a" }
+    bump(s)
+    bump(s)
+    print("struct mut mutates the caller: ${s.n}")
+
+    rename(s, "renamed")
+    print("a string field can be set: ${s.name}")
+
+    // The segfaulting case. 5 -> 6 proves the write landed in the caller's variable.
+    var i = 5
+    bump_int(i)
+    print("int mut mutates the caller: ${i}")
+
+    var a = S { n: 0, name: "a" }
+    var b = S { n: 0, name: "b" }
+    two(a, b)
+    print("two mut params: a=${a.n} b=${b.n}")
+
+    // `mut` in a non-first position: the fix is per-argument, so an off-by-one in the index
+    // would address the wrong parameter.
+    var m = S { n: 0, name: "x" }
+    mixed(42, m, "set")
+    print("mut need not be the first param: n=${m.n} name=${m.name}")
+
+    var bx = Box { items: [] }
+    push_item(bx, 7)
+    push_item(bx, 8)
+    print("push to a struct array field: len=${bx.items.len()} first=${bx.items[0]}")
+
+    // A NON-mut param must still be by value -- a fix that addressed every argument would
+    // make this mutate the caller, which is the opposite bug.
+    var r = S { n: 99, name: "r" }
+    readonly(r)
+    print("a NON-mut param stays by value: ${r.n} ${readf(r)}")
+
+    // Inside `chain`, `s` is ALREADY a pointer, so `bump(s)` must not take a second address.
+    var c = S { n: 10, name: "c" }
+    chain(c)
+    print("a mut param forwarded to another mut param: ${c.n}")
+
+    // The reverse: a mut param handed to a by-value param must be DEREFERENCED.
+    var d = S { n: 33, name: "d" }
+    print("a mut param passed to a by-value param: ${via(d)}")
+
+    // Accumulation across a loop -- the strongest check that no copy is involved.
+    var e = S { n: 0, name: "e" }
+    for k in 0..5 { bump(e) }
+    print("repeated calls accumulate: ${e.n}")
+
+    // The lvalue guard must not MISFIRE on an ordinary mixed call: a mut identifier
+    // alongside an expression and a literal argument in the same call.
+    var g = S { n: 0, name: "z" }
+    var kk = 20
+    three(g, kk + 22, "lit")
+    print("mixed args do not misfire the guard: n=${g.n} name=${g.name}")
+
+    // A FIELD ACCESS is addressable (`&o.i.n` is valid C) and must work. This is the case
+    // that exposed the checker/codegen list mismatch: while codegen accepted only a plain
+    // identifier, the checker permitted this and it segfaulted.
+    var o = Outer { i: Inner { n: 5 } }
+    bump_int(o.i.n)
+    print("a nested field arg is addressable: ${o.i.n}")
+}
+
+// --- which arguments are addressable -----------------------------------------------------
+//
+// `&` is emitted only for a plain identifier or a field access, and the checker REJECTS
+// anything else for a `mut` parameter (expr_is_addressable). The two lists must stay
+// identical -- a form the checker allows but codegen skips gets no address and the callee
+// dereferences a value. That is not hypothetical: while codegen accepted only EXPR_IDENT,
+// `bump_int(o.i.n)` type-checked and segfaulted, which is why the field case is pinned in
+// main() above.
+//
+// EXPR_INDEX is excluded from BOTH lists, and that is a measured decision rather than
+// caution: `xs[0]` does not lower to C subscripting, it lowers to `array_get_int(xs, 0)` --
+// a call returning a value -- so `&xs[0]` is "cannot take the address of an rvalue". Allowing
+// it produced exactly that C error. `bump(xs[0])` is therefore a clean check-time error now,
+// where before it segfaulted.
+//
+// The non-lvalue forms (`add(3, 5)`, `add(x + 2, 5)`, `bump(make())`) are rejected at check
+// time by the same guard, with a message naming the argument, the function and the fix. Those
+// rejections cannot be asserted from an EXPECT file, which must compile and run -- they are
+// covered by tests/errors/run_mut_param_nonlvalue_test.sh.
+//
+// (Checks live in main() as prints matched by the EXPECT lines at the top, not in `test`
+// blocks: run_bdd.sh drives these files with `wyn run`. A `test` block in a regression file is
+// collected as "0 passed, 0 failed" and silently never executes -- I wrote two before
+// checking, and they proved nothing.)
+
+fn three(mut a: S, b: int, c: string) { a.n = b  a.name = c }

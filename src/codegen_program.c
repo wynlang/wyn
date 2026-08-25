@@ -1,6 +1,20 @@
 // codegen_program.c - Program-level code generation
 // Included from codegen.c - shares all statics
 
+// Emit `len` bytes of `s` into a C string literal that will be used as a printf
+// FORMAT string, doubling every `%` so it survives as a literal percent.
+//
+// Needed because a `test "..."` name is spliced straight into the emitted
+// printf's format. A name like "a 30%-alpha stroke" made `%-a` a real conversion
+// that consumed an argument nobody passed - undefined behaviour, and visibly
+// wrong output ("a 300x1.08p-1044lpha stroke").
+static void emit_percent_doubled(const char* s, int len) {
+    for (int i = 0; i < len; i++) {
+        if (s[i] == '%') emit("%%%%");   // one literal %% in the generated C
+        else emit("%c", s[i]);
+    }
+}
+
 // Track which Option<Struct> family typedefs have already been emitted this
 // compilation, so the per-struct emission (below) and the standalone catch-all
 // block don't emit the same family twice. Reset at the top of codegen_program.
@@ -240,6 +254,206 @@ static void emit_struct_eq_helpers(Program* prog) {
     }
 }
 
+// --- Per-struct stringifier (`"${p}"` on a struct value) ---
+// `to_string` is a _Generic macro whose `default:` arm is int_to_string, so a
+// struct argument was passed BY VALUE to a `long long` parameter: interpolation
+// type-checked clean and then died in the generated C with "passing 'P' to
+// parameter of incompatible type 'long long'" (PLAN_v1.21 S1). println(struct)
+// already renders `P { x: 1, y: 2 }`, but it does so by emitting inline printf
+// calls that print directly and yield no string, so interpolation - which needs
+// a char* - cannot reuse it.
+//
+// Emit one `static char* __wyn_str_<Name>(<Name>)` per non-generic struct,
+// alongside the existing __wyn_eq_<Name> / <Name>_cleanup helpers, returning a
+// FRESH +1 RC string. The output deliberately matches println's format so the
+// two spellings agree.
+//
+// Prototypes come first (pass 0) so a struct with a struct-typed field can call
+// its field's helper regardless of source order - the same reason
+// emit_struct_eq_helpers is two-pass.
+//
+// Field rendering, and the ownership rule for each:
+//   string  - printed directly with %s; NOT via to_string, because
+//             str_to_string returns its ARGUMENT unchanged, so releasing the
+//             result would free the struct's own field. Quoted, as println does.
+//   bool    - "true"/"false" inline; no allocation.
+//   float   - float_to_string (fresh, released) so it goes through
+//             wyn_format_float and keeps the v1.20.0 round-trip precision.
+//   array   - array_to_string (fresh, released).
+//   struct  - that struct's own __wyn_str_ helper (fresh, released).
+//   other   - a self-describing `<Type>` placeholder. Data enums, maps, sets,
+//             Json, optionals and fn fields have no string form yet; a
+//             placeholder that names the type states plainly that no value is
+//             being claimed, which is what keeps this from becoming the
+//             silent-wrong class. Rendering them properly is a ROADMAP item.
+// How one struct field is rendered by its __wyn_str_ helper. FK_OPAQUE is the
+// "no string form yet" bucket (data enums, maps, sets, Json, optionals, fn
+// fields) and prints a `<Type>` placeholder rather than inventing a value.
+enum { FK_OPAQUE = 0, FK_STR, FK_BOOL, FK_INT, FK_FLOAT, FK_STRUCT, FK_ENUM, FK_ARRAY };
+
+// A PAYLOAD-LESS enum stays a plain C enum, so it renders with %lld exactly as
+// println does. A DATA enum is a tagged-union struct and has no string form yet,
+// so it takes the placeholder path.
+static int cg_is_simple_enum(Program* prog, Token t) {
+    for (int j = 0; j < prog->count; j++) {
+        Stmt* es = prog->stmts[j];
+        if (es->type == STMT_EXPORT && es->export.stmt) es = es->export.stmt;
+        if (es->type == STMT_ENUM && es->enum_decl.name.length == t.length &&
+            memcmp(es->enum_decl.name.start, t.start, t.length) == 0) {
+            char nm[128]; token_to_cstr(nm, sizeof(nm), t);
+            extern int is_data_enum_type(const char*);
+            return !is_data_enum_type(nm);
+        }
+    }
+    return 0;
+}
+// Does a __wyn_str_<name> helper exist for this struct? The interpolation site
+// in codegen_expr.c asks before emitting a call, so the two stay in step: a
+// generic struct has no monomorphic C type and therefore no helper.
+int cg_struct_has_str_helper(Token name) {
+    if (!current_program) return 0;
+    StructStmt* sd = cg_find_struct(current_program, name);
+    if (!sd || sd->type_param_count > 0) return 0;   // generic: no monomorphic type
+    char nm[128]; token_to_cstr(nm, sizeof(nm), name);
+    extern int is_interpolated_struct(const char*);
+    return is_interpolated_struct(nm);
+}
+// A helper for an interpolated struct calls the helpers of its struct-typed
+// FIELDS, which are usually never interpolated themselves. Register that closure
+// before emitting, or `Outer { i: Inner }` would emit __wyn_str_Outer calling a
+// __wyn_str_Inner that does not exist.
+static void cg_close_interp_structs(Program* prog) {
+    extern void register_interpolated_struct(const char*);
+    for (int changed = 1, guard = 0; changed && guard < 64; guard++) {
+        changed = 0;
+        for (int i = 0; i < prog->count; i++) {
+            Stmt* s = prog->stmts[i];
+            if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+            if (s->type != STMT_STRUCT) continue;
+            StructStmt* sd = &s->struct_decl;
+            if (sd->type_param_count > 0) continue;
+            if (!cg_struct_has_str_helper(sd->name)) continue;
+            for (int fi = 0; fi < sd->field_count; fi++) {
+                Expr* ft = sd->field_types[fi];
+                if (!ft || ft->type != EXPR_IDENT) continue;
+                StructStmt* fsd = cg_find_struct(prog, ft->token);
+                if (!fsd || fsd->type_param_count > 0) continue;
+                if (cg_struct_has_str_helper(ft->token)) continue;
+                char fnm[128]; token_to_cstr(fnm, sizeof(fnm), ft->token);
+                register_interpolated_struct(fnm);
+                changed = 1;
+            }
+        }
+    }
+}
+static void emit_struct_str_helpers(Program* prog) {
+    cg_close_interp_structs(prog);
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < prog->count; i++) {
+            Stmt* s = prog->stmts[i];
+            if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+            if (s->type != STMT_STRUCT) continue;
+            StructStmt* sd = &s->struct_decl;
+            if (sd->type_param_count > 0) continue;  // generics: no monomorphic type
+            // Only structs actually interpolated (plus their struct-typed fields)
+            // get a helper - see cg_struct_has_str_helper.
+            if (!cg_struct_has_str_helper(sd->name)) continue;
+            Token n = sd->name;
+            if (pass == 0) {
+                emit("static char* __wyn_str_%.*s(%.*s __v);\n",
+                     n.length, n.start, n.length, n.start);
+                continue;
+            }
+            emit("static char* __wyn_str_%.*s(%.*s __v) {\n",
+                 n.length, n.start, n.length, n.start);
+            // Classify each field ONCE. Four loops below (temps, format, args,
+            // releases) must agree about every field, and an earlier revision
+            // repeated the type tests in each one - a field added to three of
+            // the four would emit a format spec with no argument, which is a
+            // wild read rather than a compile error.
+            int* kind = malloc(sizeof(int) * (sd->field_count > 0 ? sd->field_count : 1));
+            for (int fi = 0; fi < sd->field_count; fi++) {
+                Expr* ft = sd->field_types[fi];
+                kind[fi] = FK_OPAQUE;
+                if (!ft) continue;
+                if (ft->type == EXPR_ARRAY) { kind[fi] = FK_ARRAY; continue; }
+                if (ft->type != EXPR_IDENT) continue;
+                Token t = ft->token;
+                if      (t.length == 6 && memcmp(t.start, "string", 6) == 0) kind[fi] = FK_STR;
+                else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0)   kind[fi] = FK_BOOL;
+                else if (t.length == 3 && memcmp(t.start, "int", 3) == 0)    kind[fi] = FK_INT;
+                else if (t.length == 5 && memcmp(t.start, "float", 5) == 0)  kind[fi] = FK_FLOAT;
+                else if (cg_find_struct(prog, t))                            kind[fi] = FK_STRUCT;
+                else if (cg_is_simple_enum(prog, t))                         kind[fi] = FK_ENUM;
+            }
+            // Allocating fields are stringified first, so the format below is a
+            // flat list of %s / %lld and every temp has a name to release.
+            for (int fi = 0; fi < sd->field_count; fi++) {
+                Token fn = sd->fields[fi];
+                if (kind[fi] == FK_FLOAT)
+                    emit("    char* __f%d = float_to_string(__v.%.*s);\n", fi, fn.length, fn.start);
+                else if (kind[fi] == FK_ARRAY)
+                    emit("    char* __f%d = array_to_string(__v.%.*s);\n", fi, fn.length, fn.start);
+                else if (kind[fi] == FK_STRUCT) {
+                    Token t = sd->field_types[fi]->token;
+                    emit("    char* __f%d = __wyn_str_%.*s(__v.%.*s);\n",
+                         fi, t.length, t.start, fn.length, fn.start);
+                }
+            }
+            // Two passes over the format: size probe, then the real write.
+            for (int w = 0; w < 2; w++) {
+                // A field-less struct renders `Name {}`; with the usual "{ " / " }"
+                // pair it would come out as `Name {  }` with a doubled space.
+                const char* open = sd->field_count > 0 ? "{ " : "{";
+                if (w == 0) emit("    int __n = snprintf(NULL, 0, \"%.*s %s", n.length, n.start, open);
+                else        emit("    char* __b = wyn_str_alloc(__n + 1);\n"
+                                 "    snprintf(__b, __n + 1, \"%.*s %s", n.length, n.start, open);
+                for (int fi = 0; fi < sd->field_count; fi++) {
+                    Token fn = sd->fields[fi];
+                    if (fi > 0) emit(", ");
+                    emit("%.*s: ", fn.length, fn.start);
+                    switch (kind[fi]) {
+                        case FK_STR:    emit("\\\"%%s\\\""); break;
+                        case FK_BOOL:   emit("%%s");   break;
+                        case FK_INT: case FK_ENUM: emit("%%lld"); break;
+                        case FK_FLOAT: case FK_STRUCT: case FK_ARRAY: emit("%%s"); break;
+                        default: {
+                            Expr* ft = sd->field_types[fi];
+                            if (ft && ft->type == EXPR_IDENT)
+                                emit("<%.*s>", ft->token.length, ft->token.start);
+                            else emit("<?>");
+                            break;
+                        }
+                    }
+                }
+                emit(" }\"");
+                for (int fi = 0; fi < sd->field_count; fi++) {
+                    Token fn = sd->fields[fi];
+                    switch (kind[fi]) {
+                        case FK_STR:
+                            emit(", __v.%.*s ? __v.%.*s : \"\"",
+                                 fn.length, fn.start, fn.length, fn.start); break;
+                        case FK_BOOL:
+                            emit(", __v.%.*s ? \"true\" : \"false\"", fn.length, fn.start); break;
+                        case FK_INT: case FK_ENUM:
+                            emit(", (long long)__v.%.*s", fn.length, fn.start); break;
+                        case FK_FLOAT: case FK_STRUCT: case FK_ARRAY:
+                            emit(", __f%d", fi); break;
+                        default: break;   // placeholder: literal text, no argument
+                    }
+                }
+                emit(");\n");
+            }
+            for (int fi = 0; fi < sd->field_count; fi++)
+                if (kind[fi] == FK_FLOAT || kind[fi] == FK_STRUCT || kind[fi] == FK_ARRAY)
+                    emit("    wyn_rc_release(__f%d);\n", fi);
+            free(kind);
+            emit("    wyn_rc_set_length(__b, (unsigned int)__n);\n"
+                 "    return __b;\n}\n");
+        }
+    }
+}
+
 void codegen_program(Program* prog) {
     current_program = prog;
     bool has_main = false;
@@ -299,14 +513,11 @@ void codegen_program(Program* prog) {
                 const char* fam = "OptionInt";
                 static char _osfam[128];
                 if (inr && inr->type == EXPR_IDENT) {
-                    if (inr->token.length == 6 && memcmp(inr->token.start, "string", 6) == 0) fam = "OptionString";
-                    else if (inr->token.length == 5 && memcmp(inr->token.start, "float", 5) == 0) fam = "OptionFloat";
-                    else if (inr->token.length == 4 && memcmp(inr->token.start, "bool", 4) == 0) fam = "OptionBool";
-                    else {
-                        char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inr->token);
-                        extern int is_known_struct(const char*);
-                        if (is_known_struct(_stn)) { snprintf(_osfam, sizeof(_osfam), "Option%s", _stn); fam = _osfam; }
-                    }
+                    // Recorded fn return family — same authority as the signature.
+                    char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inr->token);
+                    extern const char* wyn_option_family(const char*, const char**, int*);
+                    snprintf(_osfam, sizeof(_osfam), "%s", wyn_option_family(_stn, NULL, NULL));
+                    fam = _osfam;
                 }
                 register_fn_return_type(_fn, fam);
             } else if (fn_stmt->fn.return_type && fn_stmt->fn.return_type->type == EXPR_CALL &&
@@ -341,6 +552,38 @@ void codegen_program(Program* prog) {
     // PASS 1: Pre-scan to collect all lambdas
     // We need to emit lambda functions before they're used
     // So we do a quick scan to find and generate them first
+
+    // Module function bodies first, because that is the order they are EMITTED
+    // in (the STMT_IMPORT case emits every loaded module's functions before the
+    // main file's are generated). Scanning them here is what makes a lambda
+    // inside an imported module work at all: a whole-module `import m` does not
+    // merge module fns into prog->stmts, so this loop is the only chance to see
+    // them, and without it `nums.filter((n) => n > 1)` in a module emitted a
+    // reference to a body that was never generated. That withdrew the entire
+    // higher-order toolkit (.map/.filter/...) from all multi-file Wyn code.
+    //
+    // Walk the registry in index order and unwrap STMT_EXPORT exactly as the
+    // emitter does, so scan order and emission order cannot drift apart.
+    {
+        extern int get_module_count(void);
+        extern void* get_module_entry_at(int index);
+        int _mc = get_module_count();
+        for (int m = 0; m < _mc; m++) {
+            ModuleEntry* mod = (ModuleEntry*)get_module_entry_at(m);
+            if (!mod || !mod->ast) continue;
+            for (int i = 0; i < mod->ast->count; i++) {
+                Stmt* s = mod->ast->stmts[i];
+                if (s && s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+                if (!s) continue;
+                if (s->type == STMT_FN) {
+                    scan_for_lambdas(s->fn.body);
+                } else {
+                    scan_stmt_for_lambdas(s);
+                }
+            }
+        }
+    }
+
     for (int i = 0; i < prog->count; i++) {
         if (prog->stmts[i]->type == STMT_FN) {
             scan_for_lambdas(prog->stmts[i]->fn.body);
@@ -396,8 +639,68 @@ void codegen_program(Program* prog) {
         }
     }
 
-    // Generate all structs, enums, and type aliases first
-    for (int i = 0; i < prog->count; i++) {
+    // Generate all structs, enums, and type aliases first.
+    //
+    // IN DEPENDENCY ORDER, not source order. A struct field of struct type embeds that
+    // struct BY VALUE, so C needs the field's typedef to already exist:
+    //
+    //     struct A { b: B }      // emitted first, in source order
+    //     struct B { v: int }    // ...so this typedef came too late
+    //
+    // gave `error: unknown type name 'B'` AFTER passing `wyn check` - the v1.21 soundness
+    // rule (what checks must build), and the failure named a C type the user never wrote.
+    // Declaring B first worked, so the language appeared to have a declare-before-use rule
+    // that nothing documents and no diagnostic mentions.
+    //
+    // A topological order always exists: the checker already rejects a struct containing
+    // its own type and any mutually-recursive cycle (both are infinite-size by value), so
+    // the field graph is a DAG by the time we get here. `emit_order` is that order;
+    // anything whose dependencies cannot be resolved (an unknown name, a non-struct field)
+    // keeps its source position, so this can only ever REORDER what already worked.
+    int* emit_order = malloc(sizeof(int) * (prog->count > 0 ? prog->count : 1));
+    int emit_order_count = 0;
+    {
+        char* placed = calloc(prog->count > 0 ? prog->count : 1, 1);
+        // Repeated passes: place a declaration once every struct-typed field it names has
+        // been placed. O(n^2) on the number of type declarations, which is tiny, and it
+        // terminates because the graph is acyclic - the final sweep below is the backstop
+        // if that assumption is ever violated.
+        for (int pass = 0; pass < prog->count + 1 && emit_order_count < prog->count; pass++) {
+            int placed_this_pass = 0;
+            for (int i = 0; i < prog->count; i++) {
+                if (placed[i]) continue;
+                Stmt* s = prog->stmts[i];
+                if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+                bool ready = true;
+                if (s->type == STMT_STRUCT) {
+                    for (int f = 0; f < s->struct_decl.field_count && ready; f++) {
+                        Expr* ft = s->struct_decl.field_types[f];
+                        if (ft && ft->type == EXPR_OPTIONAL_TYPE) ft = ft->optional_type.inner_type;
+                        if (!ft || ft->type != EXPR_IDENT) continue;
+                        // Find a LATER struct declaration of this field's type. Only a
+                        // not-yet-placed one can block us.
+                        for (int j = 0; j < prog->count; j++) {
+                            if (j == i || placed[j]) continue;
+                            Stmt* o = prog->stmts[j];
+                            if (o->type == STMT_EXPORT && o->export.stmt) o = o->export.stmt;
+                            if (o->type != STMT_STRUCT) continue;
+                            if (o->struct_decl.name.length == ft->token.length &&
+                                memcmp(o->struct_decl.name.start, ft->token.start,
+                                       ft->token.length) == 0) { ready = false; break; }
+                        }
+                    }
+                }
+                if (ready) { emit_order[emit_order_count++] = i; placed[i] = 1; placed_this_pass++; }
+            }
+            if (placed_this_pass == 0) break;   // no progress: fall through to the sweep
+        }
+        // Backstop: anything still unplaced keeps its source order, so a graph this pass
+        // cannot order emits exactly as it did before rather than being dropped.
+        for (int i = 0; i < prog->count; i++) if (!placed[i]) emit_order[emit_order_count++] = i;
+        free(placed);
+    }
+    for (int oi = 0; oi < emit_order_count; oi++) {
+        int i = emit_order[oi];
         Stmt* s = prog->stmts[i];
         // Unwrap export
         if (s->type == STMT_EXPORT && s->export.stmt) {
@@ -420,6 +723,19 @@ void codegen_program(Program* prog) {
                 if (is_registered_option_struct(_sn)) emit_option_struct_family(_sn);
                 extern int is_registered_result_struct(const char*);
                 if (is_registered_result_struct(_sn)) emit_result_struct_family(_sn);
+            }
+            // A DATA-carrying enum needs the same hook: its Option<Enum> family names the
+            // enum's own C struct, and a LATER struct may hold that family as a field
+            // (`struct Holder { s: Shape? }` -> `OptionShape s;`). Without emitting here,
+            // the family only appeared in the catch-all further below -- i.e. AFTER Holder --
+            // and the C compile failed with "unknown type name 'OptionShape'".
+            // emit_option_struct_family dedups, so the catch-all remains harmless.
+            if (s->type == STMT_ENUM) {
+                char _en[96]; token_to_cstr(_en, sizeof(_en), s->enum_decl.name);
+                extern int is_registered_option_struct(const char*);
+                if (is_registered_option_struct(_en)) emit_option_struct_family(_en);
+                extern int is_registered_result_struct(const char*);
+                if (is_registered_result_struct(_en)) emit_result_struct_family(_en);
             }
             // For imported enums, emit module-prefixed typedef and constructor aliases
             if (s->type == STMT_ENUM && prog->stmts[i]->type == STMT_EXPORT) {
@@ -444,6 +760,7 @@ void codegen_program(Program* prog) {
             }
         }
     }
+    free(emit_order);
 
     // Emit monomorphic Option<Struct> families for any user struct used as `S?`
     // (registered by the checker as it resolved the optionals). These can't live
@@ -473,6 +790,9 @@ void codegen_program(Program* prog) {
     // helpers for user structs (after all typedefs exist).
     emit_enum_eq_helpers(prog);
     emit_struct_eq_helpers(prog);
+    // Per-struct stringifiers, so `"${p}"` has a char* path instead of falling
+    // through to_string's `default: int_to_string` arm (PLAN_v1.21 S1).
+    emit_struct_str_helpers(prog);
 
     // Generate module-level constants (only if has main - script mode puts them in wyn_main)
     if (has_main) {
@@ -609,6 +929,17 @@ void codegen_program(Program* prog) {
                   memmove(_tvn + WYN_UFN_PFX_LEN, _tvn, strlen(_tvn) + 1);
                   memcpy(_tvn, WYN_UFN_PFX, WYN_UFN_PFX_LEN);
               } }
+            // A module-level string global must be REGISTERED as one, or the assignment
+            // path does not recognise it and emits a bare `g = concat(...)` where a
+            // local gets the release-the-old-value form. That leaked the previous
+            // string on every assignment: the same 300k-iteration loop peaked at
+            // 29.1 MB writing to a global versus 1.5 MB writing to a local. It is a
+            // memory CAP, not a slowdown -- a program accumulating into a global
+            // cannot finish.
+            if (strcmp(c_type, "const char*") == 0 || strcmp(c_type, "char*") == 0) {
+                extern void register_string_global(const char*);
+                register_string_global(_tvn);
+            }
             if (is_simple_init) {
                 // Simple literals can be initialized at file scope
                 emit("%s %s", c_type, _tvn);
@@ -720,24 +1051,29 @@ void codegen_program(Program* prog) {
         }
     }
     
-    // Emit lambda functions that were collected in pre-scan
+    // Lambda PROTOTYPES here; the BODIES are emitted further down, after the
+    // user-function forward declarations.
+    //
+    // Why split: a lambda body may CALL a user-defined function
+    // (`var f = (v) => dbl(v)`), so emitting the body before `dbl`'s prototype
+    // gave C an implicit declaration followed by a conflicting static one --
+    //   error: call to undeclared function 'dbl'
+    //   error: static declaration of 'dbl' follows non-static declaration
+    // -- and ANY such lambda failed to build after passing `wyn check` cleanly.
+    // But a MODULE function is emitted EARLIER than the forward declarations and
+    // may reference a lambda (`pub fn f(xs) { xs.map((v) => v * 2) }`), so simply
+    // moving the bodies late produced "use of undeclared identifier '__lambda_1'"
+    // instead - caught by tests/module_tests/run_lambda_in_module_test.sh, 6 fail.
+    // No single body position satisfies both orderings; a prototype does.
+    // Same class of fix as #286 (struct typedefs in dependency order).
     if (lambda_count > 0) {
-        emit("// Lambda functions\n");
+        emit("// Lambda prototypes (bodies follow the function declarations)\n");
         for (int i = 0; i < lambda_count; i++) {
-            if (lambda_functions[i].ast) {
-                emit_lambda_via_codegen(&lambda_functions[i]);
-                emit("\n");
-            }
+            if (lambda_functions[i].ast) emit_lambda_prototype(&lambda_functions[i]);
         }
         emit("\n");
     }
-    
-    // Pre-declare lambda functions with generic signatures
-    // Actual definitions will be emitted right after this
-    emit("// Lambda functions (defined before use)\n");
-    // Don't emit forward declarations - just emit definitions here
-    // But we can't because lambdas aren't collected yet!
-    
+
     // Generate monomorphic instances of generic functions (after structs are defined)
     wyn_generate_monomorphic_instances_for_codegen(prog);
     
@@ -842,12 +1178,23 @@ void codegen_program(Program* prog) {
                             if (fn->return_type->call.arg_count > 0 &&
                                 fn->return_type->call.args[0]->type == EXPR_IDENT) {
                                 Token inner = fn->return_type->call.args[0]->token;
-                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
-                                    return_type = "ResultString";
-                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)
-                                    return_type = "ResultFloat";
-                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
-                                    return_type = "ResultBool";
+                                extern const char* result_family_err_suffix(Expr*);
+                                // This FORWARD DECLARATION must name the same family as
+                                // the definition (codegen_stmt) — a primitive ok payload
+                                // uses the builtin only for a string E, else its own
+                                // `Result<Tag>_<ErrTag>` family. Disagreeing here emits
+                                // "conflicting types for '<fn>'".
+                                const char* _rsuf = result_family_err_suffix(fn->return_type);
+                                const char* _rtag = NULL;
+                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)     _rtag = "String";
+                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0) _rtag = "Float";
+                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)  _rtag = "Bool";
+                                else if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)    _rtag = "Int";
+                                if (_rtag) {
+                                    snprintf(return_type_buf, sizeof(return_type_buf), "Result%s%s",
+                                             _rtag, _rsuf);
+                                    return_type = return_type_buf;
+                                }
                                 else {
                                     // `Result<Struct, E>` -> the monomorphic
                                     // Result<Struct,E> family (ResultPoint,
@@ -911,18 +1258,14 @@ void codegen_program(Program* prog) {
                     Expr* inner = fn->return_type->optional_type.inner_type;
                     if (inner && inner->type == EXPR_IDENT) {
                         Token t = inner->token;
-                        if (t.length == 3 && memcmp(t.start, "int", 3) == 0) return_type = "OptionInt";
-                        else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return_type = "OptionString";
-                        else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) return_type = "OptionFloat";
-                        else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) return_type = "OptionBool";
-                        else {
-                            char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
-                            extern int is_known_struct(const char*);
-                            if (is_known_struct(_stn)) {
-                                static char _osfd[128];
-                                snprintf(_osfd, sizeof(_osfd), "Option%s", _stn);
-                                return_type = _osfd;
-                            } else return_type = "WynOptional*";
+                        // Same authority as the DEFINITION in codegen_stmt — they must
+                        // name the same family or C reports "conflicting types for '<fn>'".
+                        {
+                            char _ptn[96]; token_to_cstr(_ptn, sizeof(_ptn), t);
+                            extern const char* wyn_option_family(const char*, const char**, int*);
+                            static char _offd[128];
+                            snprintf(_offd, sizeof(_offd), "%s", wyn_option_family(_ptn, NULL, NULL));
+                            return_type = _offd;
                         }
                     } else {
                         return_type = "WynOptional*";
@@ -994,7 +1337,14 @@ void codegen_program(Program* prog) {
                     }
                 }
             }
-            if (_emit_inline || (_is_recursive && !_is_spawned_fn)) emit("__attribute__((hot)) static inline ");
+            // Same reason as in codegen_stmt.c: in library mode `static` would keep the
+            // symbol out of the .dylib/.so, so a --python/--shared build must not
+            // inline. Note this covers the RECURSIVE case too - `factorial` in the
+            // Python guide is recursive AND under the size threshold, so it was hidden
+            // by both conditions.
+            extern bool codegen_in_library_mode(void);
+            if ((_emit_inline || (_is_recursive && !_is_spawned_fn)) &&
+                !codegen_in_library_mode()) emit("__attribute__((hot)) static inline ");
             else if (!is_main_function) emit("__attribute__((hot)) ");
             
             if (is_main_function) {
@@ -1123,9 +1473,11 @@ void codegen_program(Program* prog) {
                             else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) param_type = "OptionFloat";
                             else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) param_type = "OptionBool";
                             else {
+                                // Same authority as the definition side.
                                 char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
-                                extern int is_known_struct(const char*);
-                                if (is_known_struct(_stn)) { snprintf(_opbuf, sizeof(_opbuf), "Option%s", _stn); param_type = _opbuf; }
+                                extern const char* wyn_option_family(const char*, const char**, int*);
+                                snprintf(_opbuf, sizeof(_opbuf), "%s", wyn_option_family(_stn, NULL, NULL));
+                                param_type = _opbuf;
                             }
                         }
                     }
@@ -1205,7 +1557,12 @@ void codegen_program(Program* prog) {
                         }
                     }
                     
-                    emit("%s %.*s", param_type, method->params[k].length, method->params[k].start);
+                    // Must agree with the definition emitter in codegen_stmt.c:
+                    // a `mut` param (including `mut self`) takes a pointer. A
+                    // prototype that disagrees with its definition is a C error.
+                    bool _fd_is_mut = method->param_mutable && method->param_mutable[k];
+                    emit("%s %s%.*s", param_type, _fd_is_mut ? "*" : "",
+                         method->params[k].length, method->params[k].start);
                 }
                 emit(");\n");
             }
@@ -1216,11 +1573,47 @@ void codegen_program(Program* prog) {
     // Vtable wrappers and instances are generated inline during main codegen
     // (after trait and impl statements have been processed)
     
+    // Lambda bodies, emitted HERE rather than before the forward declarations
+    // above: a lambda body may call a user-defined function or an impl method, and
+    // both are only declared by the loops above. See the note at the old site.
+    // Bodies still precede wyn_main and every other function DEFINITION, so a
+    // lambda referenced from any of them is still defined before use.
+    if (lambda_count > 0) {
+        emit("// Lambda functions\n");
+        for (int i = 0; i < lambda_count; i++) {
+            if (lambda_functions[i].ast) {
+                emit_lambda_via_codegen(&lambda_functions[i]);
+                emit("\n");
+            }
+        }
+        emit("\n");
+    }
+
     // Emit spawn wrapper functions (after forward declarations)
     if (spawn_wrapper_count > 0) {
         emit("\n// Spawn wrapper functions\n");
         for (int i = 0; i < spawn_wrapper_count; i++) {
             int ac = spawn_wrappers[i].arg_count;
+            // A user function whose name collides with a C keyword or a libc/POSIX
+            // symbol is EMITTED under the "wynfn_" prefix (PR #53), so the spawn
+            // wrapper must CALL it by that prefixed name. It did not, so:
+            //
+            //   fn send(a: int, b: int, c: string) { ... }
+            //   send(1, 2, "x")        // fine - builds and runs
+            //   spawn send(1, 2, "x")  // wyn check: no errors
+            //   -> error: too few arguments to function call, expected 4, have 3
+            //
+            // because the wrapper called POSIX send(sockfd, buf, len, flags). The
+            // collision guard worked for every direct call and was bypassed by
+            // spawn alone. `send`, `read`, `write`, `connect`, `accept`, `close`
+            // are the natural names for request handlers, which is exactly the
+            // code most likely to be spawned - it was found while making the
+            // "REST API in 93 lines" post race-free, whose handler is named send.
+            //
+            // The WRAPPER's own name keeps the raw spelling: __spawn_wrapper_send
+            // cannot collide, and the call sites already reference it that way.
+            char _cbuf[WYN_UFN_PFX_LEN + 256];
+            const char* callee = emit_c_var_name(_cbuf, sizeof(_cbuf), spawn_wrappers[i].func_name);
             if (ac == 0) {
                 // Check if function has default parameters that need filling
                 extern int get_fn_param_count(const char*);
@@ -1231,7 +1624,7 @@ void codegen_program(Program* prog) {
                 if (total_params > 0) {
                     // Function has params with defaults - fill them in
                     if (spawn_wrappers[i].returns_void) {
-                        emit("    (void)arg; %s(", spawn_wrappers[i].func_name);
+                        emit("    (void)arg; %s(", callee);
                         for (int di = 0; di < total_params; di++) {
                             if (di > 0) emit(", ");
                             Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
@@ -1239,7 +1632,7 @@ void codegen_program(Program* prog) {
                         }
                         emit(");\n    return NULL;\n");
                     } else if (spawn_wrappers[i].return_type[0]) {
-                        emit("    (void)arg; %s* __r = malloc(sizeof(%s)); *__r = %s(", spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, spawn_wrappers[i].func_name);
+                        emit("    (void)arg; %s* __r = malloc(sizeof(%s)); *__r = %s(", spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, callee);
                         for (int di = 0; di < total_params; di++) {
                             if (di > 0) emit(", ");
                             Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
@@ -1247,7 +1640,7 @@ void codegen_program(Program* prog) {
                         }
                         emit(");\n    return __r;\n");
                     } else {
-                        emit("    (void)arg; return (void*)(intptr_t)%s(", spawn_wrappers[i].func_name);
+                        emit("    (void)arg; return (void*)(intptr_t)%s(", callee);
                         for (int di = 0; di < total_params; di++) {
                             if (di > 0) emit(", ");
                             Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
@@ -1257,12 +1650,12 @@ void codegen_program(Program* prog) {
                     }
                 } else {
                     if (spawn_wrappers[i].returns_void) {
-                        emit("    (void)arg; %s();\n    return NULL;\n", spawn_wrappers[i].func_name);
+                        emit("    (void)arg; %s();\n    return NULL;\n", callee);
                     } else if (spawn_wrappers[i].return_type[0]) {
                         emit("    (void)arg; %s* __r = malloc(sizeof(%s)); *__r = %s();\n    return __r;\n",
-                             spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, spawn_wrappers[i].func_name);
+                             spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, callee);
                     } else {
-                        emit("    (void)arg; return (void*)(intptr_t)%s();\n", spawn_wrappers[i].func_name);
+                        emit("    (void)arg; return (void*)(intptr_t)%s();\n", callee);
                     }
                 }
                 emit("}\n\n");
@@ -1275,13 +1668,13 @@ void codegen_program(Program* prog) {
                 emit("void* __spawn_wrapper_%s_1b(void* arg) {\n", spawn_wrappers[i].func_name);
                 emit("    struct { %s a0; } *args = arg;\n", _bpt);
                 if (spawn_wrappers[i].returns_void) {
-                    emit("    %s(args->a0);\n    free(args);\n    return NULL;\n", spawn_wrappers[i].func_name);
+                    emit("    %s(args->a0);\n    free(args);\n    return NULL;\n", callee);
                 } else if (spawn_wrappers[i].return_type[0]) {
                     emit("    %s* __r = malloc(sizeof(%s));\n    *__r = %s(args->a0);\n    free(args);\n    return __r;\n",
-                         spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, spawn_wrappers[i].func_name);
+                         spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, callee);
                 } else {
                     emit("    long long __r = (long long)%s(args->a0);\n    free(args);\n    return (void*)(intptr_t)__r;\n",
-                         spawn_wrappers[i].func_name);
+                         callee);
                 }
                 emit("}\n\n");
             } else if (ac == 1) {
@@ -1300,7 +1693,7 @@ void codegen_program(Program* prog) {
                 emit("void* __spawn_wrapper_%s_1(void* arg) {\n", spawn_wrappers[i].func_name);
                 if (_a1_str) emit("    const char* __a0 = (const char*)arg;\n");
                 if (spawn_wrappers[i].returns_void) {
-                    emit("    %s(%s", spawn_wrappers[i].func_name, _a1_decode);
+                    emit("    %s(%s", callee, _a1_decode);
                     for (int di = 1; di < total_params; di++) {
                         emit(", ");
                         Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
@@ -1310,7 +1703,7 @@ void codegen_program(Program* prog) {
                     if (_a1_str) emit("    wyn_rc_release(__a0);\n");
                     emit("    return NULL;\n");
                 } else if (spawn_wrappers[i].return_type[0]) {
-                    emit("    %s* __r = malloc(sizeof(%s)); *__r = %s(%s", spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, spawn_wrappers[i].func_name, _a1_decode);
+                    emit("    %s* __r = malloc(sizeof(%s)); *__r = %s(%s", spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, callee, _a1_decode);
                     for (int di = 1; di < total_params; di++) {
                         emit(", ");
                         Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
@@ -1320,7 +1713,7 @@ void codegen_program(Program* prog) {
                     if (_a1_str) emit("    wyn_rc_release(__a0);\n");
                     emit("    return __r;\n");
                 } else {
-                    emit("    long long __r = (long long)%s(%s", spawn_wrappers[i].func_name, _a1_decode);
+                    emit("    long long __r = (long long)%s(%s", callee, _a1_decode);
                     for (int di = 1; di < total_params; di++) {
                         emit(", ");
                         Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
@@ -1352,7 +1745,7 @@ void codegen_program(Program* prog) {
                 }
                 emit("} *args = arg;\n");
                 if (spawn_wrappers[i].returns_void) {
-                    emit("    %s(", spawn_wrappers[i].func_name);
+                    emit("    %s(", callee);
                     for (int j = 0; j < ac; j++) { if (j > 0) emit(", "); emit("args->a%d", j); }
                     for (int di = ac; di < total_params; di++) {
                         emit(", ");
@@ -1367,7 +1760,7 @@ void codegen_program(Program* prog) {
                     if (spawn_wrappers[i].return_type[0]) {
                         // Struct return: heap-allocate and return pointer
                         emit("    %s* __r = malloc(sizeof(%s));\n", spawn_wrappers[i].return_type, spawn_wrappers[i].return_type);
-                        emit("    *__r = %s(", spawn_wrappers[i].func_name);
+                        emit("    *__r = %s(", callee);
                         for (int j = 0; j < ac; j++) { if (j > 0) emit(", "); emit("args->a%d", j); }
                         for (int di = ac; di < total_params; di++) {
                             emit(", ");
@@ -1379,7 +1772,7 @@ void codegen_program(Program* prog) {
                             if (_str_field[j]) emit("    wyn_rc_release(args->a%d);\n", j);
                         emit("    free(args);\n    return __r;\n");
                     } else {
-                        emit("    long long __r = (long long)%s(", spawn_wrappers[i].func_name);
+                        emit("    long long __r = (long long)%s(", callee);
                         for (int j = 0; j < ac; j++) { if (j > 0) emit(", "); emit("args->a%d", j); }
                         for (int di = ac; di < total_params; di++) {
                             emit(", ");
@@ -1530,11 +1923,24 @@ void codegen_program(Program* prog) {
                 codegen_stmt(after_each_body);
             }
             
+            // The test NAME lands inside the emitted printf's FORMAT string, so a
+            // `%` in it becomes a live format specifier reading a nonexistent
+            // argument: `test "a 30%-alpha stroke"` printed
+            // "a 300x1.08p-1044lpha stroke", because `%-a` consumed a double that
+            // was never passed. That is undefined behaviour rather than a cosmetic
+            // mangling - a name containing `%s` or `%n` would read or write through
+            // a wild pointer - so every `%` is doubled here. The other C-string
+            // hazards in a name (a quote, a backslash) are handled where the name
+            // is echoed elsewhere; this is the one site that treats it as a format.
             emit("        if (wyn_test_fail_count == __prev_fail) {\n");
-            emit("            printf(\"  \\033[32m✓\\033[0m %.*s\\n\");\n", tname_len, tname);
+            emit("            printf(\"  \\033[32m✓\\033[0m ");
+            emit_percent_doubled(tname, tname_len);
+            emit("\\n\");\n");
             emit("            __test_pass++;\n");
             emit("        } else {\n");
-            emit("            printf(\"  \\033[31m✗\\033[0m %.*s\\n\");\n", tname_len, tname);
+            emit("            printf(\"  \\033[31m✗\\033[0m ");
+            emit_percent_doubled(tname, tname_len);
+            emit("\\n\");\n");
             emit("            __test_fail++;\n");
             emit("        }\n");
             emit("    }\n");
@@ -1716,12 +2122,68 @@ void codegen_match_statement(Stmt* stmt) {
             }
         }
         
-        // Check if this is a Result match (Ok/Err patterns). A user data enum
-        // (is_data_enum_match) is NEVER an Option/Result - the parser marks any
-        // prefixed data-carrying variant with option.is_some, which otherwise
-        // misroutes `match e { A(n) => ... }` into the hardcoded OptionInt shape.
+        // A USER ENUM IS NEVER AN Option/Result, whether or not it carries
+        // payloads. `Ok`, `Err`, `Some` and `None` are ordinary identifiers (the
+        // lexer dropped TOKEN_OK/TOKEN_ERR precisely so they could be used as
+        // names), so all four are legal - and natural - variant names:
+        //
+        //     enum Verdict { Ok, Over }
+        //     match v { Verdict::Ok => ... }   // wyn check: no errors
+        //     -> error: initializing 'ResultInt' with an expression of
+        //        incompatible type 'Verdict'
+        //
+        // because the two flags below were decided from the arm's variant NAME
+        // alone, never consulting the scrutinee, so the temp was declared
+        // ResultInt and the arms tested `.tag`. The existing !is_data_enum_match
+        // guard was this same bug found for PAYLOAD-CARRYING enums and fixed only
+        // for them; a dataless enum still fell through. The bare-arm spelling
+        // (`match v { Ok => .. }`) always worked, because a bare variant is a
+        // PATTERN_IDENT rather than a PATTERN_OPTION with a variant_name - which
+        // is why one spelling of the same match built and the other did not.
+        //
+        // Anything the scrutinee or the arms identify as a user enum is therefore
+        // excluded here, not just the data-carrying subset.
+        // The test is deliberately strict: the prefix must name an enum DECLARED IN
+        // THIS PROGRAM, and that enum must actually declare the arm's variant.
+        // `is_enum_type(prefix)` alone was not enough - a bare `Ok(v)` pattern
+        // carries a prefix that satisfies it, so every genuine Result match took
+        // the user-enum path and failed ("invalid operands to binary expression
+        // ('ResultInt' and 'ResultInt (int)')"). Requiring the variant to belong to
+        // a user-declared enum cannot be satisfied by the builtin families.
+        bool arms_name_user_enum = false;
+        for (int i = 0; i < stmt->match_stmt.case_count && !arms_name_user_enum; i++) {
+            MatchCase* mc = &stmt->match_stmt.cases[i];
+            if (!mc->pattern || mc->pattern->type != PATTERN_OPTION) continue;
+            if (mc->pattern->option.enum_name.length == 0) continue;
+            if (mc->pattern->option.variant_name.length == 0) continue;
+            Token en = mc->pattern->option.enum_name;
+            Token vn = mc->pattern->option.variant_name;
+            for (int si = 0; si < current_program->count; si++) {
+                Stmt* s = current_program->stmts[si];
+                if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+                if (s->type != STMT_ENUM) continue;
+                if (s->enum_decl.name.length != en.length ||
+                    memcmp(s->enum_decl.name.start, en.start, en.length) != 0) continue;
+                for (int vi = 0; vi < s->enum_decl.variant_count; vi++) {
+                    if (s->enum_decl.variants[vi].length == vn.length &&
+                        memcmp(s->enum_decl.variants[vi].start, vn.start, vn.length) == 0) {
+                        arms_name_user_enum = true; break;
+                    }
+                }
+                break;
+            }
+        }
+        // NOTE: is_enum_match is deliberately NOT part of this. It is also set by
+        // an arm-name fallback that resolves a bare `Ok(v)` to the builtin Result
+        // enum, so including it made every GENUINE `match r { Ok(v) => .. }` take
+        // the user-enum path and fail with "use of undeclared identifier 'Ok'".
+        // Only an explicit `E::Ok` / `E.Ok` prefix naming a real enum is decisive,
+        // and that is exactly the spelling that was broken.
+        bool not_builtin_family = is_data_enum_match || arms_name_user_enum;
+
+        // Check if this is a Result match (Ok/Err patterns).
         bool is_result_match = false;
-        if (!is_data_enum_match)
+        if (!not_builtin_family)
         for (int i = 0; i < stmt->match_stmt.case_count; i++) {
             MatchCase* mc = &stmt->match_stmt.cases[i];
             if (mc->pattern->type == PATTERN_OPTION && mc->pattern->option.variant_name.length > 0) {
@@ -1734,9 +2196,10 @@ void codegen_match_statement(Stmt* stmt) {
         }
         
         // Check if this is an Option match (Some/None patterns). Same guard as
-        // above: a user data enum is not an Option.
+        // above, and for the same reason: `enum Cache { None, Warm }` is a user
+        // enum, not an Option.
         bool is_option_match = false;
-        if (!is_data_enum_match)
+        if (!not_builtin_family)
         for (int i = 0; i < stmt->match_stmt.case_count; i++) {
             MatchCase* mc = &stmt->match_stmt.cases[i];
             if (mc->pattern->type == PATTERN_OPTION) {
@@ -1799,10 +2262,18 @@ void codegen_match_statement(Stmt* stmt) {
                 else if (strcmp(_n, "OptionFloat") == 0) { _ofam = "OptionFloat"; _octy = "double"; }
                 else if (strcmp(_n, "OptionBool") == 0) { _ofam = "OptionBool"; _octy = "bool"; }
                 else if (strncmp(_n, "Option", 6) == 0 && strcmp(_n, "OptionInt") != 0) {
-                    // Monomorphic Option<Struct> (e.g. OptionUser): payload is the
-                    // struct value, bound by value (no string registration).
-                    snprintf(_ofam_buf, sizeof(_ofam_buf), "%s", _n); _ofam = _ofam_buf;
-                    snprintf(_octy_buf, sizeof(_octy_buf), "%s", _n + 6); _octy = _octy_buf;
+                    // Monomorphic Option<Name> (OptionUser, OptionShape): the payload is
+                    // the struct value, bound by value. Ask THE authority for the payload
+                    // C type rather than assuming it is the name minus "Option" — for a
+                    // DATA-carrying enum the family is Option<Enum> while the payload C
+                    // type is the enum's own struct typedef, and for a PLAIN enum the
+                    // family collapses to OptionInt (so this branch is not even reached).
+                    extern const char* wyn_option_family(const char*, const char**, int*);
+                    const char* _pcty = NULL;
+                    const char* _pfam = wyn_option_family(_n + 6, &_pcty, NULL);
+                    snprintf(_ofam_buf, sizeof(_ofam_buf), "%s", _pfam); _ofam = _ofam_buf;
+                    snprintf(_octy_buf, sizeof(_octy_buf), "%s", _pcty ? _pcty : _n + 6);
+                    _octy = _octy_buf;
                 }
             }
             emit("    %s __match_opt_%d = ", _ofam, _omid);
@@ -1819,6 +2290,21 @@ void codegen_match_statement(Stmt* stmt) {
                             mc->pattern->option.inner->ident.name.start, _omid);
                         if (_obind_str) { char _sv[256]; token_to_cstr(_sv, sizeof(_sv), mc->pattern->option.inner->ident.name);
                             extern void register_string_var(const char*); register_string_var(_sv); }
+                        // If the payload is a DATA-carrying enum, record the binder's enum
+                        // type for the arm body. A nested `match v { Circle(r) => ... }`
+                        // resolves the matched value's enum via get_enum_var_type(); without
+                        // this the binder is unknown, so the inner match is misclassified as
+                        // an OPTION match (the parser marks any data-carrying variant pattern
+                        // with option.is_some) and emitted `OptionInt __match_opt_2 = v;`
+                        // against a plain Shape. Mirrors the string-var registration above.
+                        {
+                            extern int is_data_enum_type(const char*);
+                            extern void register_enum_var(const char*, const char*);
+                            if (is_data_enum_type(_octy)) {
+                                char _ev[256]; token_to_cstr(_ev, sizeof(_ev), mc->pattern->option.inner->ident.name);
+                                register_enum_var(_ev, _octy);
+                            }
+                        }
                     }
                     emit("        ");
                     if (mc->body) codegen_stmt(mc->body);
@@ -1829,6 +2315,13 @@ void codegen_match_statement(Stmt* stmt) {
                         mc->pattern->option.inner->type == PATTERN_IDENT) {
                         char _ub[256]; token_to_cstr(_ub, sizeof(_ub), mc->pattern->option.inner->ident.name);
                         extern void unregister_string_var(const char*); unregister_string_var(_ub);
+                        // Same scoping rule for the enum-var record: the binder does not
+                        // exist outside this arm, so leaving it registered would make a
+                        // later same-named variable of a different type resolve to this
+                        // enum. (Dispatch-table leaks of exactly this kind were found by
+                        // dogfooding WynJS -- see the str_array/int_array var-name leaks.)
+                        extern void unregister_enum_var(const char*);
+                        unregister_enum_var(_ub);
                     }
                     emit("    }");
                 } else if (mc->pattern->type == PATTERN_OPTION && !mc->pattern->option.is_some) {

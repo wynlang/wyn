@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "hashset.h"
+#include "wyn_write_guard.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -12,6 +13,8 @@ typedef struct Entry {
 
 struct WynHashSet {
     Entry* buckets[HASHSET_SIZE];
+    // Concurrent-mutation flag - see hashmap.c and wyn_write_guard.h.
+    int writing;
 };
 
 static unsigned int hash(const char* key) {
@@ -27,7 +30,7 @@ WynHashSet* hashset_new(void) {
     return set;
 }
 
-void hashset_add(WynHashSet* set, const char* key) {
+static void hashset_add_impl(WynHashSet* set, const char* key) {
     unsigned int idx = hash(key);
     Entry* entry = set->buckets[idx];
     
@@ -60,7 +63,7 @@ int hashset_contains(WynHashSet* set, const char* key) {
     return 0;
 }
 
-void hashset_remove(WynHashSet* set, const char* key) {
+static void hashset_remove_impl(WynHashSet* set, const char* key) {
     unsigned int idx = hash(key);
     Entry* entry = set->buckets[idx];
     Entry* prev = NULL;
@@ -205,4 +208,18 @@ int wyn_hashset_is_disjoint(WynHashSet* set1, WynHashSet* set2) {
         }
     }
     return 1;
+}
+
+void hashset_add(WynHashSet* set, const char* key) {
+    if (!set) return;
+    WYN_COLL_WRITE_ENTER(&set->writing, "HashSet");
+    hashset_add_impl(set, key);
+    WYN_COLL_WRITE_EXIT(&set->writing);
+}
+
+void hashset_remove(WynHashSet* set, const char* key) {
+    if (!set) return;
+    WYN_COLL_WRITE_ENTER(&set->writing, "HashSet");
+    hashset_remove_impl(set, key);
+    WYN_COLL_WRITE_EXIT(&set->writing);
 }

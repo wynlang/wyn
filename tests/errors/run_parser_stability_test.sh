@@ -18,9 +18,19 @@ expect_clean_error() {
     if [ $rc -ge 1 ] && [ $rc -lt 128 ]; then ok "$name"; else bad "$name (rc=$rc)"; fi
 }
 
-# 1. `if (x) == 1 { } else { }` - used to hang the fn-body parse loop forever.
-printf 'fn main() {\n    x = 5\n    if (x) == 1 {\n        println(1)\n    } else {\n        println(2)\n    }\n}\n' > "$TMP/a.wyn"
-expect_clean_error "if (x) == 1 +else no longer hangs" "$TMP/a.wyn"
+# 1. `if (x) == 1 { } else { }` - once hung the fn-body parse loop forever, then was
+# rejected as a clean error by a condition-parser special-case that stopped at the
+# first `)`. It is VALID Wyn - a parenthesized term is a normal part of a condition -
+# and now parses, runs, and takes the correct branch. The property that matters
+# (no hang, no crash) is preserved and strengthened: it must succeed, not merely fail
+# cleanly. See tests/errors/run_paren_condition_test.sh for the full behaviour.
+printf 'fn main() {\n    x = 5\n    if (x) == 1 {\n        print("one")\n    } else {\n        print("not one")\n    }\n}\n' > "$TMP/a.wyn"
+out=$(perl -e 'alarm(10); exec @ARGV' -- "$WYN" run "$TMP/a.wyn" 2>&1); rc=$?
+if [ $rc -eq 0 ] && printf '%s' "$out" | grep -q 'not one'; then
+    ok "if (x) == 1 +else parses, runs, and picks the right branch"
+else
+    bad "if (x) == 1 +else (rc=$rc)"
+fi
 
 # 2. Python lambda - used to hang.
 printf 'fn main() {\n    f = lambda x: x + 1\n}\n' > "$TMP/b.wyn"

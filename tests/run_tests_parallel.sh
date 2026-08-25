@@ -30,6 +30,29 @@ run_test() {
 # Read test list from run_tests.wyn
 TESTS=$(cat tests/test_list.txt 2>/dev/null || grep '"tests/' tests/run_tests.wyn | sed 's/.*"\(tests\/[^"]*\)".*/\1/')
 
+# A CHECK THAT CANNOT FAIL READS AS COVERAGE.
+#
+# tests/test_list.txt is not in the tree and tests/run_tests.wyn no longer carries the
+# quoted paths this fell back to, so this script has been selecting ZERO tests and
+# reporting "0 pass, 0 fail" with exit 0 - while CI runs it and CLAUDE.md described it
+# as a gate. That is strictly worse than not running it: a green tick that proves
+# nothing. Refuse instead, and say what would fix it.
+#
+# `make test` is the source of truth. This script is a manual accelerator; if you want
+# it back as a gate, regenerate tests/test_list.txt and remove this guard.
+# Count only paths that EXIST. The fallback grep matches this script's own mention of
+# tests/test_list.txt, so a naive non-empty check passes on one bogus path that the run
+# loop then skips - which is exactly how "0 pass, 0 fail, exit 0" was reached.
+_test_count=0
+for _t in $TESTS; do [ -f "$_t" ] && _test_count=$((_test_count + 1)); done
+if [ "$_test_count" -eq 0 ]; then
+    echo "run_tests_parallel.sh: selected ZERO existing tests - refusing to report success." >&2
+    echo "  tests/test_list.txt is absent and the run_tests.wyn fallback matched no real files." >&2
+    echo "  This script gates nothing in that state. Use 'make test' (the real gate)," >&2
+    echo "  or regenerate tests/test_list.txt to use this runner." >&2
+    exit 2
+fi
+
 # Launch all in parallel (limit concurrency to avoid overwhelming the system)
 JOBS=0
 MAX_JOBS=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 8)

@@ -802,7 +802,30 @@ static inline const char* array_get_str_impl(WynArray arr, int index, const char
     if (arr.data[index].type == WYN_TYPE_STRING) return arr.data[index].data.string_val;
     return "";
 }
-#define array_get_struct(arr, idx, T) (*(T*)arr.data[idx].data.struct_val)
+// Resolve the payload pointer for a struct-array element, with the SAME contract as
+// array_get_int_impl: Python-style negative indexing, then a bounds check that panics with
+// the caller's file and line.
+//
+// This used to be a raw macro -- `(*(T*)arr.data[idx].data.struct_val)` -- with no check at
+// all, so a struct array behaved worse than every other array kind in two ways:
+//   * out of bounds SEGFAULTED (no file, no line), where `[int]` panics cleanly. Found by
+//     running the word-counter sample app on an empty file: it reads ranked[0].n to scale a
+//     bar chart.
+//   * a NEGATIVE index read arr.data[-1] and segfaulted, so `xs[-1]` -- which works on
+//     `[int]` and is a documented language feature -- was silently broken for structs.
+// The macro has to stay a macro because the cast needs the element type T; only the pointer
+// resolution moves into a checked helper.
+static inline void* wyn_array_struct_ptr(WynArray arr, int index,
+                                         const char* file, int line) {
+    if (index < 0) index += arr.count;   // Python-style negative index: a[-1] == last
+    if (index < 0 || index >= arr.count) {
+        wyn_oob_panic(index, arr.count, file, line);
+        return NULL;   // wyn_oob_panic exits; this keeps the compiler quiet
+    }
+    return arr.data[index].data.struct_val;
+}
+#define array_get_struct(arr, idx, T) \
+    (*(T*)wyn_array_struct_ptr(arr, idx, __FILE__, __LINE__))
 WynValue array_get(WynArray arr, int index) {
     WynValue val = {0};
     if (index < 0) index += arr.count;   // Python-style negative index
@@ -847,6 +870,21 @@ bool array_get_nested_bool(WynArray arr, int index1, int index2) {
     WynArray* nested = array_get_array(arr, index1);
     if (nested == NULL) return false;
     return array_get_bool(*nested, index2);
+}
+// String nested getters: without these, s[0][1] on a [[string]] read the inner
+// element through array_get_nested_int, which returned the char* reinterpreted
+// as an int - so `println(s[0][1])` printed a number, not the text.
+const char* array_get_nested_str(WynArray arr, int index1, int index2) {
+    WynArray* nested = array_get_array(arr, index1);
+    if (nested == NULL) return "";
+    return array_get_str(*nested, index2);
+}
+const char* array_get_nested3_str(WynArray arr, int index1, int index2, int index3) {
+    WynArray* nested1 = array_get_array(arr, index1);
+    if (nested1 == NULL) return "";
+    WynArray* nested2 = array_get_array(*nested1, index2);
+    if (nested2 == NULL) return "";
+    return array_get_str(*nested2, index3);
 }
 
 int array_len(WynArray arr) { return arr.count; }
@@ -1691,24 +1729,47 @@ WynArray string_to_bytes(const char* str) {
     }
     return arr;
 }
+// How many UTF-8 CHARACTERS are in `str`, not how many bytes.
+//
+// The pad functions align text into columns, and a column is counted in characters.
+// Measuring in bytes makes every non-ASCII string look longer than it is: a
+// box-drawing rule "────" is 4 characters and 12 bytes, so pad_right(9) treated it as
+// already over-width and padded nothing - which silently broke the alignment of every
+// table in the sample apps that drew one, and would break any column containing an
+// accent or an emoji.
+//
+// A continuation byte is 0b10xxxxxx; every other byte starts a character. That is the
+// whole rule.
+static int wyn_utf8_chars_rt(const char* s) {
+    int n = 0;
+    for (const unsigned char* p = (const unsigned char*)s; *p; p++) {
+        if ((*p & 0xC0) != 0x80) n++;
+    }
+    return n;
+}
 char* string_pad_left(const char* str, int width, const char* pad) {
-    int len = string_length(str);
-    if (len >= width) return wyn_strdup(str);
-    int pad_len = width - len;
-    char* result = wyn_str_alloc(width);
+    int bytes = (int)strlen(str);
+    int chars = wyn_utf8_chars_rt(str);
+    if (chars >= width) return wyn_strdup(str);
+    int pad_len = width - chars;
+    // Allocated in BYTES: one byte per pad character plus the string's own bytes, which
+    // may outnumber its characters. Sizing by `width` truncated multi-byte content.
+    char* result = wyn_str_alloc(pad_len + bytes);
     for (int i = 0; i < pad_len; i++) result[i] = pad[0];
-    memcpy(result + pad_len, str, len + 1);
-    wyn_rc_set_length(result, width);
+    memcpy(result + pad_len, str, bytes + 1);
+    wyn_rc_set_length(result, pad_len + bytes);
     return result;
 }
 char* string_pad_right(const char* str, int width, const char* pad) {
-    int len = string_length(str);
-    if (len >= width) return wyn_strdup(str);
-    char* result = wyn_str_alloc(width);
-    memcpy(result, str, len);
-    for (int i = len; i < width; i++) result[i] = pad[0];
-    result[width] = '\0';
-    wyn_rc_set_length(result, width);
+    int bytes = (int)strlen(str);
+    int chars = wyn_utf8_chars_rt(str);
+    if (chars >= width) return wyn_strdup(str);
+    int pad_len = width - chars;
+    char* result = wyn_str_alloc(bytes + pad_len);
+    memcpy(result, str, bytes);
+    for (int i = 0; i < pad_len; i++) result[bytes + i] = pad[0];
+    result[bytes + pad_len] = '\0';
+    wyn_rc_set_length(result, bytes + pad_len);
     return result;
 }
 
@@ -2451,8 +2512,7 @@ void print_debug(const char* label, int val) { printf("%s: %d\n", label, val); }
     WynValue: print_value, \
     default: print_int_no_nl)(x)
 
-int input() { int x = 0; if (scanf("%d", &x) != 1) { while(getchar() != '\n') { /* clear input buffer */ } return 0; } return x; }
-float input_float() { float x = 0.0f; if (scanf("%f", &x) != 1) { while(getchar() != '\n') { /* clear input buffer */ } return 0.0f; } return x; }
+// input() / input_float() are defined AFTER input_line(), which they now use.
 // Read one line from stdin as a real Wyn string.
 // Ownership: returns a FRESH +1 RC string (wyn_str_alloc), exactly like
 // file_read / int_to_string / wyn_strdup. Codegen's `is_fresh_string_temp`
@@ -2484,6 +2544,95 @@ char* input_line() {
     if (len > 0 && buf[len - 1] == '\r') buf[--len] = '\0';
     wyn_rc_set_length(buf, (unsigned int)len);
     return buf;
+}
+
+// input() / input_float() read ONE LINE via input_line() and then validate the
+// WHOLE line, instead of scanf-ing a token. Six defects shared one root cause -
+// a token reader with the wrong C return types that could not validate or bound
+// what it consumed. Every one of them was a wrong answer at exit 0 or a hang:
+//   (a) a non-numeric line returned 0            ("hello" -> 0);
+//   (b) the drain loop `while (getchar() != '\n')` never terminated at EOF,
+//       because getchar() keeps returning EOF - an UNBOUNDED HANG on empty stdin;
+//   (c) a trailing tail was swallowed            ("12abc" -> 12);
+//   (d) the newline was left in the buffer, so a FOLLOWING input_line() returned
+//       "" rather than the next line;
+//   (e) the C return type was `int` while a Wyn int is 64-bit, so 4294967297
+//       truncated to 1;
+//   (f) the C return type was `float` while a Wyn float is a C double, so
+//       0.1234567890123 came back as 0.12345679104328156.
+// Validating the entire line is exactly what str_parse_int (`to_int`) does, and
+// this reuses its panic posture too: report the offending value on stderr, exit
+// 1, and let WYN_LENIENT=1 restore the old return-0 behavior. The upshot is that
+// input() now means int(input_line()), which is also why (d) disappears.
+//
+// input_line() alone cannot express "no input at all": EOF and an empty line
+// both come back as a zero-length string. feof() disambiguates, and is consulted
+// ONLY when nothing was read - a final line lacking its newline sets the EOF
+// flag too, and must still be parsed rather than reported as end of input.
+static int wyn_stdin_at_eof(const char* line) {
+    return (line[0] == '\0' && feof(stdin)) ? 1 : 0;
+}
+
+long long input() {
+    char* line = input_line();
+    if (wyn_stdin_at_eof(line)) {
+        fprintf(stderr, "panic: input(): end of input (expected an integer)\n");
+        wyn_rc_release(line);
+        if (!wyn_lenient_mode()) exit(1);
+        return 0;
+    }
+    char* end;
+    errno = 0;
+    long long val = strtoll(line, &end, 10);
+    int unparsed = (end == line);
+    while (*end == ' ' || *end == '\t' || *end == '\r') end++;
+    if (*end != '\0') unparsed = 1;
+    if (errno == ERANGE) {
+        fprintf(stderr, "panic: input(): \"%s\" does not fit in a 64-bit int\n", line);
+        wyn_rc_release(line);
+        if (!wyn_lenient_mode()) exit(1);
+        return 0;
+    }
+    if (unparsed) {
+        fprintf(stderr, "panic: input(): \"%s\" is not a valid integer; "
+                        "use input_line() to read text\n", line);
+        wyn_rc_release(line);
+        if (!wyn_lenient_mode()) exit(1);
+        return 0;
+    }
+    wyn_rc_release(line);
+    return val;
+}
+
+double input_float() {
+    char* line = input_line();
+    if (wyn_stdin_at_eof(line)) {
+        fprintf(stderr, "panic: input_float(): end of input (expected a float)\n");
+        wyn_rc_release(line);
+        if (!wyn_lenient_mode()) exit(1);
+        return 0.0;
+    }
+    char* end;
+    errno = 0;
+    double val = strtod(line, &end);
+    int unparsed = (end == line);
+    while (*end == ' ' || *end == '\t' || *end == '\r') end++;
+    if (*end != '\0') unparsed = 1;
+    if (errno == ERANGE) {
+        fprintf(stderr, "panic: input_float(): \"%s\" is out of range for a float\n", line);
+        wyn_rc_release(line);
+        if (!wyn_lenient_mode()) exit(1);
+        return 0.0;
+    }
+    if (unparsed) {
+        fprintf(stderr, "panic: input_float(): \"%s\" is not a valid float; "
+                        "use input_line() to read text\n", line);
+        wyn_rc_release(line);
+        if (!wyn_lenient_mode()) exit(1);
+        return 0.0;
+    }
+    wyn_rc_release(line);
+    return val;
 }
 void printf_wyn(const char* format, ...) { va_list args; va_start(args, format); vprintf(format, args); va_end(args); }
 // string_format / "...".format(a, b, ...) - the runtime substitution engine.
@@ -2602,11 +2751,20 @@ bool char_is_alpha(char x) { return (x >= 'A' && x <= 'Z') || (x >= 'a' && x <= 
 bool char_is_numeric(char x) { return x >= '0' && x <= '9'; }
 bool char_is_alphanumeric(char x) { return char_is_alpha(x) || char_is_numeric(x); }
 bool char_is_whitespace(char x) { return x == ' ' || x == '\t' || x == '\n' || x == '\r'; }
+// String.from_chars accepts an array of one-character STRINGS or of integer code points.
+// It used to read .data.string_val unconditionally, so `String.from_chars([65, 66, 67])`
+// dereferenced the integer 65 as a pointer and SEGFAULTED -- a type confusion, since codegen
+// emits array_push_int for an int literal array. WynValue carries a type tag, so dispatch on
+// it rather than guessing from the call site.
 char* String_from_chars(WynArray arr) {
     char* r = wyn_str_alloc(arr.count + 1);
     for (int i = 0; i < arr.count; i++) {
-        const char* s = arr.data[i].data.string_val;
-        r[i] = (s && *s) ? s[0] : 0;
+        if (arr.data[i].type == WYN_TYPE_INT) {
+            r[i] = (char)arr.data[i].data.int_val;
+        } else {
+            const char* s = arr.data[i].data.string_val;
+            r[i] = (s && *s) ? s[0] : 0;
+        }
     }
     r[arr.count] = 0;
     return r;
@@ -3248,7 +3406,32 @@ int Http_fd(const char* raw) {
     return fd;
 }
 
+// A CONNECTION THAT YIELDS NO REQUEST IS NOT AN EVENT THE CALLER ASKED ABOUT.
+//
+// This used to `return ""` when a client connected and then sent nothing (closed
+// early, or hit the 5s read timeout). Nothing anywhere handles that: no example,
+// no doc snippet and no stdlib test checks the result for emptiness - verified by
+// grep across the corpus. And the DOCUMENTED server pattern is
+//
+//     req = Http.accept(server)
+//     fd  = req.split_at("|", 3).to_int()
+//
+// so an empty result means `"".to_int()`, which PANICS since to_int was correctly
+// made loud about bad input. The two changes are individually right and lethal
+// together: every server built on the documented pattern dies on the first
+// aborted connection. Measured on the blog's flagship "REST API in 93 lines" -
+// `ab -n 40 -c 2` kills it with `panic: to_int parse error: ""`, and it dies at
+// concurrency as low as 2, because a load generator routinely opens connections
+// it does not complete. Health checkers and port scanners do the same.
+//
+// So: skip such a connection and keep accepting, which is what every real server
+// does. This cannot spin hot - the loop only continues after accept() returned a
+// real fd, so each iteration costs one accepted-and-closed connection, and the
+// next accept() blocks (or parks the coroutine) as before. A genuine SERVER
+// socket failure still returns "" and does not loop, because that one is not
+// transient and retrying it would spin.
 char* Http_accept(int server_fd) {
+  for (;;) {
     // Reset arena per request to prevent memory leak in long-running servers
     wyn_arena_reset();
     struct sockaddr_in client_addr;
@@ -3279,7 +3462,20 @@ char* Http_accept(int server_fd) {
 #endif
     {
         client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
-        if (client_fd < 0) return "";
+        if (client_fd < 0) {
+            // TRANSIENT failures are per-connection, not server failures, and are
+            // ROUTINE under load: a client that goes away between the SYN and the
+            // accept() gives ECONNABORTED (ab does this constantly), and a signal
+            // gives EINTR. Returning "" for those is what actually killed the
+            // documented server pattern - measured on the blog's REST API example,
+            // which died at `ab -c 2`. Retry them; only a real server-socket
+            // failure (EBADF, EINVAL, ...) returns, because retrying that spins.
+#ifndef _WIN32
+            if (errno == ECONNABORTED || errno == EINTR || errno == EAGAIN ||
+                errno == EWOULDBLOCK || errno == EPROTO) continue;
+#endif
+            return "";
+        }
     }
     // A client that connects but never sends (or died) must not wedge the
     // accept loop: bound the request read. 5s is generous for a request line.
@@ -3288,7 +3484,9 @@ char* Http_accept(int server_fd) {
 #endif
     char buf[8192] = {0};
     int n = recv(client_fd, buf, sizeof(buf) - 1, 0);
-    if (n <= 0) { close(client_fd); return ""; }
+    // The whole point of the loop: a connection with no request is skipped, not
+    // reported as an empty string the caller will feed to .to_int().
+    if (n <= 0) { close(client_fd); continue; }
     buf[n] = 0;
     
     // Save a copy for body parsing
@@ -3312,6 +3510,7 @@ char* Http_accept(int server_fd) {
     char* result = wyn_str_alloc(16384);
     snprintf(result, 16384, "%s|%s|%s|%d", method, path, body, client_fd);
     return result;
+  }
 }
 
 
@@ -5179,7 +5378,28 @@ void StringBuilder_append(long long handle, const char* s) {
 
 char* StringBuilder_to_string(long long handle) {
     if (!sb_handle_ok(handle)) return "";
-    return sb_pool[handle].data;
+    // Return an OWNED COPY, not the live buffer.
+    //
+    // Handing back sb_pool[handle].data made every earlier snapshot alias the
+    // builder, so appending mutated strings the caller already held:
+    //
+    //     sb.append("a");  s1 = sb.to_string();   // "a"
+    //     sb.append("b");  s2 = sb.to_string();   // "ab"
+    //     // ... and s1 is NOW "ab" as well
+    //
+    // Measured: s1=ab s2=ab where s1=a was correct. A silent wrong answer at
+    // exit 0. Worse, the pointer dangles the moment append() has to realloc, so
+    // the value could also change to garbage rather than merely to the newer
+    // text.
+    //
+    // Allocated with wyn_str_alloc, the same way string_concat and every other
+    // string-returning runtime function does it, so it participates in the normal
+    // retain/release rather than leaking a copy per call.
+    const char* src = sb_pool[handle].data ? sb_pool[handle].data : "";
+    size_t n = strlen(src);
+    char* out = wyn_str_alloc(n + 1);
+    memcpy(out, src, n + 1);
+    return out;
 }
 
 long long StringBuilder_len(long long handle) {
@@ -5202,13 +5422,30 @@ void StringBuilder_free(long long handle) {
 }
 
 // === JSON Parsing ===
-// Simple recursive descent JSON parser returning handle-based access
-#define MAX_JSON_NODES 4096
+// Simple recursive descent JSON parser returning handle-based access.
+//
+// Nodes live in one GROWABLE arena shared by every parsed document, and a handle is an
+// index into it. It used to be a fixed 4096-entry array that `Json_parse` RESET to zero on
+// every call, which made two live documents impossible: the second parse overwrote the
+// first and both handles were 0, so `Json.get(a, "x")` silently returned "" after `b` was
+// parsed. Growing instead of resetting is what lets handles stay valid for the program's
+// life -- a server parsing one document per request needs both properties.
 typedef struct { char type; /* o=object, a=array, s=string, n=number, b=bool, x=null */ char* key; char* str_val; double num_val; int parent; int next_sibling; int first_child; } JsonNode;
-static JsonNode json_nodes[MAX_JSON_NODES];
+static JsonNode* json_nodes = NULL;
 static int json_node_count = 0;
+static int json_node_cap = 0;
 
-static int json_alloc_node() { if (json_node_count >= MAX_JSON_NODES) return -1; int i = json_node_count++; json_nodes[i] = (JsonNode){0}; json_nodes[i].parent = -1; json_nodes[i].next_sibling = -1; json_nodes[i].first_child = -1; return i; }
+static int json_alloc_node() {
+    if (json_node_count >= json_node_cap) {
+        int ncap = json_node_cap ? json_node_cap * 2 : 256;
+        json_nodes = wyn_realloc(json_nodes, sizeof(JsonNode) * (size_t)ncap);
+        json_node_cap = ncap;
+    }
+    int i = json_node_count++;
+    json_nodes[i] = (JsonNode){0};
+    json_nodes[i].parent = -1; json_nodes[i].next_sibling = -1; json_nodes[i].first_child = -1;
+    return i;
+}
 
 static const char* json_skip_ws(const char* p) { while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++; return p; }
 
@@ -5220,9 +5457,61 @@ static const char* json_parse_string_raw(const char* p, char** out) {
     const char* start = p;
     while (*p && *p != '"') { if (*p == '\\') p++; p++; }
     int len = p - start;
-    *out = wyn_malloc(len + 1);
-    memcpy(*out, start, len);
-    (*out)[len] = 0;
+    // DECODE the escapes rather than copying them verbatim. This used to memcpy the raw
+    // bytes, so a perfectly valid {"k":"a\"b"} came back as the 4 characters a \ " b -- the
+    // backslash was skipped for the purpose of finding the closing quote but never
+    // translated. A writer that escapes and a reader that does not decode cannot round-trip.
+    // Decoded output is never longer than the input, so len+1 is enough.
+    char* dst = wyn_malloc(len + 1);
+    int w = 0;
+    for (const char* s = start; s < p; s++) {
+        if (*s != '\\' || s + 1 >= p) { dst[w++] = *s; continue; }
+        s++;
+        switch (*s) {
+            case 'n':  dst[w++] = '\n'; break;
+            case 't':  dst[w++] = '\t'; break;
+            case 'r':  dst[w++] = '\r'; break;
+            case 'b':  dst[w++] = '\b'; break;
+            case 'f':  dst[w++] = '\f'; break;
+            case '"':  dst[w++] = '"';  break;
+            case '\\': dst[w++] = '\\'; break;
+            case '/':  dst[w++] = '/';  break;
+            case 'u': {
+                // \uXXXX -> UTF-8. Only the BMP; a surrogate pair decodes as two 3-byte
+                // sequences, which is wrong for astral characters but no worse than the
+                // previous behaviour of emitting the literal text "\ud83d".
+                if (s + 4 < p) {
+                    unsigned cp = 0; int valid = 1;
+                    for (int k = 1; k <= 4; k++) {
+                        char h = s[k]; unsigned d;
+                        if (h >= '0' && h <= '9') d = (unsigned)(h - '0');
+                        else if (h >= 'a' && h <= 'f') d = (unsigned)(h - 'a' + 10);
+                        else if (h >= 'A' && h <= 'F') d = (unsigned)(h - 'A' + 10);
+                        else { valid = 0; break; }
+                        cp = cp * 16 + d;
+                    }
+                    if (valid) {
+                        s += 4;
+                        if (cp < 0x80) dst[w++] = (char)cp;
+                        else if (cp < 0x800) {
+                            dst[w++] = (char)(0xC0 | (cp >> 6));
+                            dst[w++] = (char)(0x80 | (cp & 0x3F));
+                        } else {
+                            dst[w++] = (char)(0xE0 | (cp >> 12));
+                            dst[w++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                            dst[w++] = (char)(0x80 | (cp & 0x3F));
+                        }
+                        break;
+                    }
+                }
+                dst[w++] = 'u';   // malformed \u: keep it literal rather than lose data
+                break;
+            }
+            default: dst[w++] = *s; break;   // unknown escape: keep the character
+        }
+    }
+    dst[w] = 0;
+    *out = dst;
     if (*p == '"') p++;
     return p;
 }
@@ -5242,6 +5531,13 @@ static const char* json_parse_value(const char* p, int parent) {
         int last_child = -1;
         p = json_skip_ws(p);
         while (*p && *p != '}') {
+            // Every iteration MUST consume at least one byte. On malformed input -- e.g. a
+            // bare quote inside a value, {"quote": "a"b"} -- the key is not a quoted string,
+            // json_parse_string_raw returns p unmoved, no ':' or ',' follows, and the loop
+            // spins on the same byte forever, allocating a node per pass until the arena
+            // exhausts memory and aborts. That is a remote DoS for any server parsing an
+            // untrusted body, so bail out rather than loop.
+            const char* iter_start = p;
             p = json_skip_ws(p);
             char* key = NULL;
             p = json_parse_string_raw(p, &key);
@@ -5257,6 +5553,7 @@ static const char* json_parse_value(const char* p, int parent) {
             }
             p = json_skip_ws(p);
             if (*p == ',') p++;
+            if (p == iter_start) break;
         }
         if (*p == '}') p++;
     } else if (*p == '[') {
@@ -5265,6 +5562,8 @@ static const char* json_parse_value(const char* p, int parent) {
         int last_child = -1;
         p = json_skip_ws(p);
         while (*p && *p != ']') {
+            // Same progress guarantee as the object loop above.
+            const char* iter_start = p;
             int before = json_node_count;
             p = json_parse_value(p, node);
             if (before < json_node_count) {
@@ -5274,6 +5573,7 @@ static const char* json_parse_value(const char* p, int parent) {
             }
             p = json_skip_ws(p);
             if (*p == ',') p++;
+            if (p == iter_start) break;
         }
         if (*p == ']') p++;
     } else if (*p == 't') { json_nodes[node].type = 'b'; json_nodes[node].num_val = 1; p += 4; }
@@ -5284,12 +5584,18 @@ static const char* json_parse_value(const char* p, int parent) {
 }
 
 long long Json_parse(const char* text) {
-    json_node_count = 0;
+    // The root is wherever this document STARTS in the shared arena -- not always 0. It was
+    // `json_node_count = 0; ...; return 0;`, which threw away every previously parsed
+    // document and handed back a handle that aliased it.
+    int root = json_node_count;
     json_parse_value(text, -1);
-    return 0; // root node is always 0
+    return root;
 }
 
 static int json_find_child(int parent, const char* key) {
+    // Guard the handle: Json_get_array/Json_get_object return -1 for "no such key", and
+    // feeding that straight back into Json_get read json_nodes[-1].
+    if (parent < 0 || parent >= json_node_count) return -1;
     int c = json_nodes[parent].first_child;
     while (c >= 0) {
         if (json_nodes[c].key && strcmp(json_nodes[c].key, key) == 0) return c;
@@ -5330,6 +5636,7 @@ long long Json_has(long long root, const char* key) {
 
 long long Json_array_len(long long node) {
     int n = (int)node;
+    if (n < 0 || n >= json_node_count) return 0;
     if (json_nodes[n].type != 'a') return 0;
     int count = 0;
     int c = json_nodes[n].first_child;
@@ -5338,7 +5645,9 @@ long long Json_array_len(long long node) {
 }
 
 long long Json_array_get(long long node, long long index) {
-    int c = json_nodes[(int)node].first_child;
+    int n = (int)node;
+    if (n < 0 || n >= json_node_count) return -1;
+    int c = json_nodes[n].first_child;
     for (int i = 0; i < (int)index && c >= 0; i++) c = json_nodes[c].next_sibling;
     return c >= 0 ? c : -1;
 }
@@ -5357,7 +5666,9 @@ char* Json_node_str(long long node) {
 // newline-joined string, which the for-loop path can't iterate.)
 WynArray Json_keys(long long root) {
     WynArray arr = array_new();
-    int c = json_nodes[(int)root].first_child;
+    int r = (int)root;
+    if (r < 0 || r >= json_node_count) return arr;
+    int c = json_nodes[r].first_child;
     while (c >= 0) {
         if (json_nodes[c].key) array_push_str(&arr, wyn_strdup(json_nodes[c].key));
         c = json_nodes[c].next_sibling;
@@ -6164,20 +6475,52 @@ char* Json_to_pretty_string(WynJson* j) {
     char* out = wyn_malloc(rlen * 4 + 1);
     int o = 0, indent = 0;
     int in_str = 0;
+    int pending_nl = 0;   // a line break is owed before the next token (see below)
     for (int i = 0; i < rlen; i++) {
         char c = raw[i];
-        if (c == '"' && (i == 0 || raw[i-1] != '\\')) { in_str = !in_str; out[o++] = c; continue; }
-        if (in_str) { out[o++] = c; continue; }
-        if (c == '{' || c == '[') {
-            out[o++] = c; out[o++] = '\n'; indent += 2;
-            for (int s = 0; s < indent; s++) out[o++] = ' ';
-        } else if (c == '}' || c == ']') {
-            out[o++] = '\n'; indent -= 2;
-            for (int s = 0; s < indent; s++) out[o++] = ' ';
+        if (c == '"') {
+            if (pending_nl) {
+                out[o++] = '\n';
+                for (int s = 0; s < indent; s++) out[o++] = ' ';
+                pending_nl = 0;
+            }
+            // Count the run of preceding backslashes: an ODD run escapes this quote, an even
+            // one does not. `raw[i-1] != '\\'` got this wrong for a value ending in a
+            // backslash ("a\\"), where the closing quote follows a real escaped backslash --
+            // the printer then treated the rest of the document as string content. Only
+            // reachable now that the writer emits backslash escapes at all.
+            int bs = 0;
+            for (int k = i - 1; k >= 0 && raw[k] == '\\'; k--) bs++;
+            if ((bs % 2) == 0) { in_str = !in_str; out[o++] = c; continue; }
             out[o++] = c;
-        } else if (c == ',') {
-            out[o++] = ','; out[o++] = '\n';
+            continue;
+        }
+        if (in_str) { out[o++] = c; continue; }
+        // Outside a string, drop the serializer's own cosmetic spaces -- json_stringify emits
+        // ", " and ": ", and copying those THROUGH while also adding indentation is what
+        // produced the ragged `"a":  "x",\n   "b"` output (two spaces after the colon, three
+        // before the next key).
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') continue;
+        // The newline+indent is emitted LAZILY, just before the next real token, rather than
+        // eagerly after '{'. That is what makes an empty container come out as "{}" instead
+        // of "{\n  \n}" without any rewinding: if nothing follows the brace, no line is ever
+        // opened.
+        if (c == '}' || c == ']') {
+            indent -= 2;
+            if (!pending_nl) { out[o++] = '\n'; for (int s = 0; s < indent; s++) out[o++] = ' '; }
+            pending_nl = 0;
+            out[o++] = c;
+            continue;
+        }
+        if (pending_nl) {
+            out[o++] = '\n';
             for (int s = 0; s < indent; s++) out[o++] = ' ';
+            pending_nl = 0;
+        }
+        if (c == '{' || c == '[') {
+            out[o++] = c; indent += 2; pending_nl = 1;
+        } else if (c == ',') {
+            out[o++] = ','; pending_nl = 1;
         } else if (c == ':') {
             out[o++] = ':'; out[o++] = ' ';
         } else {
@@ -6648,6 +6991,7 @@ void System_load_env(const char* path) {
 extern int wyn_test_fail_count;
 void wyn_assert(int condition);
 void wyn_assert_eq_int(long long actual, long long expected);
+void wyn_assert_eq_float(double actual, double expected);
 void wyn_assert_eq_str(const char* actual, const char* expected);
 
 // === Web framework ===

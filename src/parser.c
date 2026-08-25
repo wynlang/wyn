@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>   // isalpha, for accepting a keyword as a module name
 #include "common.h"
 #include "ast.h"
 #include "types.h"
@@ -230,11 +231,63 @@ static bool check_next_is_value(void) {
            (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || *p == '_';
 }
 
+// Is the next non-blank source character a '{'?
+//
+// Used to make `select` contextual. There is no token-level lookahead in this
+// parser (only `current` and `previous`), so this scans the raw source after the
+// current token exactly as check_next_is_value above does. Newlines are skipped
+// too: `select\n{` is the same statement as `select {`.
+static bool next_char_is_lbrace(void) {
+    if (!parser.current.start) return false;
+    const char* p = parser.current.start + parser.current.length;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    return *p == '{';
+}
+
 static bool match(WynTokenType type) {
     if (!check(type)) return false;
     advance();
     return true;
 }
+
+// --- Contextual keywords ----------------------------------------------------------
+//
+// `from`, `as` and `root` are keywords ONLY inside an import (`import {a,b} from m`,
+// `import m as n`, `import root::m`). The lexer therefore hands them back as plain
+// TOKEN_IDENT so they stay usable as ordinary names -- reserving them globally rejected
+// `fn f(from: int)`, `var from = 1`, `struct S { from: int }` and `for root in 0..n`,
+// while `to` was never reserved, so a from/to pair half-worked.
+//
+// These two helpers are how the import grammar still recognises them: by TEXT, not by
+// token type. Same approach the parser already uses for `test` (see parse_declaration).
+static bool check_kw(const char* kw, int len) {
+    return parser.current.type == TOKEN_IDENT &&
+           parser.current.length == len &&
+           memcmp(parser.current.start, kw, (size_t)len) == 0;
+}
+
+static bool match_kw(const char* kw, int len) {
+    if (!check_kw(kw, len)) return false;
+    advance();
+    return true;
+}
+
+// Consume a contextual keyword or report `message`, mirroring expect().
+static void expect_kw(const char* kw, int len, const char* message) {
+    if (match_kw(kw, len)) return;
+    if (parser.current.type == TOKEN_EOF && parser.had_error) return;
+    if (current_source_file) {
+        show_error_context(current_source_file, parser.current.line, 1, message, NULL);
+    } else {
+        fprintf(stderr, "Parse error at line %d: %s\n", parser.current.line, message);
+    }
+    parser.had_error = true;
+}
+
+#define MATCH_FROM()  match_kw("from", 4)
+#define MATCH_AS()    match_kw("as", 2)
+#define MATCH_ROOT()  match_kw("root", 4)
+#define EXPECT_FROM(msg) expect_kw("from", 4, (msg))
 
 static void expect(WynTokenType type, const char* message) {
     if (parser.current.type == type) {
@@ -261,6 +314,62 @@ static void expect(WynTokenType type, const char* message) {
         advance();
     }
     if (check(TOKEN_SEMI)) advance();
+}
+
+// A MODULE NAME may be spelled with a keyword.
+//
+// A module name is a FILENAME, and which filenames a user may pick is not the
+// compiler's business. `import select` failed with "Expected module name"
+// pointing at the import line, never mentioning that `select` is a keyword
+// (channel multiplexing), and then cascaded into a parse error for every later
+// statement. The path form was no escape either - the resolver keys off the
+// import NAME, not a path. WynCanvas hit this with src/select.wyn (a selection
+// engine is an obvious thing to call `select`) and had to ship a `selection.wyn`
+// symlink to work around it.
+//
+// This position is unambiguous: after `import`, or after `from`, a keyword can
+// only be a name, because no statement may begin there. So accept any token whose
+// text is identifier-shaped, whatever the lexer classified it as. `select`,
+// `channel`, `parallel`, `table` and the rest all become reachable as module
+// names; a genuinely wrong token - a literal, an operator - still produces the
+// same message as before.
+static void expect_module_name(const char* message) {
+    if (parser.current.type != TOKEN_IDENT &&
+        parser.current.length > 0 &&
+        (isalpha((unsigned char)parser.current.start[0]) ||
+         parser.current.start[0] == '_')) {
+        advance();
+        return;
+    }
+    expect(TOKEN_IDENT, message);
+}
+
+// `import {x} from m as u` has never been supported: an alias renames a whole MODULE, while
+// a selective import binds the names directly, so there is nothing for the alias to attach
+// to. Without this check the selective-import parse just ENDED at the module name and the
+// leftover `as u` was parsed as two expression statements:
+//     Error: Undefined variable 'as'   Did you mean: Os?
+//     Error: Undefined variable 'u'    Did you mean: Db?
+// -- two errors about variables that do not exist, plus nonsense suggestions, for what is a
+// syntax question. Say what is wrong and name both working forms.
+//
+// Called from BOTH selective-import parse paths (statement_impl and the program-level loop).
+// They are near-duplicates, which is exactly why this is a shared helper: a one-site fix
+// would leave half the programs still reporting "Undefined variable 'as'".
+static void reject_alias_after_selective_import(void) {
+    if (!check_kw("as", 2)) return;
+    const char* hint =
+        "A selective import binds the names directly, so there is no module name for an "
+        "alias to rename. Use `import {a, b} from m` to bind the names, or `import m as u` "
+        "and then call `u.a()`.";
+    if (current_source_file) {
+        show_error_context(current_source_file, parser.current.line, 1,
+                           "'as' cannot be combined with a selective import", hint);
+    } else {
+        fprintf(stderr, "Error at line %d: 'as' cannot be combined with a selective import. "
+                        "%s\n", parser.current.line, hint);
+    }
+    parser.had_error = true;
 }
 
 static Expr* alloc_expr() {
@@ -550,6 +659,20 @@ static Expr* primary() {
         return expr;
     }
     
+    // Treat 'select' as an identifier in expression context.
+    //
+    // `select` is only a STATEMENT when a `{` follows it (see the contextual check
+    // in parse_statement). In an expression it can only be a name, so a module,
+    // variable or field may be called `select` - which is what a selection engine
+    // wants to be called. `select.clip(cov)` previously reported "Expected an
+    // expression" at the START of the line, naming neither the word nor the reason.
+    if (match(TOKEN_SELECT)) {
+        Expr* expr = alloc_expr();
+        expr->type = EXPR_IDENT;
+        expr->token = parser.previous;
+        return expr;
+    }
+
     // Treat 'self' as an identifier in expression context
     if (match(TOKEN_SELF)) {
         Expr* expr = alloc_expr();
@@ -2617,7 +2740,20 @@ static Stmt* statement_impl() {
     
     // Channel multiplexing: select { v = ch.recv() => body  ... }
     // Waits until one channel has data, receives from it, binds v, runs body.
-    if (match(TOKEN_SELECT)) {
+    //
+    // `select` is CONTEXTUAL: only a statement when a `{` follows. Anywhere else
+    // the word is an ordinary identifier, so a module, variable or field may be
+    // called `select` - which a selection engine obviously wants to be. Without
+    // the lookahead, `select.clip(c)` parsed as this statement and failed with
+    // "Expected '{' after 'select'"; and because the recovery then skipped to the
+    // next `;` or `}`, one such line poisoned the rest of the function.
+    //
+    // The lookahead is unambiguous in both directions: a select STATEMENT always
+    // has its brace immediately (the arms live inside it), and no expression
+    // beginning with an identifier can have `{` next - a struct literal is
+    // `Name { ... }` with a TYPE name, and this arm is only reached in statement
+    // position where a bare `ident {` is not otherwise legal.
+    if (check(TOKEN_SELECT) && next_char_is_lbrace() && match(TOKEN_SELECT)) {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_SELECT;
         stmt->select_stmt.arm_count = 0;
@@ -2756,16 +2892,25 @@ static Stmt* statement_impl() {
         bool saved_allow_struct_init = parser.allow_struct_init;
         parser.allow_struct_init = false;
         
-        if (match(TOKEN_LPAREN)) {
-            stmt->if_stmt.condition = expression();
-            expect(TOKEN_RPAREN, "Expected ')' after if condition");
-        } else {
-            stmt->if_stmt.condition = expression();
-        }
-        
+        // Parentheses around an if condition are OPTIONAL in Wyn, so the
+        // condition is just an expression - whether or not it starts with `(`.
+        //
+        // The old code special-cased a leading `(`: it consumed the paren, parsed
+        // one expression, and demanded a closing `)`. That is wrong the moment the
+        // condition is `(a) or (b)` - a parenthesized term FOLLOWED by an operator.
+        // It parsed `(a)`, matched the `)`, and then the `or (b)` was left dangling
+        // before the `{`, producing "Expected an expression". `if a or (b)` worked
+        // and `if (a) or (b)` did not, which is not a rule anyone can learn.
+        //
+        // expression() already parses a leading-paren term correctly as part of the
+        // whole condition, so there is nothing to special-case: a C-style
+        // `if (cond)` is just an expression whose outermost node happens to be
+        // parenthesized.
+        stmt->if_stmt.condition = expression();
+
         // Restore struct init flag
         parser.allow_struct_init = saved_allow_struct_init;
-        
+
         stmt->if_stmt.then_branch = parse_block_or_stmt("if");
 
         // Friendly diagnostic: Python's `elif` (and `elseif`/`elsif`) isn't a Wyn
@@ -2798,17 +2943,30 @@ static Stmt* statement_impl() {
         
         // Check for selective import: import { a, b } from module
         if (match(TOKEN_LBRACE)) {
-            stmt->import.items = malloc(sizeof(Token) * 32);
+            // GROWABLE. This was a fixed malloc(32) with the loop guarded by
+            // `item_count < 32`, which failed in two ways at once. Past 32 names the
+            // loop stopped consuming, then expect(TOKEN_RBRACE) hit the next comma and
+            // reported "Expected '}' after import list" - pointing at the import
+            // statement with no hint that a COUNT was the problem, which is
+            // unactionable. And the guard was on the wrong side of the store: had the
+            // condition ever been reordered, the 33rd write would have run off the end
+            // of the allocation.
+            //
+            // A 34-name import is not exotic: it is what one module exposing a real API
+            // looks like (found importing a game engine's surface into its test file).
+            int _imp_cap = 32;
+            stmt->import.items = malloc(sizeof(Token) * _imp_cap);
             stmt->import.item_count = 0;
             
             do {
                 expect(TOKEN_IDENT, "Expected identifier in import list");
+                WYN_ENSURE_CAP(stmt->import.items, stmt->import.item_count, _imp_cap);
                 stmt->import.items[stmt->import.item_count++] = parser.previous;
-            } while (match(TOKEN_COMMA) && stmt->import.item_count < 32);
+            } while (match(TOKEN_COMMA));
             
             expect(TOKEN_RBRACE, "Expected '}' after import list");
-            expect(TOKEN_FROM, "Expected 'from' after import list");
-            expect(TOKEN_IDENT, "Expected module name after 'from'");
+            EXPECT_FROM("Expected 'from' after import list");
+            expect_module_name("Expected module name after 'from'");
             
             // Build module path
             char* module_path = malloc(256);
@@ -2832,15 +2990,17 @@ static Stmt* statement_impl() {
             stmt->import.alias.length = 0;
             stmt->import.path.start = NULL;
             stmt->import.path.length = 0;
-            
+
+            reject_alias_after_selective_import();
+
             return stmt;
         }
-        
+
         // Check for relative imports: root::, self::
         bool is_relative = false;
         char relative_prefix[32] = "";
         
-        if (match(TOKEN_ROOT)) {
+        if (MATCH_ROOT()) {
             strcpy(relative_prefix, "crate");
             is_relative = true;
             expect(TOKEN_COLONCOLON, "Expected '::' after 'root'");
@@ -2851,7 +3011,7 @@ static Stmt* statement_impl() {
         }
         
         // Parse: import name [.name]* [as alias]
-        expect(TOKEN_IDENT, "Expected module name after 'import'");
+        expect_module_name("Expected module name after 'import'");
         
         // Build module path with . support (like Java)
         char* module_path = malloc(256);
@@ -2885,7 +3045,7 @@ static Stmt* statement_impl() {
         stmt->import.item_count = 0;
         
         // Optional: as alias
-        if (match(TOKEN_AS)) {
+        if (MATCH_AS()) {
             expect(TOKEN_IDENT, "Expected alias name after 'as'");
             stmt->import.alias = parser.previous;
             
@@ -2900,7 +3060,7 @@ static Stmt* statement_impl() {
         }
         
         // Optional: from "path"
-        if (match(TOKEN_FROM)) {
+        if (MATCH_FROM()) {
             expect(TOKEN_STRING, "Expected string path after 'from'");
             stmt->import.path = parser.previous;
         } else {
@@ -2929,16 +3089,14 @@ static Stmt* statement_impl() {
         bool saved_allow_struct_init = parser.allow_struct_init;
         parser.allow_struct_init = false;
         
-        if (match(TOKEN_LPAREN)) {
-            stmt->while_stmt.condition = expression();
-            expect(TOKEN_RPAREN, "Expected ')' after while condition");
-        } else {
-            stmt->while_stmt.condition = expression();
-        }
-        
+        // Same as `if`: parentheses are optional and the condition is just an
+        // expression. Special-casing a leading `(` broke `while (a) or (b)` by
+        // stopping at the first `)`. See the note on the if-statement parser.
+        stmt->while_stmt.condition = expression();
+
         // Restore struct init flag
         parser.allow_struct_init = saved_allow_struct_init;
-        
+
         stmt->while_stmt.body = parse_block_or_stmt("while");
         return stmt;
     }
@@ -4189,17 +4347,23 @@ Program* parse_program() {
             
             // Check for selective import: import { a, b } from module
             if (match(TOKEN_LBRACE)) {
-                stmt->import.items = malloc(sizeof(Token) * 32);
+                // Growable - see the sibling copy of this block above for why. There are
+                // TWO import-list parsers in this file (this is the one that actually
+                // runs for `import { ... } from mod`), which is how the fix landed in the
+                // wrong one first: fixing a duplicate is not fixing the bug.
+                int _imp_cap2 = 32;
+                stmt->import.items = malloc(sizeof(Token) * _imp_cap2);
                 stmt->import.item_count = 0;
                 
                 do {
                     expect(TOKEN_IDENT, "Expected identifier in import list");
+                    WYN_ENSURE_CAP(stmt->import.items, stmt->import.item_count, _imp_cap2);
                     stmt->import.items[stmt->import.item_count++] = parser.previous;
-                } while (match(TOKEN_COMMA) && stmt->import.item_count < 32);
+                } while (match(TOKEN_COMMA));
                 
                 expect(TOKEN_RBRACE, "Expected '}' after import list");
-                expect(TOKEN_FROM, "Expected 'from' after import list");
-                expect(TOKEN_IDENT, "Expected module name after 'from'");
+                EXPECT_FROM("Expected 'from' after import list");
+                expect_module_name("Expected module name after 'from'");
                 
                 // Build module path
                 char* module_path = malloc(256);
@@ -4223,7 +4387,9 @@ Program* parse_program() {
                 stmt->import.alias.length = 0;
                 stmt->import.path.start = NULL;
                 stmt->import.path.length = 0;
-                
+
+                reject_alias_after_selective_import();
+
                 prog->stmts[prog->count++] = stmt;
                 continue;
             }
@@ -4232,7 +4398,7 @@ Program* parse_program() {
             bool is_relative = false;
             char relative_prefix[32] = "";
             
-            if (match(TOKEN_ROOT)) {
+            if (MATCH_ROOT()) {
                 strcpy(relative_prefix, "crate");
                 is_relative = true;
                 expect(TOKEN_COLONCOLON, "Expected '::' after 'root'");
@@ -4242,7 +4408,7 @@ Program* parse_program() {
                 expect(TOKEN_COLONCOLON, "Expected '::' after 'self'");
             }
             
-            expect(TOKEN_IDENT, "Expected module name");
+            expect_module_name("Expected module name");
             
             // Build module path with . support (like Java)
             char* module_path = malloc(256);
@@ -4275,7 +4441,7 @@ Program* parse_program() {
             stmt->import.item_count = 0;
             
             // Optional: as alias
-            if (match(TOKEN_AS)) {
+            if (MATCH_AS()) {
                 expect(TOKEN_IDENT, "Expected alias name after 'as'");
                 stmt->import.alias = parser.previous;
                 
@@ -4292,7 +4458,7 @@ Program* parse_program() {
             }
             
             // Optional: from "path"
-            if (match(TOKEN_FROM)) {
+            if (MATCH_FROM()) {
                 expect(TOKEN_STRING, "Expected string path after 'from'");
                 stmt->import.path = parser.previous;
             } else {
@@ -4314,7 +4480,7 @@ Program* parse_program() {
             stmt->import.module = parser.previous;
             
             // Optional: as alias
-            if (match(TOKEN_AS)) {
+            if (MATCH_AS()) {
                 expect(TOKEN_IDENT, "Expected alias name after 'as'");
                 stmt->import.alias = parser.previous;
                 
@@ -4331,7 +4497,7 @@ Program* parse_program() {
             }
             
             // Optional: from "path"
-            if (match(TOKEN_FROM)) {
+            if (MATCH_FROM()) {
                 expect(TOKEN_STRING, "Expected string path after 'from'");
                 stmt->import.path = parser.previous;
             } else {
@@ -4383,6 +4549,23 @@ Program* parse_program() {
                 Stmt* stmt = enum_decl();
                 stmt->enum_decl.is_public = true;
                 prog->stmts[prog->count++] = stmt;
+            } else if (check(TOKEN_CONST) || check(TOKEN_VAR)) {
+                // `pub const X = ...` / `pub var x = ...`. Both are in the spec
+                // but had no branch here, so they fell through to function() and
+                // died with "Expected 'fn'" -- and in a module the parse error
+                // was reported while `wyn check` still printed "no errors".
+                //
+                // Visibility is already the default for a module-level binding
+                // (an importer reaches it as `mod.X`), so `pub` only needs to be
+                // accepted, not recorded: statement() handles the declaration and
+                // there is no is_public field on a var/const to set.
+                prog->stmts[prog->count++] = statement();
+            } else if (check(TOKEN_IMPL)) {
+                // `pub impl T { ... }`. Same gap, and the one that mattered most:
+                // without it, impl-method syntax was unavailable to library code
+                // entirely, because a module wanting to export methods could not
+                // write the block at all.
+                prog->stmts[prog->count++] = impl_block();
             } else {
                 // It's pub fn or pub async - function() will handle it
                 // But we already consumed pub, so we need to handle it here

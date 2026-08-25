@@ -53,7 +53,6 @@ static int __wyn_eq_enum_Shape(Shape __l, Shape __r) {
     return 1;
 }
 
-// Lambda functions (defined before use)
 __attribute__((hot)) static inline long long area(Shape s);
 long long wyn_main();
 

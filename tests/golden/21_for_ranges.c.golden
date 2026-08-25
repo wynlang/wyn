@@ -4,7 +4,6 @@
 #endif
 
 
-// Lambda functions (defined before use)
 long long wyn_main();
 
 /* 21_for_ranges.wyn:2 */ 

@@ -5,7 +5,6 @@
 #include <stdarg.h>
 #include "common.h"
 #include "ast.h"
-#include "string_memory.h"
 #include "arc_runtime.h"
 #include "optional.h"
 #include "result.h"
@@ -35,6 +34,84 @@ FILE* codegen_get_output(void) { return out; }
 // user namespace and won't clash.
 #define WYN_UFN_PFX "wynfn_"
 #define WYN_UFN_PFX_LEN 6
+
+// The C type for one of Wyn's FFI pointer-family type NAMES (`ptr`, `cstr`), or
+// NULL when the token is not one of them.
+//
+// Every emitter that turns a type annotation into a C type must consult this
+// BEFORE its "unrecognised name means user struct" fallback. `ptr` and `cstr`
+// are builtins, so that fallback produced an UNDEFINED C TYPE NAME rather than a
+// wrong value: `<module>_ptr` inside a module, a bare `ptr` at top level. One
+// authority because four near-identical if/else ladders had already drifted -
+// only the module-fn PARAMETER site knew about `ptr`, so `pub fn f(p: ptr)`
+// emitted a correct definition and a broken prototype.
+const char* wyn_ffi_ptr_c_type(Token t) {
+    if (t.length == 3 && memcmp(t.start, "ptr", 3) == 0) return "void*";
+    if (t.length == 4 && memcmp(t.start, "cstr", 4) == 0) return "char*";
+    return NULL;
+}
+
+// The C type for one of Wyn's BUILTIN COLLECTION type NAMES, or NULL otherwise.
+//
+// Exactly the same trap as wyn_ffi_ptr_c_type above, and its comment predicted
+// this one: these are builtins, so an emitter that omits them sends the name to
+// its user-struct fallback and emits it VERBATIM as an undefined C type name.
+// `struct Store { index: HashMap }` produced `HashMap index;` and died as
+// "unknown type name 'HashMap'" -- after passing `wyn check` cleanly.
+//
+// The values are not guessed; they are what the compiler already emits for a
+// LOCAL of each type (`WynHashMap* m = hashmap_new();`), which is also what the
+// parameter site in this file and the return site in codegen_program.c use.
+const char* wyn_collection_c_type(Token t) {
+    if (t.length == 7 && memcmp(t.start, "HashMap", 7) == 0) return "WynHashMap*";
+    if (t.length == 7 && memcmp(t.start, "HashSet", 7) == 0) return "WynHashSet*";
+    if (t.length == 4 && memcmp(t.start, "Json", 4) == 0) return "WynJson*";
+    return NULL;
+}
+
+// Does enum `enum_name` declare a variant called `variant`?
+//
+// Used to recognise the UNDERSCORE constructor spelling `MyRes_Ok(42)`, which is
+// already the C symbol and must not be prefixed again (it produced
+// `MyRes_MyRes_Ok` -> "call to undeclared function", after passing `wyn check`).
+// A name test alone is not enough: an ordinary function called `MyRes_helper`
+// also starts with "MyRes_", and stripping the prefix there would emit a call to
+// a symbol that does not exist. The variant must really be declared.
+//
+// Walks the main program AND every loaded module, like the checker's
+// find_enum_for_bare_variant, so an enum imported from a module is found too.
+bool wyn_enum_declares_variant(const char* enum_name, const char* variant) {
+    // Defined further down in this file; declared here so the helper can sit
+    // beside wyn_collection_c_type / wyn_ffi_ptr_c_type rather than far from them.
+    extern Program* current_program;
+    if (!current_program || !enum_name || !variant) return false;
+    Program* progs[64]; int np = 0;
+    progs[np++] = current_program;
+    extern int get_module_count(void);
+    extern Program* get_module_at(int index);
+    int mc = get_module_count();
+    for (int m = 0; m < mc && np < 64; m++) {
+        Program* mod = get_module_at(m);
+        if (mod) progs[np++] = mod;
+    }
+    size_t enl = strlen(enum_name), vnl = strlen(variant);
+    for (int p = 0; p < np; p++) {
+        Program* prog = progs[p];
+        for (int i = 0; i < prog->count; i++) {
+            Stmt* st = prog->stmts[i];
+            if (st->type == STMT_EXPORT && st->export.stmt &&
+                st->export.stmt->type == STMT_ENUM) st = st->export.stmt;
+            if (st->type != STMT_ENUM) continue;
+            if (st->enum_decl.name.length != (int)enl ||
+                memcmp(st->enum_decl.name.start, enum_name, enl) != 0) continue;
+            for (int vi = 0; vi < st->enum_decl.variant_count; vi++) {
+                Token v = st->enum_decl.variants[vi];
+                if (v.length == (int)vnl && memcmp(v.start, variant, vnl) == 0) return true;
+            }
+        }
+    }
+    return false;
+}
 
 // Map an `extern fn` C type expression to the C type emitted in the prototype.
 // `is_return` distinguishes a string return (`char*`, caller may own) from a
@@ -527,6 +604,166 @@ static void clear_module_functions() {
     module_function_count = 0;
 }
 
+// Is `fn_name` declared `extern fn` by module `mod_name` (or, when mod_name is
+// NULL, by ANY loaded module)?
+//
+// A module's own functions are emitted with a module prefix so two modules can
+// each define `parse`. An `extern fn` is the opposite case: it names a symbol
+// that already exists in a C library, so the prefix must NOT be applied - there
+// is no `lowlib_Thing_do` in libthing, only `Thing_do`.
+//
+// Getting this wrong produced a declaration and a call that disagreed:
+//     extern void Thing_do(long long, long long, long long);   // right
+//     lowlib_Thing_do(1, 2, 3);                                // wrong
+// which failed to link, or reported "conflicting types" when some other symbol
+// happened to match. Either way a Wyn module could not wrap a C function, which
+// is precisely what an FFI package is for.
+// If module `mod_name` declares `pub fn fn_name` returning a STRUCT, give back the
+// struct's type name; otherwise NULL.
+//
+// lookup_module_fn_return_type() cannot answer this: it is a hardcoded table of
+// stdlib builtins (Crypto_sha256 -> string, ...) in types.c, so a user module's
+// functions are simply absent from it. Without this, `var p = shapes.make(3, 4)`
+// fell through every branch to the `long long` default while the function
+// correctly returned `shapes_Point`, and the C compiler reported "initializing
+// 'long long' with an expression of incompatible type".
+// The declared return type NAME of a module's `extern fn` or `pub fn`, as written
+// in the source ("string", "float", "int", ...), or NULL if not found.
+//
+// lookup_module_fn_return_type() cannot answer this either: it is a hardcoded
+// table of stdlib builtins in types.c, so a package's own functions are absent.
+// The consequence was a silent wrong answer, which is the worst failure class:
+//
+//     println(gui.Win_backend_name())   // "sdl3"       - direct call, fine
+//     var s = gui.Win_backend_name()
+//     println(s)                        // 4370151551   - the POINTER, as decimal
+//
+// The direct call worked because the call site emits the C function's own return
+// type; only the VARIABLE fell back to `long long`, so a `const char*` was stored
+// in an integer and printed as one. Nothing failed and the exit code was 0.
+const char* get_module_fn_builtin_return(const char* mod_name, const char* fn_name) {
+    if (!fn_name) return NULL;
+    extern int get_module_count(void);
+    extern void* get_module_entry_at(int);
+    typedef struct { char* name; Program* ast; } ModuleEntry;
+    int n = get_module_count();
+    for (int m = 0; m < n; m++) {
+        ModuleEntry* mod = (ModuleEntry*)get_module_entry_at(m);
+        if (!mod || !mod->ast) continue;
+        if (mod_name) {
+            const char* a = module_to_c_ident(mod->name);
+            const char* b = module_to_c_ident(mod_name);
+            if (!a || !b || strcmp(a, b) != 0) continue;
+        }
+        for (int i = 0; i < mod->ast->count; i++) {
+            Stmt* s = mod->ast->stmts[i];
+            if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+            Expr* rt = NULL;
+            char nm[256];
+            if (s->type == STMT_EXTERN) {
+                token_to_cstr(nm, sizeof(nm), s->extern_fn.name);
+                rt = s->extern_fn.return_type;
+            } else if (s->type == STMT_FN) {
+                token_to_cstr(nm, sizeof(nm), s->fn.name);
+                rt = s->fn.return_type;
+            } else continue;
+            if (strcmp(nm, fn_name) != 0) continue;
+            if (!rt) return NULL;
+            // An ARRAY return type `[T]` is EXPR_ARRAY (the parser stores the element
+            // type at elements[0]), not EXPR_IDENT - so this returned NULL for it and
+            // the caller's fallback chain defaulted to int. `xs = m.many()` then made
+            // `xs.len()` fail with "Unknown method 'len' for type 'int'" while
+            // `wyn check` reported no errors, i.e. the checker was permissive and only
+            // codegen disagreed.
+            //
+            // This is what kept 22 parallel array columns and 52 one-line accessors
+            // alive in WynCanvas: with `-> [Layer]` unusable across a module boundary,
+            // the data model had to be columns of scalars instead of an array of
+            // structs.
+            // Report the ELEMENT type too, not just "array". Returning a bare "array"
+            // typed the variable as WynArray but lost what it holds, and for `[string]`
+            // that turned a compile error into a SILENT WRONG ANSWER - `xs[1]` printed
+            // 0 instead of "b", because the element was read as a long long. A louder
+            // failure becoming a quieter one is a regression even when more programs
+            // compile, so the element spelling is carried through.
+            if (rt->type == EXPR_ARRAY) {
+                if (rt->array.count == 1 && rt->array.elements[0] &&
+                    rt->array.elements[0]->type == EXPR_IDENT) {
+                    static char abuf[80];
+                    char ebuf[64];
+                    token_to_cstr(ebuf, sizeof(ebuf), rt->array.elements[0]->token);
+                    snprintf(abuf, sizeof(abuf), "array:%s", ebuf);
+                    return abuf;
+                }
+                return "array";
+            }
+            if (rt->type != EXPR_IDENT) return NULL;
+            static char rbuf[64];
+            token_to_cstr(rbuf, sizeof(rbuf), rt->token);
+            return rbuf;
+        }
+    }
+    return NULL;
+}
+
+const char* get_module_fn_struct_return(const char* mod_name, const char* fn_name) {
+    if (!fn_name) return NULL;
+    extern int get_module_count(void);
+    extern void* get_module_entry_at(int);
+    extern int is_known_struct(const char*);
+    typedef struct { char* name; Program* ast; } ModuleEntry;
+    int n = get_module_count();
+    for (int m = 0; m < n; m++) {
+        ModuleEntry* mod = (ModuleEntry*)get_module_entry_at(m);
+        if (!mod || !mod->ast) continue;
+        if (mod_name) {
+            const char* a = module_to_c_ident(mod->name);
+            const char* b = module_to_c_ident(mod_name);
+            if (!a || !b || strcmp(a, b) != 0) continue;
+        }
+        for (int i = 0; i < mod->ast->count; i++) {
+            Stmt* s = mod->ast->stmts[i];
+            if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+            if (s->type != STMT_FN) continue;
+            char nm[256]; token_to_cstr(nm, sizeof(nm), s->fn.name);
+            if (strcmp(nm, fn_name) != 0) continue;
+            Expr* rt = s->fn.return_type;
+            if (!rt || rt->type != EXPR_IDENT) return NULL;
+            static char sbuf[128];
+            token_to_cstr(sbuf, sizeof(sbuf), rt->token);
+            return is_known_struct(sbuf) ? sbuf : NULL;
+        }
+    }
+    return NULL;
+}
+
+bool is_module_extern_fn(const char* mod_name, const char* fn_name) {
+    if (!fn_name) return false;
+    extern int get_module_count(void);
+    extern void* get_module_entry_at(int);
+    typedef struct { char* name; Program* ast; } ModuleEntry;
+    int n = get_module_count();
+    for (int m = 0; m < n; m++) {
+        ModuleEntry* mod = (ModuleEntry*)get_module_entry_at(m);
+        if (!mod || !mod->ast) continue;
+        // Compare on the C identifier form, so "lib/utils" matches "lib_utils"
+        // however the caller spelled it.
+        if (mod_name) {
+            const char* a = module_to_c_ident(mod->name);
+            const char* b = module_to_c_ident(mod_name);
+            if (!a || !b || strcmp(a, b) != 0) continue;
+        }
+        for (int i = 0; i < mod->ast->count; i++) {
+            Stmt* s = mod->ast->stmts[i];
+            if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+            if (s->type != STMT_EXTERN) continue;
+            char nm[256]; token_to_cstr(nm, sizeof(nm), s->extern_fn.name);
+            if (strcmp(nm, fn_name) == 0) return true;
+        }
+    }
+    return false;
+}
+
 static void register_parameter_mut(const char* name, bool is_mut) {
     ensure_param_cap();
     current_param_mut[current_param_count] = is_mut;
@@ -586,6 +823,15 @@ int is_known_array_var(const char* name) {
     }
     return 0;
 }
+// This list is keyed by NAME only and is consulted to OVERRIDE the checker's type
+// at method dispatch, so it has to be per-function: without this reset, a `var out`
+// that is an array in one function made a `var out = ""` string in a LATER function
+// dispatch out.len() to array_len(const char*) - a hard C compile error. Same leak,
+// and same fix, as reset_float_vars.
+void reset_array_vars(void) {
+    for (int i = 0; i < array_var_count; i++) free(array_var_names[i]);
+    array_var_count = 0;
+}
 
 // String content array tracking - arrays whose elements are strings (growable)
 static char** str_array_var_names = NULL;
@@ -599,6 +845,25 @@ static int int_array_var_cap = 0;
 void register_int_array_var(const char* name) {
     WYN_ENSURE_CAP(int_array_var_names, int_array_var_count, int_array_var_cap);
     int_array_var_names[int_array_var_count++] = strdup(name);
+}
+// Forget the [int]-array locals at a function boundary, exactly as
+// reset_array_vars / reset_float_vars / reset_sb_vars do for their tables.
+//
+// This table is keyed on the variable NAME only and is consulted to pick the C
+// representation (WynIntArray vs WynArray) and the matching accessors. Without a
+// reset it accumulated every [int] local in the translation unit, so
+//
+//     fn a() { var xs: [int] = [1,2,3]; xs.len() }
+//     fn b() { var xs = ["a","b"];      xs.len() }
+//
+// made b()'s STRING array emit WynIntArray code: "initializing 'WynArray' with
+// an expression of incompatible type 'WynIntArray'", surfacing as a bare
+// "internal codegen error". Order-dependent -- swap the two functions and it
+// compiles. Same leak and same fix as the three tables that already reset; this
+// is the fourth of that family to bite.
+void reset_int_array_vars(void) {
+    for (int i = 0; i < int_array_var_count; i++) free(int_array_var_names[i]);
+    int_array_var_count = 0;
 }
 int is_int_array_var(const char* name) {
     for (int i = 0; i < int_array_var_count; i++) {
@@ -682,6 +947,37 @@ static int string_var_count = 0;
 static int string_var_cap = 0;
 static int string_var_scope_depth = 0;
 
+// Module-level string GLOBALS, tracked separately from the per-function list above.
+//
+// They need different lifetimes: a global must be recognised as a string in EVERY
+// function (so `g = concat(...)` releases the old value instead of leaking it), while a
+// local must be forgotten at the function boundary (or a `var f` holding a string in
+// one function makes a `var f` holding a float in another emit string
+// reference-counting, which does not compile).
+//
+// A single list cannot do both. Keeping "everything registered before the first
+// function body" across the reset looks equivalent and is not: a local declared in the
+// first-emitted function is below that mark too, so it survives and poisons every
+// later same-named local. That was a real regression - it broke wyncanvas/src/ui.wyn,
+// whose set_folded has a string `var f` 220 lines above a float `var f`.
+static char** string_global_names = NULL;
+static int string_global_count = 0;
+static int string_global_cap = 0;
+
+void register_string_global(const char* name) {
+    if (!name || !name[0]) return;
+    for (int i = 0; i < string_global_count; i++)
+        if (strcmp(string_global_names[i], name) == 0) return;
+    WYN_ENSURE_CAP(string_global_names, string_global_count, string_global_cap);
+    string_global_names[string_global_count++] = strdup(name);
+}
+
+int is_string_global(const char* name) {
+    for (int i = 0; i < string_global_count; i++)
+        if (strcmp(string_global_names[i], name) == 0) return 1;
+    return 0;
+}
+
 // Scope stack: tracks string_var_count at each scope entry for block-scoped release (growable)
 static int* scope_var_count_stack = NULL;
 static int scope_stack_top = 0;
@@ -698,6 +994,11 @@ void pop_string_scope_and_release(void) {
     FILE* out = codegen_get_output();
     if (out) {
         for (int i = saved; i < string_var_count; i++) {
+            // A BORROWED local (`var v = xs[i]`) never took a reference, so releasing it
+            // at scope exit decrements someone else's count. Skip it - the array it
+            // points into owns the value and frees it in its own time.
+            extern int is_borrowed_string_local(const char*);
+            if (is_borrowed_string_local(string_var_names[i])) continue;
             char _cn[288];
             fprintf(out, "wyn_rc_release(%s); ", emit_c_var_name(_cn, sizeof _cn, string_var_names[i]));
         }
@@ -875,7 +1176,10 @@ void register_releasable_string_var(const char* name) {
 int is_string_var(const char* name) {
     for (int i = 0; i < string_var_count; i++)
         if (strcmp(string_var_names[i], name) == 0) return 1;
-    return 0;
+    // A module-level string global counts too, in every function. A LOCAL of the same
+    // name shadows it and is found by the loop above first, so this cannot make a
+    // float local look like a string.
+    return is_string_global(name);
 }
 void unregister_string_var(const char* name) {
     for (int i = 0; i < string_var_count; i++) {
@@ -960,6 +1264,21 @@ int is_borrowed_string_local(const char* name) {
 void reset_borrowed_string_locals(void) {
     for (int i = 0; i < borrowed_string_local_count; i++) free(borrowed_string_locals[i]);
     borrowed_string_local_count = 0;
+}
+
+// A borrow ENDS when the var is assigned a value of its own: from that point it holds a
+// retained reference and behaves like any owned local. Needed because the first
+// assignment over a borrow must skip the release-old (the callee never owned the
+// borrowed value) while every LATER assignment must perform it, or the retained value
+// leaks. Without this the two cases could not be told apart by name alone.
+void unregister_borrowed_string_local(const char* name) {
+    for (int i = 0; i < borrowed_string_local_count; i++) {
+        if (strcmp(borrowed_string_locals[i], name) == 0) {
+            free(borrowed_string_locals[i]);
+            borrowed_string_locals[i] = borrowed_string_locals[--borrowed_string_local_count];
+            return;
+        }
+    }
 }
 
 // True while emitting the body of a function whose Wyn return type is `string`
@@ -1157,6 +1476,98 @@ int function_can_inline(const char* name) {
 // (`f: T?`), return the concrete C Option family name (e.g. "OptionInt",
 // "OptionAddr") in `out`; return 1 on match, 0 otherwise. Used to coerce a bare
 // Some(..)/None field initializer to the exact family the field's type names.
+// Is `field_name` of `struct_name` declared as a `string`?
+//
+// Needed by the struct-init emitter: a string field initialised from a BORROWED
+// pointer - an array element, which array_get_str returns without copying - dangles
+// as soon as that array is released. In a loop that reassigns the array each
+// iteration, every struct built earlier ends up with an empty field, silently and at
+// exit 0. So the emitter copies such a value, and this answers "is this field a
+// string" so it only copies where it matters.
+int wyn_struct_field_is_string(const char* struct_name, const char* field_name) {
+    extern Program* current_program;
+    if (!current_program || !struct_name || !field_name) return 0;
+    for (int i = 0; i < current_program->count; i++) {
+        Stmt* s = current_program->stmts[i];
+        if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+        if (s->type != STMT_STRUCT) continue;
+        if ((int)strlen(struct_name) != s->struct_decl.name.length ||
+            memcmp(struct_name, s->struct_decl.name.start, s->struct_decl.name.length) != 0) continue;
+        for (int f = 0; f < s->struct_decl.field_count; f++) {
+            if ((int)strlen(field_name) != s->struct_decl.fields[f].length ||
+                memcmp(field_name, s->struct_decl.fields[f].start, s->struct_decl.fields[f].length) != 0) continue;
+            Expr* ft = s->struct_decl.field_types[f];
+            if (ft && ft->type == EXPR_IDENT && ft->token.length == 6 &&
+                memcmp(ft->token.start, "string", 6) == 0) return 1;
+            return 0;
+        }
+        return 0;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// THE Option-family authority.
+//
+// `T?` lowers to a concrete C family, and the mapping from T to that family was
+// re-derived independently at ~12 sites (fn return type, its forward declaration,
+// param type, its forward declaration, local var annotation, struct field decl,
+// struct-literal field, the ctor for Some()/None, the match temp, current_fn_return_kind,
+// …). Every one of them open-coded the same if-chain, so adding a payload kind meant
+// finding and fixing all twelve — and missing one produced a C type mismatch between two
+// halves of the same program ("conflicting types for 'get'", "returning 'OptionInt' from
+// a function with incompatible result type 'OptionShape'"). That is exactly how the
+// data-carrying-enum case stayed broken: seven of the twelve were not enough.
+//
+// wyn_option_family() is the single authority. Give it the Wyn payload type NAME and it
+// returns the C family name, and via out params the payload's C type and whether the
+// payload is a Wyn string. It also registers a monomorphic family when one is needed, so
+// callers cannot forget that step.
+//
+//   int/…    -> OptionInt     (payload `long long`)
+//   string   -> OptionString  (payload `const char*`, is_str = 1)
+//   float    -> OptionFloat   (payload `double`)
+//   bool     -> OptionBool    (payload `bool`)
+//   <Struct> -> Option<Name>  (payload is the struct, by value)   [registered]
+//   <Enum>   -> OptionInt     when PLAIN (an enum is an int in C)
+//            -> Option<Name>  when DATA-carrying (it is a C struct) [registered]
+//
+// Returns a pointer to a static buffer. `payload_cty_out`/`is_str_out` may be NULL.
+/* Both are defined further down in this file; the authority needs them here. */
+void register_option_struct(const char* struct_name);
+int is_data_enum_type(const char* name);
+const char* wyn_option_family(const char* payload_name,
+                              const char** payload_cty_out, int* is_str_out) {
+    static char fam[128];
+    const char* cty = "long long";
+    int is_str = 0;
+    if (strcmp(payload_name, "string") == 0)      { snprintf(fam, sizeof(fam), "OptionString"); cty = "const char*"; is_str = 1; }
+    else if (strcmp(payload_name, "float") == 0)  { snprintf(fam, sizeof(fam), "OptionFloat");  cty = "double"; }
+    else if (strcmp(payload_name, "bool") == 0)   { snprintf(fam, sizeof(fam), "OptionBool");   cty = "bool"; }
+    else if (strcmp(payload_name, "int") == 0)    { snprintf(fam, sizeof(fam), "OptionInt"); }
+    else {
+        extern int is_known_struct(const char*);
+        extern int is_enum_type(const char*);
+        // A user struct, or a DATA-carrying enum: both are C structs, so both get the
+        // monomorphic per-name family with the payload stored by value.
+        if (is_known_struct(payload_name) ||
+            (is_enum_type(payload_name) && is_data_enum_type(payload_name))) {
+            register_option_struct(payload_name);
+            snprintf(fam, sizeof(fam), "Option%s", payload_name);
+            cty = payload_name;
+        }
+        // A PLAIN enum is an int in C, so it shares the builtin OptionInt family.
+        else if (is_enum_type(payload_name)) snprintf(fam, sizeof(fam), "OptionInt");
+        // Unknown name (e.g. a type from a module this pass cannot see): keep the
+        // historical by-name struct guess rather than silently becoming an int.
+        else { register_option_struct(payload_name);
+               snprintf(fam, sizeof(fam), "Option%s", payload_name); cty = payload_name; }
+    }
+    if (payload_cty_out) *payload_cty_out = cty;
+    if (is_str_out) *is_str_out = is_str;
+    return fam;
+}
+
 int get_struct_field_option_family(const char* struct_name, const char* field_name,
                                    char* out, size_t outsz) {
     extern Program* current_program;
@@ -1186,17 +1597,42 @@ int get_struct_field_option_family(const char* struct_name, const char* field_na
             }
             if (!inner || inner->type != EXPR_IDENT) return 0;
             Token t = inner->token;
-            if (t.length == 3 && memcmp(t.start, "int", 3) == 0) snprintf(out, outsz, "OptionInt");
-            else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) snprintf(out, outsz, "OptionString");
-            else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) snprintf(out, outsz, "OptionFloat");
-            else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) snprintf(out, outsz, "OptionBool");
-            else { char _stn[96]; snprintf(_stn, sizeof(_stn), "%.*s", t.length, t.start);
-                   snprintf(out, outsz, "Option%s", _stn); }
+            // Struct-literal field family -> THE authority, so a bare `f: Some(x)` /
+            // `f: None` lowers to the same family the field is DECLARED with.
+            { char _stn[96]; snprintf(_stn, sizeof(_stn), "%.*s", t.length, t.start);
+              snprintf(out, outsz, "%s", wyn_option_family(_stn, NULL, NULL)); }
             return 1;
         }
         return 0;
     }
     return 0;
+}
+
+// Does struct `struct_name` declare field `field_name` with a FUNCTION type
+// (`on_click: fn() -> void`)? Returns the field's type expression so the caller
+// can read the parameter/return types, or NULL.
+//
+// Same shape as get_struct_field_option_family above, and for the same reason:
+// the checker's struct_type.field_count is 0 for the objects reaching these code
+// paths, so the AST declaration in current_program is the only reliable source.
+Expr* get_struct_field_fn_type(const char* struct_name, const char* field_name) {
+    extern Program* current_program;
+    if (!current_program || !struct_name || !field_name) return NULL;
+    for (int i = 0; i < current_program->count; i++) {
+        Stmt* s = current_program->stmts[i];
+        if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+        if (s->type != STMT_STRUCT) continue;
+        if ((int)strlen(struct_name) != s->struct_decl.name.length ||
+            memcmp(struct_name, s->struct_decl.name.start, s->struct_decl.name.length) != 0) continue;
+        for (int f = 0; f < s->struct_decl.field_count; f++) {
+            if ((int)strlen(field_name) != s->struct_decl.fields[f].length ||
+                memcmp(field_name, s->struct_decl.fields[f].start, s->struct_decl.fields[f].length) != 0) continue;
+            Expr* ft = s->struct_decl.field_types[f];
+            return (ft && ft->type == EXPR_FN_TYPE) ? ft : NULL;
+        }
+        return NULL;
+    }
+    return NULL;
 }
 
 static char** sb_var_names = NULL;
@@ -1205,6 +1641,15 @@ static int sb_var_cap = 0;
 static void register_sb_var(const char* name) {
     WYN_ENSURE_CAP(sb_var_names, sb_var_count, sb_var_cap);
     sb_var_names[sb_var_count++] = strdup(name);
+}
+// Per-function, for the same reason as reset_float_vars / reset_array_vars: this table
+// is keyed by NAME and overrides the checker at dispatch. Leaked, a StringBuilder
+// named `buf` in one function made a STRING `buf` in a later function answer
+// buf.len() from the builder (0) instead of the string - a silently WRONG answer,
+// which is worse than the array table's hard compile error.
+void reset_sb_vars(void) {
+    for (int i = 0; i < sb_var_count; i++) free(sb_var_names[i]);
+    sb_var_count = 0;
 }
 
 static char** float_var_names = NULL;
@@ -1219,6 +1664,18 @@ int is_known_float_var(const char* name) {
         if (strcmp(float_var_names[i], name) == 0) return 1;
     }
     return 0;
+}
+// Float tracking is keyed on the NAME only, so it must not outlive the function
+// that registered it. Without this reset the table accumulated every float local
+// in the program, and any LATER local sharing that name was dispatched as a
+// float wherever it was used - a `var t = some_string` in one function failed
+// with "Unknown method 'len' for type 'float'" because an unrelated function
+// earlier in the file had a `var t = some_float`. Both functions were correct;
+// only their variable names collided. Reset alongside the string/array/hashmap
+// scopes, which are per-function for exactly this reason.
+void reset_float_vars(void) {
+    for (int i = 0; i < float_var_count; i++) free(float_var_names[i]);
+    float_var_count = 0;
 }
 int is_known_sb_var(const char* name) {
     for (int i = 0; i < sb_var_count; i++) {
@@ -1316,6 +1773,80 @@ static int lambda_id_counter = 0;
 static int lambda_ref_counter = 0;
 static bool in_return_lambda = false;
 Program* current_program = NULL;
+
+// Does this struct/impl method take `mut self`?
+//
+// The call site needs to know, because a mut receiver is passed by POINTER: the
+// definition emits `Counter_bump(Counter *self)` so the call must emit
+// `Counter_bump(&c)`. Previously nothing asked the question and the call passed
+// the struct by value, so every mutation went to a copy and was discarded --
+// silently, since the parser recorded the modifier and the checker honoured it.
+//
+// Searches both `struct T { fn ... }` bodies and `impl T { ... }` blocks, in the
+// same order and by the same matching as lookup_struct_method_return_type above.
+bool struct_method_takes_mut_self(const char* struct_name, const char* method_name) {
+    if (!current_program || !struct_name || !method_name) return false;
+    size_t sn_len = strlen(struct_name), mn_len = strlen(method_name);
+    for (int i = 0; i < current_program->count; i++) {
+        Stmt* st = current_program->stmts[i];
+        FnStmt** methods = NULL; int method_count = 0;
+        if (st->type == STMT_STRUCT) {
+            if (st->struct_decl.name.length != (int)sn_len ||
+                memcmp(st->struct_decl.name.start, struct_name, sn_len) != 0) continue;
+            methods = st->struct_decl.methods; method_count = st->struct_decl.method_count;
+        } else if (st->type == STMT_IMPL) {
+            if (st->impl.type_name.length != (int)sn_len ||
+                memcmp(st->impl.type_name.start, struct_name, sn_len) != 0) continue;
+            methods = st->impl.methods; method_count = st->impl.method_count;
+        } else {
+            continue;
+        }
+        for (int j = 0; j < method_count; j++) {
+            FnStmt* m = methods[j];
+            if (!m || m->name.length != (int)mn_len ||
+                memcmp(m->name.start, method_name, mn_len) != 0) continue;
+            // The receiver is parameter 0 and is spelled `self`.
+            if (m->param_count > 0 && m->param_mutable && m->param_mutable[0] &&
+                m->params[0].length == 4 && memcmp(m->params[0].start, "self", 4) == 0) {
+                return true;
+            }
+            return false;
+        }
+    }
+    return false;
+}
+
+// Does the FREE FUNCTION `fn_name` declare parameter `idx` as `mut`?
+//
+// The free-function counterpart of struct_method_takes_mut_self above, and it exists for
+// exactly the same reason: a `mut` parameter is passed by POINTER, so
+//
+//     fn bump(mut s: S) { s.n = s.n + 1 }
+//     bump(s)
+//
+// emits `void bump(S *s)` but the call emitted `bump(s)` -- the struct by value. Unlike the
+// method case (where the mismatch silently mutated a copy) a struct argument makes the C
+// compiler reject it outright:
+//   "passing 'S' to parameter of incompatible type 'S *'; take the address with &"
+// so `mut` on a struct parameter of a free function was unusable. The METHOD form
+// (`impl S { fn bump(mut self) }`) worked, which is why this went unnoticed.
+//
+// Returns false for an unknown function or index, so a caller that cannot resolve the
+// callee keeps its existing by-value behaviour.
+bool fn_param_is_mut(const char* fn_name, int idx) {
+    if (!current_program || !fn_name || idx < 0) return false;
+    size_t fl = strlen(fn_name);
+    for (int i = 0; i < current_program->count; i++) {
+        Stmt* st = current_program->stmts[i];
+        if (st->type == STMT_EXPORT && st->export.stmt) st = st->export.stmt;
+        if (st->type != STMT_FN) continue;
+        if (st->fn.name.length != (int)fl ||
+            memcmp(st->fn.name.start, fn_name, fl) != 0) continue;
+        if (idx >= st->fn.param_count || !st->fn.param_mutable) return false;
+        return st->fn.param_mutable[idx];
+    }
+    return false;
+}
 
 // Look up a struct method's return type string ("float", "string", "int", etc.)
 const char* lookup_struct_method_return_type(const char* struct_name, const char* method_name) {
@@ -1574,9 +2105,18 @@ static void pop_scope() {
 }
 
 static void track_var_with_type(const char* name, int len, const char* type) {
-    // Safety check: ensure scope_depth is valid
+    // A var tracked at file scope (scope_depth 0) is a no-op: module-level vars are
+    // not scope-tracked for cleanup, so there is nothing to record and nothing wrong.
+    // This is reached on ordinary programs - five times building WynCanvas's ui.wyn -
+    // so the diagnostic must NOT print on a clean build. It is a codegen-internal
+    // note, gated behind WYN_DEBUG like the other ones, not a warning a user can act
+    // on. (Was printed unconditionally to stderr, which put "WARNING: ..." lines in
+    // the output of a successful compile.)
     if (scope_depth == 0) {
-        fprintf(stderr, "WARNING: track_var_with_type called with scope_depth=0\n");
+        if (getenv("WYN_DEBUG")) {
+            fprintf(stderr, "WYN_DEBUG: track_var_with_type at file scope (no-op): %.*s\n",
+                    len, name);
+        }
         return;
     }
 
@@ -1743,6 +2283,24 @@ static bool in_async_function = false;
 // Use slim header for release builds (40% faster execution)
 static bool use_slim_runtime = false;
 void codegen_set_slim_runtime(bool slim) { use_slim_runtime = slim; }
+
+// LIBRARY MODE (--shared / --python / --node).
+//
+// A small function body (<= 5 statements) is normally emitted
+// `__attribute__((hot)) static inline`, which is a pure speed heuristic for an
+// EXECUTABLE. In a shared library it is a correctness bug: `static` gives the symbol
+// internal linkage, so it is absent from the .dylib/.so and ctypes cannot find it.
+// Both examples in the Python guide (`add`, `factorial`) are under the threshold, so
+// the documented quickstart could never have worked.
+//
+// This flag is consulted at the two places that decide the qualifier
+// (codegen_stmt.c and codegen_program.c). It is deliberately a codegen-wide switch
+// rather than a per-function annotation: which functions a caller will reach through
+// the FFI is not knowable here, so in library mode every user function must keep
+// external linkage.
+static bool library_mode = false;
+void codegen_set_library_mode(bool lib) { library_mode = lib; }
+bool codegen_in_library_mode(void) { return library_mode; }
 void codegen_c_header() {
     if (use_slim_runtime) {
         emit("#include \"wyn_runtime_slim.h\"\n\n");
@@ -1853,6 +2411,28 @@ int is_registered_option_struct(const char* struct_name) {
     return 0;
 }
 
+// Registry of user-struct names that appear inside a string interpolation, so
+// codegen emits a __wyn_str_<Name> stringifier for exactly those (PLAN_v1.21 S1).
+// Populated by the CHECKER, which is the only pass that necessarily visits every
+// expression AND has its type resolved - emitting a helper for every struct
+// instead put a dead static function in every program that declares one and
+// changed 4 golden-C snapshots for programs that never interpolate a struct.
+static char** interp_structs = NULL;
+static int interp_struct_count = 0;
+static int interp_struct_cap = 0;
+void register_interpolated_struct(const char* struct_name) {
+    if (!struct_name || !*struct_name) return;
+    for (int i = 0; i < interp_struct_count; i++)
+        if (strcmp(interp_structs[i], struct_name) == 0) return;
+    WYN_ENSURE_CAP(interp_structs, interp_struct_count, interp_struct_cap);
+    interp_structs[interp_struct_count++] = strdup(struct_name);
+}
+int is_interpolated_struct(const char* struct_name) {
+    for (int i = 0; i < interp_struct_count; i++)
+        if (strcmp(interp_structs[i], struct_name) == 0) return 1;
+    return 0;
+}
+
 // Registry for monomorphic Result<Ok, Err> families with a user-struct OK payload
 // (e.g. `ResultUser` for `Result<User, string>`, `ResultPoint_Fail` for
 // `Result<Point, Fail>`). Mirrors the Option<Struct> registry above: populated as
@@ -1957,16 +2537,48 @@ const char* result_family_err_suffix(Expr* return_type) {
     return buf;
 }
 
-// Given ok (a known struct) + err Wyn type names from a `Result<Ok, Err>`
-// annotation, compute the monomorphic family name, register it (with concrete
-// ok/err C types), and return the family name in a static buffer. NULL only when
-// inputs are unusable.
+// Map an ok type-name token (from a `Result<Ok, Err>` annotation) to its C type
+// and its family-name tag. `ok_name` is the Wyn type name ("int"/"string"/"float"/
+// "bool"/<Struct>). A primitive's tag is capitalized so the family name matches the
+// builtin spelling ("int" -> tag "Int", C type `long long`); a struct is its own
+// tag AND its own C type. Returns 1 when the ok payload is a primitive, else 0.
+int result_ok_c_type(const char* ok_name, char* cty_out, size_t cty_sz,
+                     char* tag_out, size_t tag_sz) {
+    if (strcmp(ok_name, "int") == 0) {
+        snprintf(cty_out, cty_sz, "long long"); snprintf(tag_out, tag_sz, "Int");    return 1;
+    }
+    if (strcmp(ok_name, "string") == 0) {
+        snprintf(cty_out, cty_sz, "const char*"); snprintf(tag_out, tag_sz, "String"); return 1;
+    }
+    if (strcmp(ok_name, "float") == 0) {
+        snprintf(cty_out, cty_sz, "double"); snprintf(tag_out, tag_sz, "Float");     return 1;
+    }
+    if (strcmp(ok_name, "bool") == 0) {
+        snprintf(cty_out, cty_sz, "bool"); snprintf(tag_out, tag_sz, "Bool");        return 1;
+    }
+    snprintf(cty_out, cty_sz, "%s", ok_name); snprintf(tag_out, tag_sz, "%s", ok_name);
+    return 0;
+}
+
+// Given ok + err Wyn type names from a `Result<Ok, Err>` annotation, compute the
+// monomorphic family name, register it (with concrete ok/err C types), and return
+// the family name in a static buffer.
+//
+// The ok payload may be a struct (the #181/#182 case) OR a primitive: a primitive
+// ok used to collapse unconditionally to the builtin ResultInt/ResultString/...
+// family, whose `err_value` is hardcoded `const char*`, which silently DISCARDED a
+// non-string E (`Result<int,Fail>` emitted uncompilable C; `Result<int,int>` stored
+// a scalar in a `const char*` and segfaulted). Only a primitive ok paired with a
+// `string` err is a genuine builtin - that one keeps the runtime-header family and
+// is deliberately NOT registered, so it is never re-emitted.
 const char* register_result_family_for_types(const char* ok_name, const char* err_name) {
     static char fam[192];
-    char err_cty[96]; char suffix[96];
+    char ok_cty[96]; char ok_tag[96]; char err_cty[96]; char suffix[96];
+    int ok_is_prim = result_ok_c_type(ok_name, ok_cty, sizeof(ok_cty), ok_tag, sizeof(ok_tag));
     int err_is_str = result_err_c_type(err_name, err_cty, sizeof(err_cty), suffix, sizeof(suffix));
-    snprintf(fam, sizeof(fam), "Result%s%s", ok_name, suffix);
-    register_result_family(fam, ok_name, err_cty, err_is_str);
+    snprintf(fam, sizeof(fam), "Result%s%s", ok_tag, suffix);
+    if (!(ok_is_prim && err_is_str))
+        register_result_family(fam, ok_cty, err_cty, err_is_str);
     return fam;
 }
 
@@ -2015,6 +2627,43 @@ int is_tuple_var(const char* var) {
 // inside a method body) can be popped without leaking into later functions.
 int wyn_struct_var_depth(void) { return struct_var_count; }
 void wyn_struct_var_truncate(int depth) { if (depth >= 0 && depth <= struct_var_count) struct_var_count = depth; }
+// The enum-var map has the SAME name-keyed, unscoped hazard: a `var x = make()` whose
+// call returns a data-enum registers `x -> EnumName` globally, so a later same-named
+// parameter of another type has its `.to_string()` lowered to EnumName_toString. Scoped
+// per function alongside the struct-var map.
+int wyn_enum_var_depth(void) { return enum_var_count; }
+void wyn_enum_var_truncate(int depth) { if (depth >= 0 && depth <= enum_var_count) enum_var_count = depth; }
+// is_known_type_name - a struct OR enum declared in the program being compiled.
+//
+// Types are emitted with their BARE name (`typedef enum {...} Kind;`), but a function
+// signature inside an imported module is emitted with the module prefix. That is correct
+// for the FUNCTION name and wrong for a TYPE name, so the prefixing sites consult this to
+// exempt types.
+//
+// It used to consult is_known_struct() alone, so an imported module's ENUM produced
+// signatures referring to `lib_Kind` while the typedef was `Kind`:
+//
+//     static const char* lib_kname(lib_Kind k);   // error: unknown type name 'lib_Kind'
+//
+// wyn check passed and the C compiler rejected every signature mentioning the enum, so an
+// imported module could define an enum or use one in a signature, but not both. Found
+// writing a game whose module exposed `enum Kind` in its API.
+int is_known_type_name(const char* name) {
+    if (!current_program) return 0;
+    int len = (int)strlen(name);
+    for (int i = 0; i < current_program->count; i++) {
+        Stmt* st = current_program->stmts[i];
+        if (st->type == STMT_STRUCT) {
+            StructStmt* s = &st->struct_decl;
+            if (s->name.length == len && memcmp(s->name.start, name, len) == 0) return 1;
+        } else if (st->type == STMT_ENUM) {
+            Token n = st->enum_decl.name;
+            if (n.length == len && memcmp(n.start, name, len) == 0) return 1;
+        }
+    }
+    return 0;
+}
+
 int is_known_struct(const char* name) {
     if (!current_program) return 0;
     for (int i = 0; i < current_program->count; i++) {
@@ -2140,6 +2789,20 @@ const char* get_enum_var_type(const char* var) {
         if (strcmp(enum_var_map[i].var_name, var) == 0) return enum_var_map[i].enum_name;
     }
     return NULL;
+}
+// Drop the MOST RECENT record for `var`. Used by scoped binders (an Option match arm's
+// payload) that must not stay visible after their arm: leaving one registered makes a later
+// same-named variable of a different type resolve to this enum. Removes only the newest
+// entry so an outer variable of the same name that was shadowed stays intact -- which is
+// also why get_enum_var_type scans backwards.
+void unregister_enum_var(const char* var) {
+    for (int i = enum_var_count - 1; i >= 0; i--) {
+        if (strcmp(enum_var_map[i].var_name, var) == 0) {
+            for (int j = i; j < enum_var_count - 1; j++) enum_var_map[j] = enum_var_map[j + 1];
+            enum_var_count--;
+            return;
+        }
+    }
 }
 
 // Map a checker-assigned Type* to its C type spelling for a variable declaration.

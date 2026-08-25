@@ -44,7 +44,6 @@ static int __wyn_eq_User(User __l, User __r) {
     return 1;
 }
 
-// Lambda functions (defined before use)
 __attribute__((hot)) static inline OptionUser find(long long id);
 long long wyn_main();
 

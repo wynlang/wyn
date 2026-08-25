@@ -3,8 +3,14 @@ name: CI
 on:
   push:
     branches: [main, dev]
+  # Gate PRs into BOTH branches. `dev` is the integration branch that ordinary
+  # fix/feature PRs target; `main` represents the last release and only moves via
+  # a dev -> main PR at release time. Without `dev` here, every integration PR
+  # would land ungated and `main` would inherit whatever accumulated - which is
+  # the same "a check that cannot fail reads as coverage" failure that let ~80
+  # test files go ungated before v1.20.0.
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 jobs:
   build-and-test:
@@ -125,14 +131,33 @@ jobs:
       #
       # This does NOT weaken the gate's purpose. It exists to catch a spin that
       # burns a CORE: the bugs it was built for measured ~2000ms/2000ms and 357%
-      # CPU. An 80ms ceiling still fails anything in that class by a factor of ~25,
-      # while no longer failing the build on a noisy neighbour.
+      # CPU. A ceiling in this range still fails anything in that class by more than
+      # an order of magnitude, while no longer failing the build on a noisy
+      # neighbour.
+      #
+      # RAISED AGAIN 80 -> 150ms (2026-08-25), because 80 was still under the
+      # observed contention floor and the gate was intermittently red. Two data
+      # points, both case (c), the awaited future_get path:
+      #   * the readings recorded above already reached 96ms - ABOVE the 80 budget
+      #     that was set in the same change, so it was marginal the day it landed;
+      #   * a v1.21 release-candidate run failed at 87ms with samples 87/88/81, i.e.
+      #     consistently just over rather than a single spike.
+      # PLAN_v1.21 §8 lists this budget as a known open item for exactly this
+      # reason, and an intermittently-red gate blocks a dev -> main PR while
+      # teaching everyone to re-run it, which is how a gate stops being read.
+      #
+      # 150ms keeps ~13x margin against the core-burning class this exists to catch
+      # (2000ms), and the LOCAL default stays 50ms - a dev machine has no
+      # co-tenants and should still hold itself to the tight number. If a future
+      # reading approaches 150 on an idle runner, that IS a regression: fix the
+      # root cause (future_get's 2ms backstop poll, per ROADMAP) rather than raise
+      # this again.
       - name: Idle-CPU gate - waiting programs must not spin (Unix)
         if: runner.os != 'Windows'
         run: bash scripts/integration_gates.sh idle-cpu
         shell: bash
         env:
-          WYN_IDLE_CPU_BUDGET_MS: 80
+          WYN_IDLE_CPU_BUDGET_MS: 150
 
       - name: Run suite on the coroutine async substrate (W8, Unix)
         # WYN_ASYNC_CORO=1 runs awaited spawn/await_all/parallel as coroutines on
@@ -142,15 +167,15 @@ jobs:
         run: WYN_ASYNC_CORO=1 bash tests/run_bdd.sh
         shell: bash
 
-      # NOTE: this runner reads tests/test_list.txt, which is NOT checked in, so
-      # it currently reports "0 pass, 0 fail" and gates nothing. Kept because it
-      # is harmless and becomes useful the moment the list is regenerated; do not
-      # mistake its green tick for coverage. Real coverage is `make test` +
-      # the stdlib step above.
-      - name: Run legacy parallel runner (Unix, currently a no-op)
-        if: runner.os != 'Windows'
-        run: bash tests/run_tests_parallel.sh
-        shell: bash
+      # tests/run_tests_parallel.sh USED TO RUN HERE and has been removed, not moved.
+      # It reads a tests/test_list.txt that is not checked in, so it selected zero
+      # tests and reported "0 pass, 0 fail" with exit 0 on every run - a green tick
+      # that proved nothing, in a job whose whole purpose is proof. The script now
+      # refuses (exit 2) rather than reporting a vacuous success, so it cannot be a
+      # CI step until someone regenerates the list; keeping it here would simply
+      # redden all four Build & Test checks. Real coverage is `make test` plus the
+      # stdlib and WYN_ASYNC_CORO steps above. Run the script by hand if you
+      # regenerate the list.
 
       - name: Run test suite (Windows)
         if: runner.os == 'Windows'

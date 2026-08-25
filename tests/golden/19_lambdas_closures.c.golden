@@ -4,6 +4,12 @@
 #endif
 
 
+// Lambda prototypes (bodies follow the function declarations)
+long long __lambda_1(long long, long long);
+long long __lambda_2(long long);
+
+long long wyn_main();
+
 // Lambda functions
 long long __lambda_1(long long a, long long b) {
     return (a + b);
@@ -16,9 +22,6 @@ long long __lambda_2(long long n) {
 }
 #undef base
 
-
-// Lambda functions (defined before use)
-long long wyn_main();
 
 /* 19_lambdas_closures.wyn:2 */ 
 #line 2 "19_lambdas_closures.wyn"

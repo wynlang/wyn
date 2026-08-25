@@ -327,4 +327,138 @@ fn main() {
 EOF
 expect_runs "read_line on an empty file does not abort" "$TMP/readempty.wyn" "0"
 
+# --- 4. Concurrent HashMap / HashSet mutation (PLAN_v1.21 §3) ---------------
+# Wyn had THREE different answers to one hazard, which the v1.20 focus group
+# called its sharpest structural inconsistency:
+#     arrays          -> runtime panic naming the remedy
+#     scalar globals  -> check-time error naming the remedy   (item 1 above)
+#     HashMap/HashSet -> NOTHING
+# A HashMap is a fixed bucket array of malloc'd Entry lists, so two writers
+# splice the same bucket head concurrently: updates are lost, and the graveyard
+# list that defers freeing overwritten string values can be corrupted, which is
+# a use-after-free at the next read. There is no rehash to race, which is why it
+# did not corrupt on every run - it corrupted on the unlucky interleaving.
+#
+# The overlap was never in doubt: the ARRAY barrier fires on this exact program
+# shape, so the tasks provably overlap; collections just had no guard to fire.
+# Both spawn flavours are covered because they use different executors
+# (fire-and-forget = coroutine scheduler, awaited = thread pool) and a guard that
+# only caught one would read as working.
+
+# A MUTATION-FLAG RACE DETECTOR FIRES PROBABILISTICALLY, so asserting it on a single
+# run is a flaky gate - and this was one. The HashSet case failed on a macOS CI runner
+# (printing its result instead of panicking) because the two tasks happened to
+# serialise: the flag only trips when two mutations genuinely overlap, and nothing
+# forces them to. Go's map race detector has the same property.
+#
+# So the assertion is "it fires within N attempts", which is the honest shape for a
+# probabilistic detector, and it FAILS only if the barrier never fires across all of
+# them. Each attempt is a fresh process, so attempts are independent. The report names
+# which attempt fired, so a gate that starts needing 7 of 8 shows up as drift rather
+# than staying silently green.
+#
+# A wrong-but-quiet run is reported on failure, because that is the interesting case:
+# it means the tasks overlapped, corrupted nothing, and produced a value anyway -
+# precisely the "lucky, not safe" state this barrier exists to end.
+RACE_ATTEMPTS="${RACE_ATTEMPTS:-8}"
+race_panics() {
+    local name="$1" file="$2" what="$3" out i saw_quiet=""
+    for i in $(seq 1 "$RACE_ATTEMPTS"); do
+        out=$(perl -e 'alarm(60); exec @ARGV' -- "$WYN" run "$file" 2>&1)
+        if echo "$out" | grep -q "concurrent $what mutation detected" &&
+           echo "$out" | grep -q "channel or Shared"; then
+            ok "$name (fired on attempt $i/$RACE_ATTEMPTS)"
+            return
+        fi
+        saw_quiet=$(echo "$out" | grep -v 'Compiled in' | tail -1)
+    done
+    bad "$name - barrier never fired in $RACE_ATTEMPTS attempts [last: $saw_quiet]"
+}
+
+cat > "$TMP/hm_race_await.wyn" <<'EOF'
+var counts: {string: int} = {}
+fn bump(base: int) -> int {
+    var i = 0
+    while i < 300 { counts.set("k${base}_${i}", i)  i = i + 1 }
+    return base
+}
+fn main() {
+    var a = spawn bump(1)
+    var b = spawn bump(2)
+    var c = spawn bump(3)
+    print(await a + await b + await c)
+}
+EOF
+race_panics "concurrent HashMap mutation panics (awaited spawn)" "$TMP/hm_race_await.wyn" "HashMap"
+
+cat > "$TMP/hm_race_ff.wyn" <<'EOF'
+var counts: {string: int} = {}
+fn bump(base: int) {
+    var i = 0
+    while i < 200 { counts.set("k${base}_${i}", i)  i = i + 1 }
+}
+fn main() {
+    var t = 0
+    while t < 8 { spawn bump(t)  t = t + 1 }
+    Time::sleep(1200)
+    print(counts.len())
+}
+EOF
+race_panics "concurrent HashMap mutation panics (fire-and-forget spawn)" "$TMP/hm_race_ff.wyn" "HashMap"
+
+cat > "$TMP/hs_race.wyn" <<'EOF'
+var seen = HashSet.new()
+fn add_many(base: int) -> int {
+    var i = 0
+    while i < 300 { HashSet.add(seen, "k${base}_${i}")  i = i + 1 }
+    return base
+}
+fn main() {
+    var a = spawn add_many(1)
+    var b = spawn add_many(2)
+    print(await a + await b)
+}
+EOF
+race_panics "concurrent HashSet mutation panics" "$TMP/hs_race.wyn" "HashSet"
+
+# The false-positive side, which is the whole risk of a mutation FLAG: the guard
+# must be invisible to ordinary single-threaded code. Heavy sequential mutation
+# through every guarded entry point, and a map written while another is read in
+# the same loop, must both run clean. An early `return` inside a mutator that
+# skipped the flag release would fail exactly here on the second mutation, which
+# is why each mutator is split into an unguarded _impl plus a guarded wrapper.
+cat > "$TMP/coll_seq.wyn" <<'EOF'
+fn main() {
+    var m = HashMap.new()
+    var i = 0
+    while i < 500 {
+        HashMap.set(m, "k${i}", "v${i}")
+        HashMap.insert_int(m, "n${i}", i)
+        i = i + 1
+    }
+    HashMap.remove(m, "k1")
+    var s = HashSet.new()
+    var j = 0
+    while j < 200 { HashSet.add(s, "s${j}")  j = j + 1 }
+    HashSet.remove(s, "s5")
+    print(HashMap.len(m))
+}
+EOF
+expect_runs "heavy sequential collection mutation does not false-panic" "$TMP/coll_seq.wyn" "999"
+
+cat > "$TMP/coll_nested.wyn" <<'EOF'
+fn main() {
+    var a = HashMap.new()
+    var b = HashMap.new()
+    var i = 0
+    while i < 100 {
+        HashMap.set(a, "k${i}", "v${i}")
+        HashMap.set(b, HashMap.get(a, "k${i}"), "x")
+        i = i + 1
+    }
+    print(HashMap.len(b))
+}
+EOF
+expect_runs "mutating one map while reading another does not false-panic" "$TMP/coll_nested.wyn" "100"
+
 echo ""; echo "race-and-io-soundness: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]

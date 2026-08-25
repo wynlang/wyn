@@ -1,0 +1,40 @@
+// Regression: a string local in one function must not retype a same-named local in
+// another. This is the guard on the fix that made string GLOBALS release their old
+// value, because the first attempt at that fix caused exactly this.
+//
+// Codegen tracks string variables by NAME to decide whether an assignment needs
+// reference-counting. The names are reset per function. Making globals survive that
+// reset by keeping "everything registered before the first function body" looks
+// equivalent and is not: a LOCAL declared in the first-emitted function sits below
+// that mark too, so it survived and poisoned every later same-named local. The float
+// `f` below then inherited the string `f`'s RC and the generated C failed with
+// "initializing 'const char *' with an expression of incompatible type 'double'".
+//
+// It broke wyncanvas/src/ui.wyn, whose set_folded has a string `var f` 220 lines above
+// a float one, and it was order-dependent - putting the float function first compiled
+// fine, so it would have been easy to "fix" by reordering and miss the cause.
+//
+// The real fix keeps globals in their OWN list, so a local always shadows.
+// EXPECT: oooo
+// EXPECT: 1.0
+g_s = ""
+g_n = 100
+
+fn uses_string() {
+    var f = g_s
+    while f.len() <= 3 { f = f + "o" }
+    g_s = f
+}
+
+fn uses_float() -> float {
+    var f = g_n.to_float() / 100.0
+    if f < 0.0 { f = 0.0 }
+    return f
+}
+
+fn main() -> int {
+    uses_string()
+    print(g_s)
+    print(uses_float())
+    return 0
+}

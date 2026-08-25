@@ -1,0 +1,77 @@
+// Regression: a METHOD CALL on a Result match-arm binding (or on one of its struct
+// fields) lost the receiver. The arm emitted the C declaration with the right type,
+// but never registered the binding in codegen's struct-var map, so method dispatch
+// could not resolve what it was called on and emitted an EMPTY argument:
+//   `print("ok ${p.msg.len()}")`  ->  `to_string()`  ->  "error: expected expression"
+// The `Result<P,string>` shape instead reported "Unknown method 'len' (no type info)"
+// followed by "Unknown method 'len' for type 'int'".
+//
+// Affected BOTH arms (Ok and Err) and both the string- and struct-err families.
+// `Option<Struct>` arms, a plain `match`, and a plain local struct all worked, which
+// is what localized this to the Result arm binding.
+//
+// EXPECT: ok len 5
+// EXPECT: err len 4
+// EXPECT: strerr len 4
+// EXPECT: method 12
+struct P {
+    msg: string
+}
+
+struct Fail {
+    msg: string
+}
+
+struct Counter {
+    n: int
+}
+
+impl Counter {
+    fn doubled(self) -> int {
+        return self.n * 2
+    }
+}
+
+fn risky(n: int) -> Result<P, Fail> {
+    if n < 0 {
+        return Err(Fail { msg: "boom" })
+    }
+    return Ok(P { msg: "hello" })
+}
+
+fn str_err(n: int) -> Result<P, string> {
+    if n < 0 {
+        return Err("nope")
+    }
+    return Ok(P { msg: "hello" })
+}
+
+fn counted(n: int) -> Result<Counter, Fail> {
+    if n < 0 {
+        return Err(Fail { msg: "boom" })
+    }
+    return Ok(Counter { n: n })
+}
+
+fn main() {
+    // Ok arm: method on a FIELD of the bound struct.
+    match risky(1) {
+        Ok(p) => print("ok len ${p.msg.len()}")
+        Err(e) => print("ok err")
+    }
+    // Err arm: method on a FIELD of the bound error struct.
+    match risky(-1) {
+        Ok(p) => print("err ok")
+        Err(e) => print("err len ${e.msg.len()}")
+    }
+    // String-err family: method on the bound string error ITSELF.
+    match str_err(-1) {
+        Ok(p) => print("strerr ok")
+        Err(e) => print("strerr len ${e.len()}")
+    }
+    // Ok arm: a struct METHOD called directly on the binding.
+    match counted(6) {
+        Ok(c) => print("method ${c.doubled()}")
+        Err(e) => print("method err")
+    }
+}

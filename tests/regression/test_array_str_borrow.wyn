@@ -1,0 +1,90 @@
+// Feature: storing one array's string element into ANOTHER array keeps it alive.
+//
+// `array_get_str` (emitted for `xs[i]`) returns a pointer INTO the source array without
+// retaining it. The two sinks that TAKE OWNERSHIP of a string - `array_push_str` and
+// indexed assignment `xs[i] = v` - stored that borrowed pointer as though it were theirs,
+// so one allocation had two owners and the source's `array_free` pulled it out from under
+// the destination:
+//
+//     for pair in ["a=x", "b=y"] {
+//         var parts = pair.split("=")
+//         names.push(parts[0])
+//     }                               // array_free(&parts) releases the element
+//
+// `names` then read as garbage - "[", "", or the loop INDEX ("0", "1") - instead of
+// "a"/"b". A silently WRONG answer with exit status 0, which is why it survived; ASan
+// reports a heap-use-after-free freed by array_free.
+//
+// It only bites HEAP elements. A literal array's elements are string constants, so
+// `out.push(src[0])` on `src = ["p","q"]` was always fine - which is why the naive
+// repro looks correct and only `split()` results (or any freshly allocated array) fail.
+//
+// THREE spellings had to be fixed, and each is a distinct code path:
+//   1. push of a direct index        `names.push(parts[0])`
+//   2. indexed assign of an index    `names[0] = parts[0]`
+//   3. either, via a LOCAL that holds a borrowed element (`var nm = parts[0]`) - the
+//      one-line-longer spelling of the same program, which is the trap in fixing only
+//      the direct forms. That local must also NOT be released at scope exit: it never
+//      took a reference, so releasing it decrements the array's count.
+//
+// Found by writing cli-tools/depgraph, where accumulating `split()` results into an
+// array is the ordinary shape, not a contrived one.
+
+fn main() -> int {
+    // 1. push of a direct index, in a loop, from a freshly split array.
+    pushed = [""]
+    for pair in ["a=x", "b=y"] {
+        var parts = pair.split("=")
+        pushed.push(parts[0])
+    }
+    println("${pushed[1]}${pushed[2]}")
+
+    // 2 + 3. indexed assignment AND a borrowed local, in the accumulate-with-counter
+    // shape that found this: element 0 is assigned, later ones pushed.
+    names = [""]
+    deps = [""]
+    var count = 0
+    for pair in ["a=x,y", "b=", "c=z"] {
+        var parts = pair.split("=")
+        var nm = parts[0]                    // borrowed local
+        var ed = ""
+        if parts.len() > 1 { ed = parts[1] }
+        if count == 0 {
+            names[0] = nm                    // indexed assign, borrowed local
+            deps[0] = ed
+        } else {
+            names.push(nm)                   // push, borrowed local
+            deps.push(ed)
+        }
+        count = count + 1
+    }
+    println("count=${count}")
+    for i in 0..count {
+        println("${names[i]}->[${deps[i]}]")
+    }
+
+    // CONTROL: the borrowed local must still be usable IN the loop, not just after.
+    // If the scope-exit release were merely deleted without the retains, this would
+    // read freed memory on the second iteration.
+    for pair in ["k=1", "m=2"] {
+        var parts = pair.split("=")
+        var k = parts[0]
+        println("k=${k}")
+    }
+
+    // CONTROL: a literal (non-heap) string array still behaves - it always did, and an
+    // over-broad fix that retained constants would be a leak rather than a UAF.
+    lits = ["p", "q"]
+    out = [""]
+    out.push(lits[0])
+    println("${out[1]}")
+    return 0
+}
+// EXPECT: ab
+// EXPECT: count=3
+// EXPECT: a->[x,y]
+// EXPECT: b->[]
+// EXPECT: c->[z]
+// EXPECT: k=k
+// EXPECT: k=m
+// EXPECT: p

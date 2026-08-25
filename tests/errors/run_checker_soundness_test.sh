@@ -35,6 +35,26 @@ expect_check_ok() {
     else bad "$name (rc=$rc) [$(echo "$out" | head -1)]"; fi
 }
 
+
+# check passes AND builds AND runs with the expected stdout. Needed because the
+# defects below are not rejections - they BUILD and print the wrong thing, so
+# asserting on the exit code alone would pass vacuously.
+expect_runs() {
+    local name="$1" file="$2" want="$3" out rc bin
+    out=$(perl -e 'alarm(20); exec @ARGV' -- "$WYN" check "$file" 2>&1); rc=$?
+    if [ $rc -ne 0 ]; then bad "$name (check rejected) [$(echo "$out" | head -1)]"; return; fi
+    out=$(perl -e 'alarm(90); exec @ARGV' -- "$WYN" build "$file" -o "${file%.wyn}.bin" 2>&1); rc=$?
+    if [ $rc -ne 0 ] || echo "$out" | grep -q "Build failed"; then
+        bad "$name (check passed but BUILD FAILED) [$(echo "$out" | grep -m1 'error:')]"; return; fi
+    # Strip CR: on Windows the program's stdout is CRLF, so a multi-line `want`
+    # compared byte-for-byte fails with output that looks IDENTICAL in the log
+    # ("want [2\nV2] got [2\nV2]"), which is a genuinely confusing way to fail.
+    out=$(perl -e 'alarm(30); exec @ARGV' -- "${file%.wyn}.bin" 2>&1 | tr -d '\r'); rc=${PIPESTATUS[0]}
+    if [ $rc -ne 0 ]; then bad "$name (ran rc=$rc) [$out]"; return; fi
+    if [ "$out" = "$want" ]; then ok "$name"
+    else bad "$name (want [$want] got [$out])"; fi
+}
+
 # --- K6: `?` only applies to a Result value ---------------------------------
 # `?` on an Option unwrapped to a ResultInt temp in codegen -> C type mismatch.
 printf 'fn g() -> int? { return 5 }\nfn f() -> int { x = g()?\n return x }\nfn main(){ print(f()) }\n' > "$TMP/k6_opt.wyn"
@@ -117,5 +137,143 @@ expect_check_ok "exhaustive bool match still ok" "$TMP/ok_bool_match.wyn"
 # A well-typed Option match (Some+None) must still pass without a wildcard.
 printf 'fn g() -> int? { return 5 }\nfn main(){ y = match g() { Some(v) => v, None => -1 }\n print(y) }\n' > "$TMP/ok_opt_match.wyn"
 expect_check_ok "exhaustive Some+None match still ok" "$TMP/ok_opt_match.wyn"
+
+# --- K12: unary '-' on a non-number ------------------------------------------
+# FOUND BY THE FUZZER, once its generator started emitting method calls on int
+# literals. `-71.to_string()` checked clean and died in the C compiler:
+#
+#     error: invalid argument type 'char *' to unary expression
+#
+# A method call binds tighter than unary minus, so that expression is
+# `-(71.to_string())` - negating a STRING. Measured across types: string, array
+# and struct operands all check-pass and fail to build, while int, float and bool
+# all build, so exactly the first three are rejected.
+#
+# Worth recording how it hid: the fuzz oracle tolerated it, because it flagged a
+# build failure only when the log matched an allowlist of four known C-error
+# phrasings and "invalid argument type" was not among them. The generator could
+# not produce the program AND the oracle would not have reported it - both halves
+# had to be fixed to surface a defect that had been reachable all along.
+printf 'fn main() {\n  println(-71.to_string())\n}\n' > "$TMP/neg_method.wyn"
+expect_check_error "negating a method-call string is rejected" "$TMP/neg_method.wyn" "cannot negate string"
+
+printf 'fn main() {\n  var s = "a"\n  println(-s)\n}\n' > "$TMP/neg_str.wyn"
+expect_check_error "negating a string variable is rejected" "$TMP/neg_str.wyn" "cannot negate string"
+
+printf 'fn main() {\n  var a = [1,2]\n  var b = -a\n  print(1)\n}\n' > "$TMP/neg_arr.wyn"
+expect_check_error "negating an array is rejected" "$TMP/neg_arr.wyn" "cannot negate"
+
+printf 'struct P { x: int }\nfn main() {\n  var p = P { x: 1 }\n  var q = -p\n  print(1)\n}\n' > "$TMP/neg_struct.wyn"
+expect_check_error "negating a struct is rejected" "$TMP/neg_struct.wyn" "cannot negate"
+
+# The diagnostic must name the fix, and the fix must actually work - the whole
+# point is that the user wanted to negate the NUMBER.
+printf 'fn main() {\n  println(-71.to_string())\n}\n' > "$TMP/neg_help.wyn"
+out=$(perl -e 'alarm(10); exec @ARGV' -- "$WYN" check "$TMP/neg_help.wyn" 2>&1)
+if echo "$out" | grep -q "(-n).to_string()"; then ok "diagnostic suggests parenthesising the number"
+else bad "diagnostic suggests parenthesising the number [$(echo "$out" | head -1)]"; fi
+
+# Over-rejection guards: every operand that legitimately negates must still pass.
+printf 'fn main() {\n  var n = 5\n  println(-n)\n  println(-5)\n  println(-n + 1)\n}\n' > "$TMP/ok_neg_int.wyn"
+expect_check_ok "negating an int still ok" "$TMP/ok_neg_int.wyn"
+printf 'fn main() {\n  var f = 1.5\n  println(-f)\n}\n' > "$TMP/ok_neg_float.wyn"
+expect_check_ok "negating a float still ok" "$TMP/ok_neg_float.wyn"
+printf 'fn main() {\n  println((-71).to_string())\n}\n' > "$TMP/ok_neg_paren.wyn"
+expect_check_ok "the suggested (-n).to_string() form is accepted" "$TMP/ok_neg_paren.wyn"
+
+# --- K13: a duplicate top-level declaration ----------------------------------
+# ALSO FOUND BY THE FUZZER - a line-duplicating mutant produced two identical
+# enum declarations. Declaring the same struct/enum/function twice checked clean
+# and then failed the C compile:
+#
+#     error: redefinition of 'E0'
+#     error: redefinition of enumerator 'E0_Some_TAG'
+#
+# i.e. the soundness rule broken by a plain copy-paste, which is exactly how it
+# happens while editing. The old allowlist oracle would have excused it too:
+# "redefinition of" was not one of its four recognised C-error phrasings.
+printf 'enum E { A, B }\nenum E { A, B }\nfn main() { println(1) }\n' > "$TMP/dup_enum.wyn"
+expect_check_error "duplicate enum is rejected" "$TMP/dup_enum.wyn" "enum 'E' is already defined"
+
+printf 'struct S { x: int }\nstruct S { x: int }\nfn main() { println(1) }\n' > "$TMP/dup_struct.wyn"
+expect_check_error "duplicate struct is rejected" "$TMP/dup_struct.wyn" "struct 'S' is already defined"
+
+printf 'fn f() -> int { return 1 }\nfn f() -> int { return 2 }\nfn main() { println(f()) }\n' > "$TMP/dup_fn.wyn"
+expect_check_error "duplicate function is rejected" "$TMP/dup_fn.wyn" "function 'f' is already defined"
+
+# The message must point at BOTH lines - "already defined" is only actionable if
+# you can find the other one.
+out=$(perl -e 'alarm(10); exec @ARGV' -- "$WYN" check "$TMP/dup_enum.wyn" 2>&1)
+if echo "$out" | grep -q "line 1"; then ok "duplicate diagnostic cites the first definition"
+else bad "duplicate diagnostic cites the first definition [$(echo "$out" | head -1)]"; fi
+
+# Over-rejection guards. Same-named things of DIFFERENT kinds are not duplicates,
+# and a struct plus its impl block is the ordinary shape.
+printf 'struct T { x: int }\nenum U { A, B }\nfn v() -> int { return 1 }\nfn main() { println(v()) }\n' > "$TMP/ok_distinct.wyn"
+expect_check_ok "distinct declarations still ok" "$TMP/ok_distinct.wyn"
+printf 'struct P { x: int }\nimpl P {\n  fn get(self) -> int { return self.x }\n}\nfn main() { var p = P { x: 3 }\n println(p.get()) }\n' > "$TMP/ok_impl.wyn"
+expect_check_ok "struct plus impl block still ok" "$TMP/ok_impl.wyn"
+
+# --- K14: assigning to a STRUCT-typed variable -------------------------------
+# FOUND BY THE FUZZER at three separate seeds. The assignment type check carried an
+# explicit `sym_inner->kind != TYPE_STRUCT` clause, so once a variable held a struct
+# it accepted ANY later assignment and only the C compiler objected:
+#
+#     m = A { n: 1 }
+#     m = 860           # wyn check: no errors
+#     -> error: assigning to 'A' from incompatible type 'int'
+#
+# Verified for int, string AND a different struct. The reverse direction (int target,
+# struct value) was ALREADY rejected and same-struct assignment is fine, so the hole
+# was exactly this one direction.
+printf 'struct A { n: int }\nfn main() {\n  m = A { n: 1 }\n  m = 860\n  println(1)\n}\n' > "$TMP/sa_int.wyn"
+expect_check_error "struct variable reassigned to int is rejected" "$TMP/sa_int.wyn" "Type mismatch in assignment"
+
+printf 'struct A { n: int }\nfn main() {\n  m = A { n: 1 }\n  m = "x"\n  println(1)\n}\n' > "$TMP/sa_str.wyn"
+expect_check_error "struct variable reassigned to string is rejected" "$TMP/sa_str.wyn" "Type mismatch in assignment"
+
+printf 'struct A { n: int }\nstruct B { s: string }\nfn main() {\n  m = A { n: 1 }\n  m = B { s: "x" }\n  println(1)\n}\n' > "$TMP/sa_other.wyn"
+expect_check_error "struct variable reassigned to a DIFFERENT struct is rejected" "$TMP/sa_other.wyn" "Type mismatch in assignment"
+
+# The fuzzer's actual shape: first assignment inside a block, conflicting one after.
+# Wyn hoists bare assignments to function scope, so these are ONE variable - which is
+# why it built a struct and then stored an int into it.
+printf 'struct S0 { flag: float }\nfn main() {\n  if 1 == 1 {\n    m = S0 { flag: 2.5 }\n    println(m.flag)\n  }\n  m = 860\n  println(m)\n}\n' > "$TMP/sa_block.wyn"
+expect_check_error "conflict across a block is rejected (hoisted variable)" "$TMP/sa_block.wyn" "Type mismatch in assignment"
+
+# Over-rejection guards. This check sits on EVERY assignment, so the accepted cases
+# matter more than the rejected ones.
+printf 'struct A { n: int }\nfn main() {\n  m = A { n: 1 }\n  m = A { n: 2 }\n  println(m.n)\n}\n' > "$TMP/ok_same_struct.wyn"
+expect_check_ok "reassigning the SAME struct type still ok" "$TMP/ok_same_struct.wyn"
+printf 'struct A { n: int }\nfn mk() -> A { return A { n: 7 } }\nfn main() {\n  m = A { n: 1 }\n  m = mk()\n  println(m.n)\n}\n' > "$TMP/ok_fn_ret.wyn"
+expect_check_ok "reassigning from a function returning that struct still ok" "$TMP/ok_fn_ret.wyn"
+printf 'fn g(y: bool) -> int? {\n  if y { return Some(3) }\n  return None\n}\nfn main() {\n  var o = g(true)\n  o = g(false)\n  match o { Some(v) => { println(v) } None => { println("n") } }\n}\n' > "$TMP/ok_opt_reassign.wyn"
+expect_check_ok "reassigning an Option (a TYPE_STRUCT family) still ok" "$TMP/ok_opt_reassign.wyn"
+
+# --- K15: a variable first assigned an INTERPOLATED string inside a block -----
+# A wrong answer at exit 0, and it BUILT: bare-assignment hoisting reads
+# init->expr_type to pick the C declaration, and the checker's EXPR_STRING_INTERP
+# case RETURNED builtin_string without ever SETTING expr_type. So the hoist fell
+# back to `long long` and println printed the string's POINTER ADDRESS:
+#
+#     if n == 1 {
+#       s = "v${n}"
+#       println(s)      # -> 4345226036
+#     }
+#
+# Same class as the input_line() defect that printed a line's address. It built
+# because `wyn build` passes -w, which suppresses the clang int-conversion
+# diagnostic that would have named it immediately. A plain string LITERAL was fine
+# (its expr_type is set elsewhere) and top level was fine, so it only appeared in a
+# conditional - which is where messages get built.
+printf 'fn main() {\n  var n = 1\n  if n == 1 {\n    s = "v${n}"\n    println(s)\n  }\n}\n' > "$TMP/ih_if.wyn"
+expect_runs "interpolation hoisted from an if keeps its string type" "$TMP/ih_if.wyn" "v1"
+printf 'fn main() {\n  var n = 1\n  if n == 0 { println(0) } else if n == 1 {\n    s = "v${n}"\n    println(s)\n  }\n}\n' > "$TMP/ih_elif.wyn"
+expect_runs "interpolation hoisted from an else-if keeps its string type" "$TMP/ih_elif.wyn" "v1"
+printf 'fn main() {\n  var n = 1\n  if n == 0 { println(0) } else {\n    s = "v${n}"\n    println(s)\n  }\n}\n' > "$TMP/ih_else.wyn"
+expect_runs "interpolation hoisted from an else keeps its string type" "$TMP/ih_else.wyn" "v1"
+# The interpolated value must still be usable AS a string, not just printable.
+printf 'fn main() {\n  var n = 2\n  if n == 2 {\n    s = "v${n}"\n    println(s.len())\n    println(s.upper())\n  }\n}\n' > "$TMP/ih_use.wyn"
+expect_runs "hoisted interpolation is a real string (len/upper)" "$TMP/ih_use.wyn" "$(printf '2\nV2')"
 
 echo ""; echo "checker-soundness: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]

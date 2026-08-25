@@ -4,6 +4,13 @@
 #endif
 
 
+// Lambda prototypes (bodies follow the function declarations)
+long long __lambda_1(long long);
+long long __lambda_2(long long);
+long long __lambda_3(long long, long long);
+
+long long wyn_main();
+
 // Lambda functions
 long long __lambda_1(long long n) {
     return (n << 1);
@@ -17,9 +24,6 @@ long long __lambda_3(long long acc, long long n) {
     return (acc + n);
 }
 
-
-// Lambda functions (defined before use)
-long long wyn_main();
 
 /* 10_map_filter_reduce.wyn:2 */ 
 #line 2 "10_map_filter_reduce.wyn"

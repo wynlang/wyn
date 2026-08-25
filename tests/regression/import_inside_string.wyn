@@ -1,0 +1,37 @@
+// Regression: the word `import` inside a STRING LITERAL is text, not an import.
+//
+// preload_imports scans raw source for "import " and tracked comments but NOT
+// strings, so any string containing the word was read as an import statement:
+//
+//   test "import finds src/mathx.wyn" { ... }   ->   tried to load module "finds"
+//
+// It printed a spurious "Module 'finds' not found" and carried on, so the damage
+// was cosmetic noise on an otherwise green build - which is exactly why it survived.
+// It stopped being cosmetic when an unresolved import became fatal: a test NAME
+// describing what it tests then failed the build. Found by that interaction, in
+// tests/module_tests/run_src_layout_test.sh.
+//
+// EXPECT: import notamodule from nowhere
+// EXPECT: single quotes too: import alsonotamodule
+// EXPECT: 3.0
+// EXPECT: import
+import math
+
+fn main() -> int {
+    // A double-quoted string mentioning import.
+    s = "import notamodule from nowhere"
+    print(s)
+
+    // A single-quoted one, and an escaped quote before the keyword, which the
+    // scanner must not mistake for the end of the string.
+    t = 'single quotes too: import alsonotamodule'
+    print(t)
+
+    // A real import still works alongside all of the above.
+    print(math.abs(-3))
+
+    // The bare word on its own, and interpolation, must both be inert.
+    u = "import"
+    print("${u}")
+    return 0
+}

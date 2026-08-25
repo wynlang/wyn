@@ -4,7 +4,6 @@
 #endif
 
 
-// Lambda functions (defined before use)
 __attribute__((hot)) static inline ResultInt parse(const char* s);
 __attribute__((hot)) static inline ResultInt run();
 long long wyn_main();
@@ -36,7 +35,7 @@ if (__match_val_1.tag == 0) {
         ({ const char* __ps = to_string(v); println(__ps); wyn_rc_release(__ps); });
     } else if (__match_val_1.tag == 1) {
         const char* e = __match_val_1.data.err_value;
-        ({ const char* __ps = to_string(e); println(__ps); wyn_rc_release(__ps); });
+        println(e);
     }
         ResultInt __match_val_2 = parse("");
 if (__match_val_2.tag == 0) {
@@ -44,7 +43,7 @@ if (__match_val_2.tag == 0) {
         ({ const char* __ps = to_string(v); println(__ps); wyn_rc_release(__ps); });
     } else if (__match_val_2.tag == 1) {
         const char* e = __match_val_2.data.err_value;
-        ({ const char* __ps = to_string(e); println(__ps); wyn_rc_release(__ps); });
+        println(e);
     }
     return 0;
 }

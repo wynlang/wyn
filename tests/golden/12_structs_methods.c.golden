@@ -18,7 +18,6 @@ static int __wyn_eq_Point(Point __l, Point __r) {
     return 1;
 }
 
-// Lambda functions (defined before use)
 long long Point_dist2(Point self) {
     return ((self.x * self.x) + (self.y * self.y));
 }

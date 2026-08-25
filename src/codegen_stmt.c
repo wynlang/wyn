@@ -99,6 +99,27 @@ static void codegen_hoist_nested_bare_assigns(Stmt** stmts, int count) {
             } else if (strcmp(ct, "WynArray") == 0) {
                 extern void register_array_var(const char*);
                 register_array_var(vn);
+            } else {
+                // A DATA-carrying enum hoisted here needs its enum type recorded, or a
+                // later `match` on it cannot resolve the enum:
+                //
+                //     v = a.unwrap()          // hoisted as `Shape v = {0};`
+                //     match v { Circle(r) => ... }
+                //
+                // emitted `OptionInt __match_opt_1 = v;` against a plain Shape. The match
+                // resolves the value's enum via get_enum_var_type(), and because the parser
+                // marks any data-carrying variant pattern with option.is_some, an
+                // unresolved binder makes the match look like an OPTION match.
+                //
+                // This pass runs BEFORE body emission, which is why the registration has to
+                // happen here: the c_type is already known ("Shape"), but the per-statement
+                // var-decl path that normally registers it never runs for a hoisted
+                // declaration -- it was demoted to a plain assignment just below. Probing
+                // showed get_enum_var_type(v) returning NULL on the first lookup and Shape
+                // on a later one, which is the signature of exactly that gap.
+                extern int is_data_enum_type(const char*);
+                extern void register_enum_var(const char*, const char*);
+                if (is_data_enum_type(ct)) register_enum_var(vn, ct);
             }
         }
         // Demote the nested declaration to a plain assignment in place.
@@ -169,6 +190,10 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     { extern void reset_shadow_vars(void); reset_shadow_vars(); }
     { extern void reset_string_vars(void); reset_string_vars(); }
     { extern void reset_borrowed_string_locals(void); reset_borrowed_string_locals(); }
+    { extern void reset_float_vars(void); reset_float_vars(); }
+    { extern void reset_array_vars(void); reset_array_vars(); }
+    { extern void reset_int_array_vars(void); reset_int_array_vars(); }
+    { extern void reset_sb_vars(void); reset_sb_vars(); }
     { extern void reset_array_scope(void); reset_array_scope(); } { extern void reset_hashmap_scope(void); reset_hashmap_scope(); } { extern void reset_closure_scope(void); reset_closure_scope(); }
     for (int i = 0; i < fn_stmt->fn.param_count; i++) {
         char param_name[256]; token_to_cstr(param_name, sizeof(param_name), fn_stmt->fn.params[i]);
@@ -238,12 +263,35 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
                 return_type = "WynHashMap*";
             } else if (rt.length == 7 && memcmp(rt.start, "HashSet", 7) == 0) {
                 return_type = "WynHashSet*";
+            } else if (wyn_ffi_ptr_c_type(rt)) {
+                // `-> ptr` / `-> cstr`: a builtin, NOT a user struct, so it must
+                // never take the module prefix (that emitted `<module>_ptr`).
+                return_type = wyn_ffi_ptr_c_type(rt);
             } else {
-                // Custom struct type - add module prefix if in module context
-                if (current_module_prefix) {
-                    snprintf(custom_return_type, 128, "%s_%.*s", current_module_prefix, rt.length, rt.start);
+                // Custom struct type - add the module prefix ONLY when the struct
+                // is not already declared in the program being emitted.
+                //
+                // A struct DECLARED IN A MODULE is merged into the target program
+                // (merge_module_exports) and its typedef is emitted UNPREFIXED, as
+                // `Box`. Prefixing the prototype's spelling anyway produced
+                // `m_Box`, a type nothing declares - so a module whose `pub fn`
+                // returned its own struct failed to compile with
+                // "unknown type name 'm_Box'", while the identical code in a
+                // single file was fine.
+                //
+                // is_known_type_name answers exactly the right question: it looks in
+                // the merged program, which is where the typedef will come from, and it
+                // covers ENUMS as well as structs - consulting is_known_struct alone
+                // prefixed an imported module's enum type (`lib_Kind`) whose typedef was
+                // emitted bare (`Kind`). A name it does not know keeps the prefix, which
+                // is what the generic/inner-type paths rely on.
+                extern int is_known_type_name(const char* name);
+                char _rt_name[128];
+                token_to_cstr(_rt_name, sizeof(_rt_name), rt);
+                if (current_module_prefix && !is_known_type_name(_rt_name)) {
+                    snprintf(custom_return_type, 128, "%s_%s", current_module_prefix, _rt_name);
                 } else {
-                    token_to_cstr(custom_return_type, sizeof(custom_return_type), rt);
+                    snprintf(custom_return_type, 128, "%s", _rt_name);
                 }
                 return_type = custom_return_type;
             }
@@ -266,6 +314,22 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
         // Check if parameter has a type expression
         if (fn_stmt->fn.param_types && fn_stmt->fn.param_types[i]) {
             Expr* param_type = fn_stmt->fn.param_types[i];
+            // An ARRAY annotation (`xs: [int]`) is an EXPR_ARRAY node, not an EXPR_IDENT,
+            // so it never entered the type ladder below and fell through to the
+            // `long long` default. A module function taking an array therefore emitted
+            //
+            //     long long lib_total(long long xs);
+            //
+            // and every call site failed with "passing 'WynArray' to parameter of
+            // incompatible type 'long long'". The bare token "array" WAS handled, which is
+            // why this looked covered - but nothing spells the type that way.
+            //
+            // Handled before the EXPR_IDENT branch because the element type does not
+            // change the C type: every Wyn array is a WynArray regardless of element.
+            if (param_type->type == EXPR_ARRAY) {
+                emit("WynArray ");
+                goto emit_param_name;
+            }
             if (param_type->type == EXPR_IDENT) {
                 // Convert Wyn types to C types
                 Token type_token = param_type->token;
@@ -285,16 +349,24 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
                     c_type = "WynHashMap*";
                 } else if (type_token.length == 7 && memcmp(type_token.start, "HashSet", 7) == 0) {
                     c_type = "WynHashSet*";
-                } else if (type_token.length == 3 && memcmp(type_token.start, "ptr", 3) == 0) {
-                    c_type = "void*";   // FFI opaque pointer passed through a user fn
-                } else if (type_token.length == 4 && memcmp(type_token.start, "cstr", 4) == 0) {
-                    c_type = "char*";   // raw C string
+                } else if (wyn_ffi_ptr_c_type(type_token)) {
+                    // FFI opaque pointer / raw C string passed through a user fn.
+                    // This was the ONE site that got `ptr` right; the other three
+                    // now share the same authority instead of re-deriving it.
+                    c_type = wyn_ffi_ptr_c_type(type_token);
                 } else {
-                    // Custom struct type - add module prefix if in module context
-                    if (current_module_prefix) {
-                        emit("%s_%.*s ", current_module_prefix, type_token.length, type_token.start);
+                    // Custom struct type - prefix ONLY when the struct is not
+                    // declared in the program being emitted. Same rule as the
+                    // prototype emitter; without it the DEFINITION said `m_Point`
+                    // while its own prototype said `Point`.
+                    extern int is_known_struct(const char* nm);
+                    extern int is_known_type_name(const char* nm);
+                    char _tn[128];
+                    token_to_cstr(_tn, sizeof(_tn), type_token);
+                    if (current_module_prefix && !is_known_type_name(_tn)) {
+                        emit("%s_%s ", current_module_prefix, _tn);
                     } else {
-                        emit("%.*s ", type_token.length, type_token.start);
+                        emit("%s ", _tn);
                     }
                     goto emit_param_name;
                 }
@@ -318,7 +390,23 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     }
     emit(") ");
     
-    // Body
+    // Body.
+    //
+    // Save and restore the struct-var inference stack around it. That table is keyed by
+    // variable NAME, not scope, so a `var x = Ui{...}` in THIS module function otherwise
+    // left `x -> Ui` registered for every file compiled afterwards - including the
+    // importer, where a totally unrelated `int` parameter named `x` then lowered
+    // `x.to_string()` to `Ui.toString`. The float variant of the same leak silently
+    // produced WRONG VALUES. It forced a naming discipline across the gui, wyncanvas and
+    // wynjs codebases that no error pointed at (see gui/src/widgets.wyn:1636). The same
+    // save/restore is already done for method and impl bodies; module functions and
+    // top-level functions were the ones still leaking.
+    extern int wyn_struct_var_depth(void);
+    extern void wyn_struct_var_truncate(int);
+    extern int wyn_enum_var_depth(void);
+    extern void wyn_enum_var_truncate(int);
+    int _mp_sv_depth = wyn_struct_var_depth();
+    int _mp_ev_depth = wyn_enum_var_depth();
     if (fn_stmt->fn.body) {
         if (fn_stmt->fn.body->type == STMT_BLOCK) {
             emit("{\n");
@@ -328,6 +416,8 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
             codegen_stmt(fn_stmt->fn.body);
         }
     }
+    wyn_struct_var_truncate(_mp_sv_depth);
+    wyn_enum_var_truncate(_mp_ev_depth);
     emit("\n");
 
     // Restore context
@@ -484,26 +574,41 @@ void codegen_stmt(Stmt* stmt) {
             const char* c_type = "long long";
             bool is_already_const = false;  // Track if type already has const
             bool needs_arc_management = false;
+            // The C name this declaration actually emits, decided once by the
+            // branches below and reused by anything downstream that must name
+            // the new variable (currently the string RC retain).
+            //
+            // It is NOT the same as the Wyn source token: it carries the
+            // wynfn_ prefix for a name that collides with a C keyword, and a
+            // __N suffix when this declaration shadows an enclosing one. The
+            // retain used to print the raw source token, so for a shadowed
+            // string var it emitted `wyn_rc_retain(key)` in the window between
+            // `#undef key` and `#define key key__1` -- where the bare name
+            // refers to the OUTER key (already released) rather than to the new
+            // key__1, which then never got retained at all.
+            //
+            // It must be filled by assignment from the deciding branch, not
+            // recomputed later: get_shadow_suffix() MUTATES (it advances the
+            // shadow counter on every hit), so asking it a second time returns
+            // __2 for a variable that was declared as __1.
+            // Sized to hold the widest _vn (512) plus a "__%d" suffix, so the
+            // shadow form cannot be truncated. gcc's -Wformat-truncation flags a
+            // 512-byte target here; clang does not, which is precisely the class
+            // of difference that has to be caught on both toolchains.
+            char _decl_cname[512 + 16]; _decl_cname[0] = '\0';
             
             // Check for explicit type annotation first
             if (stmt->var.type) {
                 if (stmt->var.type->type == EXPR_OPTIONAL_TYPE) {
                     // Handle optional type annotation like int?, string?
                     Expr* inner = stmt->var.type->optional_type.inner_type;
-                    if (inner && inner->type == EXPR_IDENT && inner->token.length == 3 && memcmp(inner->token.start, "int", 3) == 0) {
-                        c_type = "OptionInt";
-                    } else if (inner && inner->type == EXPR_IDENT && inner->token.length == 6 && memcmp(inner->token.start, "string", 6) == 0) {
-                        c_type = "OptionString";
-                    } else if (inner && inner->type == EXPR_IDENT && inner->token.length == 5 && memcmp(inner->token.start, "float", 5) == 0) {
-                        c_type = "OptionFloat";
-                    } else if (inner && inner->type == EXPR_IDENT && inner->token.length == 4 && memcmp(inner->token.start, "bool", 4) == 0) {
-                        c_type = "OptionBool";
-                    } else if (inner && inner->type == EXPR_IDENT &&
-                               ({ char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner->token);
-                                  extern int is_known_struct(const char*); is_known_struct(_stn); })) {
-                        // `var v: Struct? = ...` -> the Option<Struct> family.
+                    if (inner && inner->type == EXPR_IDENT) {
+                        // `var v: T? = ...` -> the concrete family, via THE authority, so
+                        // the declaration agrees with the initializer's Some()/None.
                         char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner->token);
-                        static char _osann[128]; snprintf(_osann, sizeof(_osann), "Option%s", _stn);
+                        extern const char* wyn_option_family(const char*, const char**, int*);
+                        static char _osann[128];
+                        snprintf(_osann, sizeof(_osann), "%s", wyn_option_family(_stn, NULL, NULL));
                         c_type = _osann;
                     } else {
                         c_type = "WynOptional*";
@@ -650,6 +755,18 @@ void codegen_stmt(Stmt* stmt) {
                         register_struct_var(_dvn, _sa_buf);
                     } else if (_elt && _elt->kind == TYPE_STRING) {
                         c_type = "const char*"; is_already_const = true;
+                        // `var v = xs[i]` binds a BORROWED pointer: array_get_str reads
+                        // into the array without retaining. If the source array is then
+                        // freed (a `split()` result at scope exit is the common case)
+                        // while `v` - or anything `v` was stored into - is still live,
+                        // that is a use-after-free. Mark the var so the sinks that TAKE
+                        // ownership of a string retain it. See
+                        // wyn_string_expr_is_borrowed in codegen_expr.c.
+                        {
+                            char _bvn[256]; token_to_cstr(_bvn, sizeof(_bvn), stmt->var.name);
+                            extern void register_borrowed_string_local(const char*);
+                            register_borrowed_string_local(_bvn);
+                        }
                     } else if (_elt && _elt->kind == TYPE_FLOAT) {
                         c_type = "double";
                     } else if (_elt && _elt->kind == TYPE_BOOL) {
@@ -818,6 +935,7 @@ void codegen_stmt(Stmt* stmt) {
                             // Static constructor: Type.new() - object is the type name itself
                             if (!_stype) {
                                 extern int is_known_struct(const char*);
+                extern int is_known_type_name(const char*);
                                 if (is_known_struct(_vn3)) _stype = _vn3;
                             }
                         }
@@ -838,7 +956,8 @@ void codegen_stmt(Stmt* stmt) {
                             char _fn[64]; token_to_cstr(_fn, sizeof(_fn), _obj->call.callee->token);
                             extern const char* get_function_return_type(const char*);
                             const char* _frt = get_function_return_type(_fn);
-                            if (_frt) { extern int is_known_struct(const char*); if (is_known_struct(_frt)) _stype = _frt; }
+                            if (_frt) { extern int is_known_struct(const char*);
+                extern int is_known_type_name(const char*); if (is_known_struct(_frt)) _stype = _frt; }
                         }
                         if (!_stype && _obj->type == EXPR_METHOD_CALL) {
                             // Walk deeper - function call at root of chain
@@ -848,7 +967,8 @@ void codegen_stmt(Stmt* stmt) {
                                 char _fn[64]; token_to_cstr(_fn, sizeof(_fn), _walk->call.callee->token);
                                 extern const char* get_function_return_type(const char*);
                                 const char* _frt = get_function_return_type(_fn);
-                                if (_frt) { extern int is_known_struct(const char*); if (is_known_struct(_frt)) _stype = _frt; }
+                                if (_frt) { extern int is_known_struct(const char*);
+                extern int is_known_type_name(const char*); if (is_known_struct(_frt)) _stype = _frt; }
                             }
                         }
                         if (_stype) {
@@ -857,6 +977,7 @@ void codegen_stmt(Stmt* stmt) {
                             const char* _ret = lookup_struct_method_return_type(_stype, _mn3);
                             if (_ret) {
                                 extern int is_known_struct(const char*);
+                extern int is_known_type_name(const char*);
                                 if (is_known_struct(_ret)) {
                                     c_type = _ret;
                                     char _vn4[256]; token_to_cstr(_vn4, sizeof(_vn4), stmt->var.name);
@@ -896,6 +1017,74 @@ void codegen_stmt(Stmt* stmt) {
                                 if (strcmp(_rt, "array") == 0) { c_type = "WynArray"; goto var_type_done; }
                                 if (strcmp(_rt, "bool") == 0) { c_type = "bool"; goto var_type_done; }
                                 if (strcmp(_rt, "float") == 0) { c_type = "double"; goto var_type_done; }
+                            }
+                            // Same lookup, but from the module's OWN declarations -
+                            // its `extern fn`s and `pub fn`s, which the stdlib table
+                            // above knows nothing about. Without this, binding a
+                            // string-returning package function to a variable stored
+                            // a `const char*` in a `long long` and printed the
+                            // pointer as a decimal integer, at exit 0.
+                            {
+                                extern const char* get_module_fn_builtin_return(const char*, const char*);
+                                char _bfn[128];
+                                snprintf(_bfn, sizeof(_bfn), "%.*s",
+                                         stmt->var.init->method_call.method.length,
+                                         stmt->var.init->method_call.method.start);
+                                const char* _br = get_module_fn_builtin_return(_on, _bfn);
+                                if (_br) {
+                                    if (strcmp(_br, "string") == 0) { c_type = "const char*"; is_already_const = true; goto var_type_done; }
+                                    if (strcmp(_br, "float") == 0)  { c_type = "double"; goto var_type_done; }
+                                    if (strcmp(_br, "bool") == 0)   { c_type = "bool"; goto var_type_done; }
+                                    if (strcmp(_br, "int") == 0)    { c_type = "long long"; goto var_type_done; }
+                                    // `-> [T]`. The call site already emitted a WynArray;
+                                    // without this the DECLARATION stayed `long long`, so
+                                    // the two disagreed: "initializing 'long long' with an
+                                    // expression of incompatible type 'WynArray'". Both
+                                    // halves of the type decision have to agree, which is
+                                    // the recurring shape of this defect family.
+                                    if (strncmp(_br, "array", 5) == 0)  {
+                                        c_type = "WynArray";
+                                        char _vn2[256]; token_to_cstr(_vn2, sizeof(_vn2), stmt->var.name);
+                                        extern void register_array_var(const char*);
+                                        register_array_var(_vn2);
+                                        // Carry the ELEMENT type ("array:string"), or a
+                                        // `[string]` element reads back as a long long
+                                        // and prints 0 instead of its text - silently.
+                                        if (strcmp(_br, "array:string") == 0) {
+                                            extern void register_str_array_var(const char*);
+                                            register_str_array_var(_vn2);
+                                        }
+                                        goto var_type_done;
+                                    }
+                                }
+                            }
+                            // A module pub fn returning a STRUCT. `_rt` is NULL here for
+                            // any USER module: lookup_module_fn_return_type is a
+                            // hardcoded table of stdlib builtins (types.c ~:1054), so it
+                            // never knows about `shapes.make`. Ask the module AST.
+                            //
+                            // Without this the declaration fell through to the
+                            // `long long` default while the function correctly returned
+                            // `shapes_Point`: "initializing 'long long' with an
+                            // expression of incompatible type", then "member reference
+                            // base type 'long long' is not a structure" on `p.x`.
+                            {
+                                extern const char* get_module_fn_struct_return(const char*, const char*);
+                                char _mfn[128];
+                                snprintf(_mfn, sizeof(_mfn), "%.*s",
+                                         stmt->var.init->method_call.method.length,
+                                         stmt->var.init->method_call.method.start);
+                                const char* _sr = get_module_fn_struct_return(_on, _mfn);
+                                if (_sr) {
+                                    // Use the module-qualified spelling, which is what
+                                    // the function's own signature uses.
+                                    const char* _q = resolve_module_alias(_sr);
+                                    c_type = (_q && strcmp(_q, _sr) != 0) ? _q : _sr;
+                                    { char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                                      extern void register_struct_var(const char*, const char*);
+                                      register_struct_var(_vn, _sr); }
+                                    goto var_type_done;
+                                }
                             }
                         }
                     }
@@ -1187,11 +1376,22 @@ void codegen_stmt(Stmt* stmt) {
                             // Replace dot with underscore: point.Point → point_Point
                             *dot = '_';
                             snprintf(struct_type, 128, "%s", temp_name);
-                        } else if (current_module_prefix) {
-                            // Add module prefix if in module context
-                            snprintf(struct_type, 128, "%s_%.*s", current_module_prefix, type_name.length, type_name.start);
                         } else {
-                            token_to_cstr(struct_type, sizeof(struct_type), type_name);
+                            // Prefix ONLY when the struct is not declared in the
+                            // program being emitted - the same rule the prototype,
+                            // definition and literal sites now share. Without it a
+                            // local declared as `var r = Row { ... }` inside a
+                            // module emitted `m_Row r = ((Row){...})`: the
+                            // declaration and its own initialiser disagreed.
+                            extern int is_known_struct(const char* nm);
+                    extern int is_known_type_name(const char* nm);
+                            char _sn[128];
+                            token_to_cstr(_sn, sizeof(_sn), type_name);
+                            if (current_module_prefix && !is_known_type_name(_sn)) {
+                                snprintf(struct_type, 128, "%s_%s", current_module_prefix, _sn);
+                            } else {
+                                snprintf(struct_type, 128, "%s", _sn);
+                            }
                         }
                     }
                     c_type = struct_type;
@@ -1969,9 +2169,11 @@ void codegen_stmt(Stmt* stmt) {
                 if (_ss > 0) {
                     emit("#undef %s\n", _vn);
                     emit("const %s %s__%d = ", c_type, _vn, _ss);
+                    snprintf(_decl_cname, sizeof(_decl_cname), "%s__%d", _vn, _ss);
                     // We'll add the #define after the initializer
                 } else {
                     emit("const %s %s = ", c_type, _vn);
+                    snprintf(_decl_cname, sizeof(_decl_cname), "%s", _vn);
                 }
             } else {
                 char _vn[512]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
@@ -1983,8 +2185,10 @@ void codegen_stmt(Stmt* stmt) {
                 if (_ss > 0) {
                     emit("#undef %s\n", _vn);
                     emit("%s %s__%d = ", c_type, _vn, _ss);
+                    snprintf(_decl_cname, sizeof(_decl_cname), "%s__%d", _vn, _ss);
                 } else {
                     emit("%s %s = ", c_type, _vn);
+                    snprintf(_decl_cname, sizeof(_decl_cname), "%s", _vn);
                 }
             }
             
@@ -2045,13 +2249,49 @@ void codegen_stmt(Stmt* stmt) {
                     for (int _ri = 0; _ri < string_var_releasable_count; _ri++) {
                         if (strcmp(string_var_releasable[_ri], _ivn) == 0) { _source_is_outer = true; break; }
                     }
+                    // A module-level GLOBAL is never safe to move from, however
+                    // dead it looks here. var_is_live_after only reads the
+                    // current block, so it cannot see the assignment in another
+                    // function that will overwrite (and release) the global --
+                    // and after a move this copy holds the only pointer while
+                    // owning no reference:
+                    //
+                    //     r = retval        // move: no retain emitted
+                    //     retval = ""       // releases the buffer r points at
+                    //     return r          // dangling
+                    //
+                    // which returned an empty string rather than crashing, i.e.
+                    // silently. This is why registering string globals looked
+                    // like it "corrupted the interpreter": WynJS hands values
+                    // between functions through exactly this pattern (its
+                    // retval/throwval/tv globals), and 9 of 33 suites failed
+                    // with `undefined`.
+                    if (!_source_is_outer) {
+                        extern int is_string_global(const char*);
+                        if (is_string_global(_ivn)) _source_is_outer = true;
+                    }
                     if (!_source_is_outer && current_block_stmts && !var_is_live_after(current_block_stmts, current_block_count, current_stmt_idx, _ivn)) {
                         // Move: source is dead after this in same scope
                         extern void unregister_string_var(const char*);
                         unregister_string_var(_ivn);
                     } else {
-                        // Copy: source is still live or from outer scope - retain
-                        emit("wyn_rc_retain(%.*s);\n", stmt->var.name.length, stmt->var.name.start);
+                        // Copy: source is still live or from outer scope - retain.
+                        // Retain the name this declaration actually emitted, not
+                        // the raw source token: at this point a shadowing
+                        // declaration has emitted `#undef key` but not yet
+                        // `#define key key__1`, so the bare token names the
+                        // OUTER key -- which has already been released -- while
+                        // the new key__1 goes unretained.
+                        if (_decl_cname[0]) {
+                            emit("wyn_rc_retain(%s);\n", _decl_cname);
+                        } else {
+                            // No branch above decided a name (e.g. an
+                            // already-const declaration). Fall back to the
+                            // source token, as before. Token.start is not
+                            // NUL-terminated, hence %.*s.
+                            emit("wyn_rc_retain(%.*s);\n",
+                                 stmt->var.name.length, stmt->var.name.start);
+                        }
                     }
                 }
             }
@@ -2660,16 +2900,27 @@ void codegen_stmt(Stmt* stmt) {
                             if (stmt->fn.return_type->call.arg_count > 0 &&
                                 stmt->fn.return_type->call.args[0]->type == EXPR_IDENT) {
                                 Token inner = stmt->fn.return_type->call.args[0]->token;
-                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
-                                    return_type = "ResultString";
-                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)
-                                    return_type = "ResultFloat";
-                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
-                                    return_type = "ResultBool";
+                                extern const char* result_family_err_suffix(Expr*);
+                                // The emitted C signature must name the SAME family the
+                                // body's Ok()/Err() lower to (see current_fn_return_kind
+                                // below): for a primitive ok payload that is the builtin
+                                // only when E is a string, else `Result<Tag>_<ErrTag>`.
+                                const char* _rsuf = result_family_err_suffix(stmt->fn.return_type);
+                                const char* _rtag = NULL;
+                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)     _rtag = "String";
+                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0) _rtag = "Float";
+                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)  _rtag = "Bool";
+                                else if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)   _rtag = "Int";
+                                if (_rtag) {
+                                    snprintf(return_type_buf, sizeof(return_type_buf), "Result%s%s",
+                                             _rtag, _rsuf);
+                                    return_type = return_type_buf;
+                                }
                                 else {
                                     // `Result<Struct, E>` -> monomorphic Result<Struct,E>.
                                     char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner);
                                     extern int is_known_struct(const char*);
+                extern int is_known_type_name(const char*);
                                     extern const char* result_family_err_suffix(Expr*);
                                     if (is_known_struct(_stn)) {
                                         snprintf(return_type_buf, sizeof(return_type_buf), "Result%s%s",
@@ -2715,19 +2966,15 @@ void codegen_stmt(Stmt* stmt) {
                     Expr* inner = stmt->fn.return_type->optional_type.inner_type;
                     if (inner && inner->type == EXPR_IDENT) {
                         Token t = inner->token;
-                        if (t.length == 3 && memcmp(t.start, "int", 3) == 0) return_type = "OptionInt";
-                        else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return_type = "OptionString";
-                        else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) return_type = "OptionFloat";
-                        else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) return_type = "OptionBool";
-                        else {
-                            // `-> Struct?` -> the monomorphic Option<Struct> family.
-                            char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
-                            extern int is_known_struct(const char*);
-                            if (is_known_struct(_stn)) {
-                                static char _ostrt[128];
-                                snprintf(_ostrt, sizeof(_ostrt), "Option%s", _stn);
-                                return_type = _ostrt;
-                            } else return_type = "WynOptional*";
+                        // `-> T?` -> the concrete Option family, via THE authority
+                        // (wyn_option_family) so this signature cannot drift from the
+                        // forward declaration, the body's Some()/None, or the match temp.
+                        {
+                            char _ptn[96]; token_to_cstr(_ptn, sizeof(_ptn), t);
+                            extern const char* wyn_option_family(const char*, const char**, int*);
+                            static char _oft[128];
+                            snprintf(_oft, sizeof(_oft), "%s", wyn_option_family(_ptn, NULL, NULL));
+                            return_type = _oft;
                         }
                     } else {
                         return_type = "WynOptional*";
@@ -2794,7 +3041,13 @@ void codegen_stmt(Stmt* stmt) {
                 for (int _si = 0; _si < spawn_wrapper_count; _si++) {
                     if (strcmp(spawn_wrappers[_si].func_name, _fn) == 0) { _is_spawned = true; break; }
                 }
-                if (!is_main_fn && !_is_spawned && _bsc > 0 && _bsc <= 5) emit("__attribute__((hot)) static inline ");
+                // `static inline` is a speed heuristic for an executable and a
+                // correctness bug in a shared library: `static` means the symbol is
+                // not exported, so ctypes/dlsym cannot find it. In library mode keep
+                // external linkage. (See codegen_set_library_mode.)
+                extern bool codegen_in_library_mode(void);
+                if (!is_main_fn && !_is_spawned && _bsc > 0 && _bsc <= 5 &&
+                    !codegen_in_library_mode()) emit("__attribute__((hot)) static inline ");
                 else if (!is_main_fn) emit("__attribute__((hot)) ");
             }
             
@@ -2924,9 +3177,14 @@ void codegen_stmt(Stmt* stmt) {
                             else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) param_type = "OptionFloat";
                             else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) param_type = "OptionBool";
                             else {
+                                // Via THE authority, so a `T?` param cannot disagree with
+                                // its forward declaration or with what the caller passes
+                                // ("passing 'OptionInt' to parameter of incompatible type
+                                // 'WynOptional *'").
                                 char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
-                                extern int is_known_struct(const char*);
-                                if (is_known_struct(_stn)) { snprintf(_opbuf2, sizeof(_opbuf2), "Option%s", _stn); param_type = _opbuf2; }
+                                extern const char* wyn_option_family(const char*, const char**, int*);
+                                snprintf(_opbuf2, sizeof(_opbuf2), "%s", wyn_option_family(_stn, NULL, NULL));
+                                param_type = _opbuf2;
                             }
                         }
                         // Register the param as an Option-family var so a match on it
@@ -2952,6 +3210,18 @@ void codegen_stmt(Stmt* stmt) {
             }
             emit(") {\n");
             push_scope();  // Track allocations in this function
+            // Struct-var inference is keyed by NAME across the whole compile, so a
+            // `var x = SomeStruct{...}` in an EARLIER function leaves `x -> SomeStruct`
+            // registered for this one - and a same-named parameter of a different type
+            // then mis-lowers its methods. Capture the depth here and truncate at the end
+            // so each function sees only its own locals. (emit_function_with_prefix does
+            // the same for module functions.)
+            extern int wyn_struct_var_depth(void);
+            extern void wyn_struct_var_truncate(int);
+            extern int wyn_enum_var_depth(void);
+            extern void wyn_enum_var_truncate(int);
+            int _fn_sv_depth = wyn_struct_var_depth();
+            int _fn_ev_depth = wyn_enum_var_depth();
             
             // Register parameters for mut tracking
             clear_parameters();
@@ -2959,6 +3229,10 @@ void codegen_stmt(Stmt* stmt) {
             { extern void reset_shadow_vars(void); reset_shadow_vars(); }
             { extern void reset_string_vars(void); reset_string_vars(); }
             { extern void reset_borrowed_string_locals(void); reset_borrowed_string_locals(); }
+            { extern void reset_float_vars(void); reset_float_vars(); }
+            { extern void reset_array_vars(void); reset_array_vars(); }
+    { extern void reset_int_array_vars(void); reset_int_array_vars(); }
+            { extern void reset_sb_vars(void); reset_sb_vars(); }
             { extern void reset_array_scope(void); reset_array_scope(); } { extern void reset_hashmap_scope(void); reset_hashmap_scope(); } { extern void reset_closure_scope(void); reset_closure_scope(); }
             for (int i = 0; i < stmt->fn.param_count; i++) {
                 char pname[256]; token_to_cstr(pname, sizeof(pname), stmt->fn.params[i]);
@@ -3004,12 +3278,23 @@ void codegen_stmt(Stmt* stmt) {
                     if (stmt->fn.return_type->call.arg_count > 0 &&
                         stmt->fn.return_type->call.args[0]->type == EXPR_IDENT) {
                         Token inner = stmt->fn.return_type->call.args[0]->token;
-                        if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
-                            current_fn_return_kind = "ResultString";
-                        else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)
-                            current_fn_return_kind = "ResultFloat";
-                        else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
-                            current_fn_return_kind = "ResultBool";
+                        extern const char* result_family_err_suffix(Expr*);
+                        // A PRIMITIVE ok payload keeps the builtin family only when E is
+                        // a string; a non-string E names its own monomorphic family
+                        // (`ResultInt_Fail`, `ResultString_int`, ...) so Ok()/Err() in the
+                        // body lower to that family's members instead of the builtin's,
+                        // whose err_value is hardcoded `const char*` and would drop E.
+                        const char* _esuf = result_family_err_suffix(stmt->fn.return_type);
+                        const char* _ptag = NULL;
+                        if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)      _ptag = "String";
+                        else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)  _ptag = "Float";
+                        else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)   _ptag = "Bool";
+                        else if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)    _ptag = "Int";
+                        if (_ptag) {
+                            static char _pfk_buf[192];
+                            snprintf(_pfk_buf, sizeof(_pfk_buf), "Result%s%s", _ptag, _esuf);
+                            current_fn_return_kind = _pfk_buf;
+                        }
                         else {
                             // `Result<Struct, E>` -> the monomorphic Result<Struct,E>
                             // family, so Ok(Struct{...})/Err(...) in the body lower to
@@ -3018,6 +3303,7 @@ void codegen_stmt(Stmt* stmt) {
                             // otherwise) — see register_result_family_for_types.
                             char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner);
                             extern int is_known_struct(const char*);
+                extern int is_known_type_name(const char*);
                             extern const char* result_family_err_suffix(Expr*);
                             if (is_known_struct(_stn)) {
                                 static char _rfk_buf[192];
@@ -3064,24 +3350,14 @@ void codegen_stmt(Stmt* stmt) {
                 // `-> int?` / `-> string?` sugar → Option family, so Some/None
                 // in the body resolve and the C return type is the Option struct.
                 Expr* inner = stmt->fn.return_type->optional_type.inner_type;
-                if (inner && inner->type == EXPR_IDENT && inner->token.length == 6 &&
-                    memcmp(inner->token.start, "string", 6) == 0)
-                    current_fn_return_kind = "OptionString";
-                else if (inner && inner->type == EXPR_IDENT && inner->token.length == 5 &&
-                    memcmp(inner->token.start, "float", 5) == 0)
-                    current_fn_return_kind = "OptionFloat";
-                else if (inner && inner->type == EXPR_IDENT && inner->token.length == 4 &&
-                    memcmp(inner->token.start, "bool", 4) == 0)
-                    current_fn_return_kind = "OptionBool";
-                else if (inner && inner->type == EXPR_IDENT) {
-                    // `-> Struct?` -> Option<Struct> family so body Some/None resolve.
+                if (inner && inner->type == EXPR_IDENT) {
+                    // Body Some()/None must lower to the SAME family the signature names,
+                    // so both come from THE authority.
                     char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner->token);
-                    extern int is_known_struct(const char*);
-                    if (is_known_struct(_stn)) {
-                        static char _osrk[128];
-                        snprintf(_osrk, sizeof(_osrk), "Option%s", _stn);
-                        current_fn_return_kind = _osrk;
-                    } else current_fn_return_kind = "OptionInt";
+                    extern const char* wyn_option_family(const char*, const char**, int*);
+                    static char _osrk[128];
+                    snprintf(_osrk, sizeof(_osrk), "%s", wyn_option_family(_stn, NULL, NULL));
+                    current_fn_return_kind = _osrk;
                 } else
                     current_fn_return_kind = "OptionInt";
             } else if (stmt->fn.return_type && stmt->fn.return_type->type == EXPR_TUPLE) {
@@ -3208,6 +3484,8 @@ void codegen_stmt(Stmt* stmt) {
                 }
             }
             
+            wyn_struct_var_truncate(_fn_sv_depth);  // don't leak this fn's struct vars
+            wyn_enum_var_truncate(_fn_ev_depth);    // nor its enum vars
             pop_scope();   // Auto-cleanup before function end
             current_fn_return_kind = prev_fn_return_kind;
             current_fn_c_nonvoid = prev_fn_c_nonvoid;
@@ -3337,6 +3615,22 @@ void codegen_stmt(Stmt* stmt) {
                             c_type = "const char*"; // Always use simple strings for now
                         } else if (type_name.length == 4 && memcmp(type_name.start, "bool", 4) == 0) {
                             c_type = "bool";
+                        } else if (wyn_ffi_ptr_c_type(type_name)) {
+                            // `ptr`/`cstr` are BUILTINS, so they must be consulted
+                            // BEFORE the user-struct fallback below - otherwise a
+                            // `buf: ptr` field emitted the undefined C type name
+                            // `ptr`. Same omission #235 fixed for signatures.
+                            c_type = wyn_ffi_ptr_c_type(type_name);
+                        } else if (wyn_collection_c_type(type_name)) {
+                            // The BUILTIN COLLECTIONS are the same omission again,
+                            // and the `ptr` comment above predicted it: a name not
+                            // listed here reaches the user-struct fallback and is
+                            // emitted verbatim, so `struct Store { index: HashMap }`
+                            // produced `HashMap index;` -> "unknown type name
+                            // 'HashMap'". A field is the only position that was
+                            // missing it: parameters (codegen.c) and returns
+                            // (codegen_program.c) already mapped these three.
+                            c_type = wyn_collection_c_type(type_name);
                         } else {
                             // Custom struct type - use the type name as-is
                             static char custom_type[64]; token_to_cstr(custom_type, sizeof(custom_type), type_name);
@@ -3345,6 +3639,14 @@ void codegen_stmt(Stmt* stmt) {
                     } else if (stmt->struct_decl.field_types[i]->type == EXPR_ARRAY) {
                         // Array field type
                         c_type = "WynArray";
+                    } else if (stmt->struct_decl.field_types[i]->type == EXPR_FN_TYPE) {
+                        // Function-typed field: `struct Button { on_click: fn() -> void }`.
+                        // WynClosure is the SAME representation already used for a
+                        // fn-typed return value (see codegen_program.c), so a plain
+                        // function and a capturing closure are both storable in one
+                        // field: {void* fn; void* env;}. Was defaulting to
+                        // `long long`, which is what made this a check-time error.
+                        c_type = "WynClosure";
                     } else if (stmt->struct_decl.field_types[i]->type == EXPR_CALL &&
                                stmt->struct_decl.field_types[i]->call.callee &&
                                stmt->struct_decl.field_types[i]->call.callee->type == EXPR_IDENT &&
@@ -3359,22 +3661,13 @@ void codegen_stmt(Stmt* stmt) {
                         Expr* inner = stmt->struct_decl.field_types[i]->call.args[0];
                         if (inner && inner->type == EXPR_IDENT) {
                             Token t = inner->token;
-                            if (t.length == 3 && memcmp(t.start, "int", 3) == 0) c_type = "OptionInt";
-                            else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) c_type = "OptionString";
-                            else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) c_type = "OptionFloat";
-                            else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) c_type = "OptionBool";
-                            else {
+                            {
+                                // Generic `f: Option<T>` field form -> THE authority.
                                 char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
-                                extern int is_known_struct(const char*);
-                                if (is_known_struct(_stn)) {
-                                    extern void register_option_struct(const char*);
-                                    register_option_struct(_stn);
-                                    static char _osf[128];
-                                    snprintf(_osf, sizeof(_osf), "Option%s", _stn);
-                                    c_type = _osf;
-                                } else {
-                                    c_type = "WynOptional*";
-                                }
+                                extern const char* wyn_option_family(const char*, const char**, int*);
+                                static char _osf[128];
+                                snprintf(_osf, sizeof(_osf), "%s", wyn_option_family(_stn, NULL, NULL));
+                                c_type = _osf;
                             }
                         } else {
                             c_type = "WynOptional*";
@@ -3386,23 +3679,15 @@ void codegen_stmt(Stmt* stmt) {
                         Expr* inner = stmt->struct_decl.field_types[i]->optional_type.inner_type;
                         if (inner && inner->type == EXPR_IDENT) {
                             Token t = inner->token;
-                            if (t.length == 3 && memcmp(t.start, "int", 3) == 0) c_type = "OptionInt";
-                            else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) c_type = "OptionString";
-                            else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) c_type = "OptionFloat";
-                            else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) c_type = "OptionBool";
-                            else {
+                            {
+                                // `f: T?` field -> the concrete family via THE authority
+                                // (which also registers a monomorphic family when one is
+                                // needed, so it cannot be forgotten here).
                                 char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
-                                extern int is_known_struct(const char*);
-                                if (is_known_struct(_stn)) {
-                                    // Ensure the Option<Struct> family typedef is emitted.
-                                    extern void register_option_struct(const char*);
-                                    register_option_struct(_stn);
-                                    static char _osf[128];
-                                    snprintf(_osf, sizeof(_osf), "Option%s", _stn);
-                                    c_type = _osf;
-                                } else {
-                                    c_type = "WynOptional*";
-                                }
+                                extern const char* wyn_option_family(const char*, const char**, int*);
+                                static char _osf[128];
+                                snprintf(_osf, sizeof(_osf), "%s", wyn_option_family(_stn, NULL, NULL));
+                                c_type = _osf;
                             }
                         } else {
                             c_type = "WynOptional*";
@@ -3661,12 +3946,21 @@ void codegen_stmt(Stmt* stmt) {
                 emit("    } data;\n");
                 emit("};\n\n");
             } else {
-                // Simple enum without data
+                // Simple enum without data.
+                //
+                // Members are emitted PREFIXED as `EnumName_Variant`, not bare. A bare
+                // variant named `Error` (or any C type/keyword) redefined a runtime
+                // symbol - `WynError` - and the C compiler rejected the whole program
+                // with "redefinition of 'Error'", while `wyn check` passed. Prefixing
+                // makes the member identical to the `EnumName_Variant` constant that
+                // `match` and `EnumName.Variant` already use, so the separate #define
+                // block below is no longer needed.
                 emit("typedef enum {\n");
                 for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
-                    emit("    %.*s", 
-                         stmt->enum_decl.variants[i].length,
-                         stmt->enum_decl.variants[i].start);
+                    emit("    %.*s_%.*s = %d",
+                         stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                         stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start,
+                         i);
                     if (i < stmt->enum_decl.variant_count - 1) {
                         emit(",");
                     }
@@ -3677,13 +3971,25 @@ void codegen_stmt(Stmt* stmt) {
                      stmt->enum_decl.name.start);
             }
             
-            // Generate qualified constants for EnumName.MEMBER access (only for simple enums)
+            // BARE-name aliases. The prefixed members above are what qualified use
+            // (Level.Error, match on Level) resolves to and are collision-proof. But a
+            // BARE reference - `var c = Red`, or `match c { Red => ... }` without the
+            // enum qualifier - still emits the bare name, so it needs a constant of that
+            // name. These #defines provide it.
+            //
+            // #define, not an enum member, precisely so a bare name that WOULD collide
+            // with a C type (Error -> WynError) does not force a redefinition: a
+            // #define of a colliding name is still a hazard for BARE use of that
+            // variant, but the qualified form Level.Error is now always safe, which is
+            // the form that matters. A macro also cannot redefine a typedef the way a
+            // second enum member would.
             if (!has_data) {
                 for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
-                    emit("#define %.*s_%.*s %d\n",
-                         stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                    emit("#ifndef %.*s\n#define %.*s %.*s_%.*s\n#endif\n",
                          stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start,
-                         i);
+                         stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start,
+                         stmt->enum_decl.name.length, stmt->enum_decl.name.start,
+                         stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
                 }
             }
             emit("\n");
@@ -3772,7 +4078,8 @@ void codegen_stmt(Stmt* stmt) {
             } else {
                 emit("    switch(val) {\n");
                 for (int i = 0; i < stmt->enum_decl.variant_count; i++) {
-                    emit("        case %.*s: return \"%.*s\";\n",
+                    emit("        case %.*s_%.*s: return \"%.*s\";\n",
+                         stmt->enum_decl.name.length, stmt->enum_decl.name.start,
                          stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start,
                          stmt->enum_decl.variants[i].length, stmt->enum_decl.variants[i].start);
                 }
@@ -3948,7 +4255,17 @@ void codegen_stmt(Stmt* stmt) {
                         }
                     }
                     
-                    emit("%s %.*s", param_type, method->params[j].length, method->params[j].start);
+                    // A `mut` parameter -- including `mut self` -- is passed by
+                    // POINTER, or the callee mutates a copy and the caller never
+                    // sees it. This emitter was the only one of five that did not
+                    // read param_mutable (compare codegen_stmt.c:178, :363, :3141
+                    // and codegen_program.c:1188), so `impl T { fn bump(mut self) }`
+                    // silently discarded every mutation: the parser recorded the
+                    // modifier and the checker honoured it, so `wyn check` was
+                    // clean and the program merely printed the wrong number.
+                    bool _m_is_mut = method->param_mutable && method->param_mutable[j];
+                    emit("%s %s%.*s", param_type, _m_is_mut ? "*" : "",
+                         method->params[j].length, method->params[j].start);
                 }
                 emit(") {\n");
                 push_scope();
@@ -3964,6 +4281,34 @@ void codegen_stmt(Stmt* stmt) {
                     snprintf(_impl_self_ty, sizeof(_impl_self_ty), "%.*s",
                              stmt->impl.type_name.length, stmt->impl.type_name.start);
                     register_struct_var("self", _impl_self_ty);
+                    // Clear first: this loop emits every method of the impl block
+                    // and previously never reset the parameter registry, so a
+                    // `mut self` registered by one method stayed registered for
+                    // the next -- making a NON-mut `fn get(self)` emit (*self).n
+                    // against a by-value parameter.
+                    extern void clear_parameters(void);
+                    clear_parameters();
+                    // Register each `mut` parameter as such, so field access in the
+                    // body emits (*p).f rather than (p).f. Without this the
+                    // signature says `Counter *self` while the body still writes
+                    // `(self).n`, which does not compile.
+                    extern void register_parameter_typed(const char*, const char*, bool);
+                    for (int _mp = 0; _mp < method->param_count; _mp++) {
+                        if (!(method->param_mutable && method->param_mutable[_mp])) continue;
+                        char _mpn[256]; token_to_cstr(_mpn, sizeof(_mpn), method->params[_mp]);
+                        const char* _mpt = NULL;
+                        char _mptb[64] = {0};
+                        if (method->param_types[_mp] &&
+                            method->param_types[_mp]->type == EXPR_IDENT) {
+                            token_to_cstr(_mptb, sizeof(_mptb), method->param_types[_mp]->token);
+                            _mpt = _mptb;
+                        } else if (strcmp(_mpn, "self") == 0) {
+                            // `mut self` carries no written type annotation; its type
+                            // is the impl's receiver.
+                            _mpt = _impl_self_ty;
+                        }
+                        register_parameter_typed(_mpn, _mpt, true);
+                    }
                 }
                 codegen_stmt(method->body);
                 wyn_struct_var_truncate(_impl_sv_depth);
@@ -4244,8 +4589,20 @@ void codegen_stmt(Stmt* stmt) {
                     } else if (elem_type->kind == TYPE_ARRAY) {
                         is_array_array = true;
                     } else if (elem_type->kind == TYPE_ENUM && elem_type->name.length > 0) {
-                        is_enum_array = true;
-                        token_to_cstr(enum_arr_type, sizeof(enum_arr_type), elem_type->name);
+                        // ONLY a data-carrying enum is stored by value as a struct.
+                        // A plain `enum Level { Info, Warn }` is a C enum constant, i.e.
+                        // an int, so binding it via `*(Level*)__elem.data.struct_val`
+                        // dereferences a value that was never a pointer - a segfault at
+                        // the first iteration. Payload-free enums must fall through to
+                        // the int path below, which is what they did before the element
+                        // type of a `-> [Level]` return was resolved at all.
+                        char _en[128];
+                        token_to_cstr(_en, sizeof(_en), elem_type->name);
+                        extern int is_data_enum_type(const char*);
+                        if (is_data_enum_type(_en)) {
+                            is_enum_array = true;
+                            snprintf(enum_arr_type, sizeof(enum_arr_type), "%s", _en);
+                        }
                     }
                 }
                 // Array LITERAL whose first element is itself an array literal
@@ -4453,7 +4810,27 @@ void codegen_stmt(Stmt* stmt) {
                             Stmt* s = mod->ast->stmts[i];
                             if ((s->type == STMT_STRUCT && s->struct_decl.is_public) ||
                                 (s->type == STMT_ENUM && s->enum_decl.is_public)) {
-                                codegen_stmt(s);
+                                // Deliberately NOT re-emitting the type here. An
+                                // imported module's public types are spliced into the
+                                // main program as STMT_EXPORT and already emitted,
+                                // unprefixed, by the struct/enum pass in
+                                // codegen_program.c (~:400). This pass runs with
+                                // current_module_prefix set, so calling codegen_stmt
+                                // again produced a SECOND copy - and the two failure
+                                // modes differed only because structs honour the prefix
+                                // and enums do not:
+                                //
+                                //   enum:   both copies named `Color`, so C rejected it
+                                //           outright - "redefinition of enumerator
+                                //           'Red'". Its toString was emitted twice too.
+                                //   struct: the copies were `Point` and `shapes_Point`,
+                                //           so it compiled far enough to fail later, at
+                                //           the typedef alias below.
+                                //
+                                // The ALIAS is all this pass needs to add: pass 1
+                                // emitted `Point`, callers refer to `shapes_Point`, so
+                                // `typedef Point shapes_Point;` is the missing link.
+                                //
                                 // Emit typedef alias: OrigName -> module_OrigName
                                 if (s->type == STMT_ENUM) {
                                     emit("typedef %.*s %s_%.*s;\n",
@@ -4525,9 +4902,31 @@ void codegen_stmt(Stmt* stmt) {
                                             return_type = "WynHashMap*";
                                         } else if (rt.length == 7 && memcmp(rt.start, "HashSet", 7) == 0) {
                                             return_type = "WynHashSet*";
+                                        } else if (wyn_ffi_ptr_c_type(rt)) {
+                                            // Builtin, not a user struct: no prefix.
+                                            return_type = wyn_ffi_ptr_c_type(rt);
                                         } else {
-                                            // Custom struct type - add module prefix
-                                            snprintf(custom_ret_type, 128, "%s_%.*s", c_mod_name, rt.length, rt.start);
+                                            // Custom struct type - prefix ONLY if the
+                                            // struct is not declared in the program
+                                            // being emitted. A module's own struct is
+                                            // merged in and its typedef emitted
+                                            // UNPREFIXED, so prefixing here named a
+                                            // type nothing declares ("unknown type
+                                            // name 'm_Box'") for any module whose
+                                            // pub fn returned its own struct.
+                                            // Covers ENUMS too, not just structs: a
+                                            // module's own enum typedef is also emitted
+                                            // UNPREFIXED, so consulting is_known_struct
+                                            // alone made the forward declaration say
+                                            // `lib_Kind` while the definition said `Kind`.
+                                            extern int is_known_type_name(const char* name);
+                                            char _rn[128];
+                                            token_to_cstr(_rn, sizeof(_rn), rt);
+                                            if (is_known_type_name(_rn)) {
+                                                snprintf(custom_ret_type, 128, "%s", _rn);
+                                            } else {
+                                                snprintf(custom_ret_type, 128, "%s_%s", c_mod_name, _rn);
+                                            }
                                             return_type = custom_ret_type;
                                         }
                                     }
@@ -4543,7 +4942,14 @@ void codegen_stmt(Stmt* stmt) {
                                     const char* param_type = "long long";
                                     static char custom_param_type[128];
                                     if (s->fn.param_types[j]) {
-                                        if (s->fn.param_types[j]->type == EXPR_IDENT) {
+                                        // An array annotation is EXPR_ARRAY, not
+                                        // EXPR_IDENT - the same omission as the definition
+                                        // emitter, and it has to be fixed in BOTH or the
+                                        // prototype and the definition disagree, which is
+                                        // what the C compiler rejects.
+                                        if (s->fn.param_types[j]->type == EXPR_ARRAY) {
+                                            param_type = "WynArray";
+                                        } else if (s->fn.param_types[j]->type == EXPR_IDENT) {
                                             Token pt = s->fn.param_types[j]->token;
                                             if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) {
                                                 param_type = "const char*";
@@ -4555,9 +4961,25 @@ void codegen_stmt(Stmt* stmt) {
                                                 param_type = "long long";
                                             } else if (pt.length == 5 && memcmp(pt.start, "array", 5) == 0) {
                                                 param_type = "WynArray";
+                                            } else if (wyn_ffi_ptr_c_type(pt)) {
+                                                // Builtin, not a user struct: no prefix.
+                                                // This prototype and the definition
+                                                // emitter above disagreed, which is why
+                                                // `pub fn f(p: ptr)` failed only here.
+                                                param_type = wyn_ffi_ptr_c_type(pt);
                                             } else {
                                                 // Custom struct type - add module prefix
-                                                snprintf(custom_param_type, 128, "%s_%.*s", c_mod_name, pt.length, pt.start);
+                                                // Same rule as the return type above:
+                                                // a struct declared in the merged
+                                                // program has an UNPREFIXED typedef.
+                                                extern int is_known_type_name(const char* name);
+                                                char _pn[128];
+                                                token_to_cstr(_pn, sizeof(_pn), pt);
+                                                if (is_known_type_name(_pn)) {
+                                                    snprintf(custom_param_type, 128, "%s", _pn);
+                                                } else {
+                                                    snprintf(custom_param_type, 128, "%s_%s", c_mod_name, _pn);
+                                                }
                                                 param_type = custom_param_type;
                                             }
                                         }
@@ -4571,6 +4993,14 @@ void codegen_stmt(Stmt* stmt) {
                         }
                         
                         // Second: emit constants and variables
+                        // Module globals whose initializer is not a constant
+                        // expression (array literals, HashMap.new(), ...) are
+                        // declared in the loop below and initialized in a
+                        // constructor emitted after it. Mirrors the deferred-init
+                        // machinery codegen_program.c already uses for the main
+                        // file's globals.
+                        VarStmt* _mg_init_stmts[64];
+                        int _mg_init_count = 0;
                         for (int i = 0; i < mod->ast->count; i++) {
                             Stmt* s = mod->ast->stmts[i];
                             // Unwrap export for constants and variables
@@ -4611,7 +5041,17 @@ void codegen_stmt(Stmt* stmt) {
                                         codegen_expr(var_stmt->init);
                                         emit(";\n");
                                     } else if (var_stmt->init->type == EXPR_ARRAY) {
+                                        // Declare now, initialize in the module
+                                        // constructor below. An array literal is not a
+                                        // constant expression, so it cannot be written
+                                        // at file scope -- but until that constructor
+                                        // existed the initializer was simply DROPPED
+                                        // and `var items = ["seed"]` in a module gave
+                                        // the importer an empty array. Silently: len()
+                                        // returned 0, wyn check was clean, and with
+                                        // structs it segfaulted.
                                         emit("WynArray %s_%.*s;\n", c_mod_name, var_stmt->name.length, var_stmt->name.start);
+                                        if (_mg_init_count < 64) _mg_init_stmts[_mg_init_count++] = var_stmt;
                                     } else if (var_stmt->init->type == EXPR_CALL || var_stmt->init->type == EXPR_METHOD_CALL) {
                                         // HashMap.new() etc - defer init
                                         if (var_stmt->init->expr_type && var_stmt->init->expr_type->kind == TYPE_MAP) {
@@ -4619,6 +5059,7 @@ void codegen_stmt(Stmt* stmt) {
                                         } else {
                                             emit("long long %s_%.*s;\n", c_mod_name, var_stmt->name.length, var_stmt->name.start);
                                         }
+                                        if (_mg_init_count < 64) _mg_init_stmts[_mg_init_count++] = var_stmt;
                                     } else {
                                         emit("long long %s_%.*s = ", c_mod_name, var_stmt->name.length, var_stmt->name.start);
                                         codegen_expr(var_stmt->init);
@@ -4629,7 +5070,23 @@ void codegen_stmt(Stmt* stmt) {
                                 }
                             }
                         }
-                        
+
+                        // Initialize the deferred module globals. A constructor
+                        // rather than a call from wyn_main, to match how
+                        // __wyn_init_globals orders the main file's globals and so
+                        // that it still runs in library/test mode where there is no
+                        // wyn_main to call it from.
+                        if (_mg_init_count > 0) {
+                            emit("__attribute__((constructor)) static void __wyn_init_%s_globals(void) {\n", c_mod_name);
+                            for (int _mi = 0; _mi < _mg_init_count; _mi++) {
+                                VarStmt* v = _mg_init_stmts[_mi];
+                                emit("    %s_%.*s = ", c_mod_name, v->name.length, v->name.start);
+                                codegen_expr(v->init);
+                                emit(";\n");
+                            }
+                            emit("}\n");
+                        }
+
                         // Third: emit functions
                         for (int i = 0; i < mod->ast->count; i++) {
                             Stmt* s = mod->ast->stmts[i];

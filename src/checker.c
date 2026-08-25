@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include <errno.h>
 #include "common.h"
 #include "growable.h"
@@ -273,6 +274,63 @@ static FnVisibility module_fn_visibility(const char* module_name, const char* fn
         }
     }
     return found ? VIS_PRIVATE : VIS_FN_UNKNOWN;
+}
+
+// Does the free function `fn_name` declare parameter `idx` as `mut`?
+//
+// The checker's counterpart of codegen's fn_param_is_mut: the call site needs to reject a
+// non-addressable argument for a `mut` parameter, and only the AST records the modifier
+// (the fn TYPE carries parameter types, not their mutability). Walks current_program the
+// same way check_function_visibility above does.
+//
+// Returns false for an unknown function, so a call the checker cannot resolve keeps its
+// existing lenient path rather than producing a spurious error.
+static bool checker_fn_param_is_mut(const char* fn_name, int idx) {
+    if (!current_program || !fn_name || idx < 0) return false;
+    size_t fl = strlen(fn_name);
+    for (int i = 0; i < current_program->count; i++) {
+        Stmt* s = current_program->stmts[i];
+        if (!s) continue;
+        if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+        if (s->type != STMT_FN) continue;
+        if ((size_t)s->fn.name.length != fl ||
+            memcmp(s->fn.name.start, fn_name, fl) != 0) continue;
+        if (idx >= s->fn.param_count || !s->fn.param_mutable) return false;
+        return s->fn.param_mutable[idx];
+    }
+    return false;
+}
+
+// Can `&expr` be taken -- i.e. does this expression denote storage IN THE GENERATED C?
+//
+// This list must match the one in codegen_expr.c that decides where to emit `&`. Any
+// disagreement is a hole: an argument the checker allows but codegen skips gets no address
+// and the callee dereferences a value.
+//
+//   EXPR_IDENT         -> a C variable.               &x       OK
+//   EXPR_FIELD_ACCESS  -> a C struct member.          &o.i.n   OK
+//
+// An INDEX is deliberately NOT here. `xs[0]` does not lower to C subscripting -- it lowers to
+// `array_get_int(xs, 0)`, a function call returning a value, so `&xs[0]` is
+// "cannot take the address of an rvalue". Verified, not assumed: allowing it produced exactly
+// that C error. Writing back into an array element through a `mut` parameter would need the
+// element's address, which the WynValue-boxed representation does not hand out.
+static bool expr_is_addressable(Expr* e) {
+    if (!e) return false;
+    switch (e->type) {
+        case EXPR_IDENT:
+        case EXPR_FIELD_ACCESS:
+            return true;
+        case EXPR_UNARY:
+            // `inc(&n)` -- the EXPLICIT address-of spelling. This is not hypothetical: five
+            // stdlib tests write it (test_mut_refs, test_brutal_audit, test_stress,
+            // test_v16_final, test_final_validation) and it works, so rejecting it would
+            // break working, in-use code. Recursing on the operand keeps `&3` rejected.
+            if (e->unary.op.type == TOKEN_AMP) return expr_is_addressable(e->unary.operand);
+            return false;
+        default:
+            return false;
+    }
 }
 
 // Is the checker currently inside `target` (module calling its own fns)?
@@ -629,6 +687,18 @@ static EnumStmt* find_enum_definition(Token enum_name) {
     return NULL;
 }
 
+// True when `enum_name` names a DATA-carrying enum (at least one variant has a
+// payload, e.g. `Circle(float)`). The distinction matters wherever an enum is
+// lowered: a PLAIN enum is an `int` in C (so its Option family is `OptionInt`),
+// while a data-carrying enum is a C *struct* and needs the struct treatment.
+static bool enum_name_is_data_enum(Token enum_name) {
+    EnumStmt* e = find_enum_definition(enum_name);
+    if (!e || !e->variant_type_counts) return false;
+    for (int v = 0; v < e->variant_count; v++)
+        if (e->variant_type_counts[v] > 0) return true;
+    return false;
+}
+
 // Find the enum that declares a variant named `variant` (searching the current
 // program and loaded modules), returning its EnumStmt and, via *out_vi, the
 // variant index. Used to resolve a BARE (unqualified) enum constructor call
@@ -781,6 +851,46 @@ static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
                     return builtin_bool;
                 } else if (type_name.length == 5 && memcmp(type_name.start, "float", 5) == 0) {
                     return builtin_float;
+                } else if (type_name.length == 3 && memcmp(type_name.start, "ptr", 3) == 0) {
+                    // The FFI pointer family, ahead of the user-struct fallback
+                    // below for the same reason as everywhere else: these are
+                    // BUILTINS. `ptr` is itself TYPE_STRUCT (named "void*"), so a
+                    // `ptr` field happened to survive the fallback; `cstr` did
+                    // not - it resolved to a struct named "cstr", and passing the
+                    // field to an `extern fn atoi(s: cstr)` was rejected with
+                    // "Expected string, got struct".
+                    return builtin_ptr;
+                } else if (type_name.length == 4 && memcmp(type_name.start, "cstr", 4) == 0) {
+                    return builtin_string;
+                } else if (type_name.length == 7 && memcmp(type_name.start, "HashMap", 7) == 0) {
+                    // The builtin COLLECTIONS are the same omission the `ptr`/`cstr`
+                    // comment above describes, one layer up: without these three the
+                    // name reached the user-struct fallback and a `HashMap` field was
+                    // typed as "a struct named HashMap". Passing it to a parameter of
+                    // that same type was then rejected --
+                    //   Expected: map (HashMap<string, int>)  Got: struct (struct)
+                    // -- even though a plain local passed fine and `HashMap.len(s.m)`
+                    // used inline passed fine, which is what made it read as a call
+                    // bug rather than a field-type bug.
+                    //
+                    // The kinds match what an annotation on a LOCAL already resolves to
+                    // (HashMap -> TYPE_MAP, HashSet -> TYPE_SET; see the generic-type
+                    // branch in check_expr), so the field and the local now agree.
+                    // codegen's half of this pair is wyn_collection_c_type() (#304).
+                    return make_type(TYPE_MAP);
+                } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
+                    return make_type(TYPE_SET);
+                } else if (type_name.length == 4 && memcmp(type_name.start, "Json", 4) == 0) {
+                    // NOT covered by a test, and mutating this line out changes
+                    // nothing -- stated plainly rather than left looking verified.
+                    // A `Json` PARAMETER fails type-check even when passed a plain
+                    // local ("Expected: int, Got: unknown"), because Json has two
+                    // incompatible representations: WynJson* for new/set and a
+                    // long long node index for parse/get. So no program can reach
+                    // this line's effect yet. It is mapped anyway so the three
+                    // collections stay consistent and the field is already correct
+                    // when that wart is fixed.
+                    return make_type(TYPE_JSON);
                 } else {
                     // Check if it's an enum type
                     Symbol* type_symbol = find_symbol(global_scope, type_name);
@@ -793,23 +903,25 @@ static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
                     return struct_type;
                 }
             } else if (field_type_expr->type == EXPR_ARRAY) {
-                // Array type [ElementType]
+                // Array field `f: [T]`. Route through the one element-type
+                // authority (resolve_array_elem_annotation) instead of a partial
+                // inline copy: the old copy only knew `int` and `string` and
+                // turned everything else - including `float` and `bool` - into a
+                // TYPE_STRUCT, so every read of `s.f[i]` emitted
+                // array_get_struct (segfault) and every write/push was rejected
+                // with "Cannot store float in array of struct".
                 Type* array_type = make_type(TYPE_ARRAY);
                 if (field_type_expr->array.count > 0) {
                     Expr* elem_type_expr = field_type_expr->array.elements[0];
-                    if (elem_type_expr->type == EXPR_IDENT) {
-                        Token elem_type_name = elem_type_expr->token;
-                        if (elem_type_name.length == 3 && memcmp(elem_type_name.start, "int", 3) == 0) {
-                            array_type->array_type.element_type = builtin_int;
-                        } else if (elem_type_name.length == 6 && memcmp(elem_type_name.start, "string", 6) == 0) {
-                            array_type->array_type.element_type = builtin_string;
-                        } else {
-                            // User-defined element type
-                            Type* elem_struct_type = make_type(TYPE_STRUCT);
-                            elem_struct_type->struct_type.name = elem_type_name;
-                            array_type->array_type.element_type = elem_struct_type;
-                        }
+                    Type* elem = resolve_array_elem_annotation(elem_type_expr);
+                    if (!elem && elem_type_expr->type == EXPR_IDENT) {
+                        // Unrecognized bare name (e.g. a struct declared in an
+                        // imported module that find_struct_definition can't see):
+                        // keep the historical by-name struct fallback.
+                        elem = make_type(TYPE_STRUCT);
+                        elem->struct_type.name = elem_type_expr->token;
                     }
+                    array_type->array_type.element_type = elem;
                 }
                 return array_type;
             } else if ((field_type_expr->type == EXPR_OPTIONAL_TYPE) ||
@@ -834,10 +946,22 @@ static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
                     else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) fam = "OptionFloat";
                     else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) fam = "OptionBool";
                     else {
-                        // Struct?: reuse the registered Option<Struct> family symbol.
-                        char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
-                        static char _famb[128]; snprintf(_famb, sizeof(_famb), "Option%s", _stn);
-                        fam = _famb;
+                        // A PLAIN enum payload's family is OptionInt (an enum is an int
+                        // in C) — there is no `Option<Enum>` family symbol to find, so
+                        // building the name `OptionCode` made the lookup below MISS and
+                        // return NULL, which the caller reads as "struct 'H' has no
+                        // field 'tag'". A data-carrying enum is a C struct, so it keeps
+                        // the by-name path below.
+                        Symbol* _es = find_symbol(global_scope, t);
+                        if (_es && _es->type && _es->type->kind == TYPE_ENUM &&
+                            !enum_name_is_data_enum(t)) {
+                            fam = "OptionInt";
+                        } else {
+                            // Struct?: reuse the registered Option<Struct> family symbol.
+                            char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
+                            static char _famb[128]; snprintf(_famb, sizeof(_famb), "Option%s", _stn);
+                            fam = _famb;
+                        }
                     }
                 }
                 if (fam) {
@@ -873,6 +997,35 @@ static bool wyn_is_type_compatible(Type* expected, Type* actual) {
     // Allow enum <-> int (enums are represented as ints)
     if ((expected->kind == TYPE_ENUM && actual->kind == TYPE_INT) ||
         (expected->kind == TYPE_INT && actual->kind == TYPE_ENUM)) {
+        return true;
+    }
+
+    // Allow bool <-> int, because THIS COMPILER MAKES THEM THE SAME THING.
+    //
+    // A comparison is typed int, not bool - see the `expr_type = builtin_int`
+    // at the end of the comparison branch in EXPR_BINARY, and the note on the
+    // and/or branch above it: the lambda and predicate runtime ABI
+    // (long long (*fn)(...)) depends on that choice. The consequence was that
+    // passing a comparison straight to a `bool` parameter was REJECTED -
+    //
+    //     fn wrap(ok: bool) -> bool { return ok }
+    //     wrap(f(x) == 1)          // "Expected: bool  Got: int"
+    //
+    // - while the identical value hoisted into a local first was accepted,
+    // because a `var` declaration special-cases the op to declare bool. So the
+    // same expression was legal or illegal depending on whether it passed
+    // through a variable, which is not a rule anyone can learn. Found writing
+    // ordinary Wyn: a one-line `return changed(sel_all(s) == 1)` wrapper in
+    // WynCanvas's selection module.
+    //
+    // Fixing it here rather than by retyping comparisons keeps the ABI note
+    // above true and cannot change any generated code: this function only
+    // decides whether a call is ACCEPTED. The reverse direction (an int-typed
+    // argument to a bool parameter and vice versa) is admitted for the same
+    // reason the enum and channel rules above are - they are one representation
+    // with two spellings, and `if 1 { }` has always been legal.
+    if ((expected->kind == TYPE_BOOL && actual->kind == TYPE_INT) ||
+        (expected->kind == TYPE_INT && actual->kind == TYPE_BOOL)) {
         return true;
     }
 
@@ -1021,6 +1174,40 @@ void add_symbol(SymbolTable* scope, Token name, Type* type, bool is_mutable) {
 static void mark_used(SymbolTable* scope, Token name) {
     Symbol* sym = find_symbol(scope, name);
     if (sym) sym->is_used = true;
+    // A re-declared name occupies a SECOND slot (add_symbol always appends;
+    // nothing dedupes), but find_symbol returns just one of them - so marking
+    // only that one left the other permanently unused and produced a false
+    // "unused variable" warning for a variable that is plainly read on the very
+    // next line:
+    //
+    //     var line_start = 0            // outer
+    //     while ... {
+    //         var line_start = i + 1    // inner, shadows
+    //         print("${line_start}")    // READS it - yet it was reported unused
+    //     }
+    //
+    // Since these warnings are per-function and this is a diagnostic rather than
+    // a semantic decision, mark EVERY same-named slot. The failure direction
+    // matters: a missed warning costs nothing, while a false one on correct code
+    // trains people to ignore all warnings. Measured across sample-apps: 5 such
+    // warnings on committed, working code (netstat-lite x3, dockermon, and this
+    // shape), of which 4 were false.
+    // Walk the whole enclosing chain, not just this scope: the READ usually
+    // happens in a child scope (inside a for/if body) while the declarations sit
+    // in the function scope, so marking only the innermost table left every
+    // outer duplicate false. Measured on sysadmin/netstat-lite, which declares
+    // `line_start` four times in one function and reads all four: slot 3 was
+    // marked used, slots 6/11/14 were not, giving three false warnings.
+    if (!name.start || name.length <= 0) return;
+    for (SymbolTable* t = scope; t; t = t->parent) {
+        for (int i = 0; i < t->count; i++) {
+            Symbol* s = &t->symbols[i];
+            if (s->name.length == name.length && s->name.start &&
+                memcmp(s->name.start, name.start, name.length) == 0) {
+                s->is_used = true;
+            }
+        }
+    }
 }
 
 // K7: does this call target a genuinely non-callable value - i.e. a LOCAL
@@ -1066,10 +1253,29 @@ static Symbol* find_local_noncallable(SymbolTable* scope, Token name) {
 // builtin OptionInt/OptionString families. Idempotent. Also records the struct in
 // codegen's registry so the concrete C family is emitted after the struct typedef.
 // Returns the Option<Struct> Type (a TYPE_STRUCT named "Option<Struct>").
+//
+// A DATA-CARRYING ENUM takes this path too. It lowers to a C struct (a tagged union),
+// so it needs the same monomorphic family a user struct gets -- but its checker Type is
+// TYPE_ENUM, not TYPE_STRUCT, and the `kind != TYPE_STRUCT` guard used to reject it. Every
+// caller then fell back to OptionInt while codegen (which asks wyn_option_family, the
+// authority) correctly produced OptionShape, so `fn pick() -> Shape?` emitted
+// `OptionInt __match_opt_1 = pick(1);` against a function returning OptionShape and the C
+// compile failed. Accepting it HERE fixes all five call sites at once rather than adding the
+// same enum test to each -- the shape of the earlier wyn_option_family() consolidation.
+//
+// A PLAIN enum must still be rejected: it is an `int` in C, so its family is the builtin
+// OptionInt, and callers rely on NULL to mean exactly that.
 static Type* register_option_struct_family(Type* struct_type) {
-    if (!struct_type || struct_type->kind != TYPE_STRUCT || struct_type->struct_type.name.length == 0)
+    if (!struct_type) return NULL;
+    bool is_data_enum = struct_type->kind == TYPE_ENUM &&
+                        struct_type->name.length > 0 &&
+                        enum_name_is_data_enum(struct_type->name);
+    if (!is_data_enum &&
+        (struct_type->kind != TYPE_STRUCT || struct_type->struct_type.name.length == 0))
         return NULL;
-    char sname[96]; token_to_cstr(sname, sizeof(sname), struct_type->struct_type.name);
+    char sname[96];
+    token_to_cstr(sname, sizeof(sname),
+                  is_data_enum ? struct_type->name : struct_type->struct_type.name);
     // Family type name "Option<Struct>" - persistent storage for the Token.
     char* fam = malloc(strlen(sname) + 7);
     sprintf(fam, "Option%s", sname);
@@ -1125,8 +1331,61 @@ static const char* result_err_type_name(Type* err_type) {
             static char b[96]; token_to_cstr(b, sizeof(b), err_type->struct_type.name);
             return b;
         }
+        case TYPE_ENUM: {
+            // A plain enum lowers to a C typedef of its own name, so it is a valid
+            // err payload exactly like a struct. Returning NULL here (the old
+            // behavior) made the checker fall back to the `string` family while
+            // codegen still named `Result<Ok>_<Enum>` — the two disagreed and the
+            // build failed with "unknown method 'ResultP.Code_Err'".
+            if (err_type->name.length == 0) return NULL;
+            static char b[96]; token_to_cstr(b, sizeof(b), err_type->name);
+            return b;
+        }
         default: return NULL;
     }
+}
+
+// The payload type bound by a `Result` match arm. `fam_type` is the family's fake
+// struct type (named "Result<OkTag>" for a string err, "Result<OkTag>_<ErrTag>"
+// otherwise); `want_ok` selects the Ok arm's payload over the Err arm's.
+//
+// Without this, a Result arm binding defaulted to `int`: the checker then accepted
+// nonsense like `e.nope` on a struct error, and codegen could not dispatch
+// `p.msg.len()` or `c.method()` — it emitted an EMPTY receiver, surfacing as
+// "error: expected expression" or "Unknown method 'len' (no type info)".
+// Returns NULL when `fam_type` is not a Result family or the payload is unresolvable,
+// so callers keep their existing default.
+static Type* result_arm_payload_type(Type* fam_type, bool want_ok) {
+    if (!fam_type || fam_type->kind != TYPE_STRUCT) return NULL;
+    Token fam = fam_type->struct_type.name;
+    if (fam.length <= 6 || memcmp(fam.start, "Result", 6) != 0) return NULL;
+    char buf[192];
+    int len = fam.length - 6;
+    if (len <= 0 || len >= (int)sizeof(buf)) return NULL;
+    memcpy(buf, fam.start + 6, len); buf[len] = '\0';
+    // Split "<OkTag>_<ErrTag>" at the FIRST '_'. No '_' means the bare,
+    // backward-compatible family name, whose error payload is a `string`.
+    char* us = strchr(buf, '_');
+    const char* ok_tag = buf;
+    const char* err_tag = NULL;
+    if (us) { *us = '\0'; err_tag = us + 1; }
+    const char* want = want_ok ? ok_tag : err_tag;
+    if (!want_ok && !err_tag) return builtin_string;
+    if (!want || !*want) return NULL;
+    if (strcmp(want, "String") == 0) return builtin_string;
+    if (strcmp(want, "Int") == 0)    return builtin_int;
+    if (strcmp(want, "Float") == 0)  return builtin_float;
+    if (strcmp(want, "Bool") == 0)   return builtin_bool;
+    if (strcmp(want, "string") == 0) return builtin_string;
+    if (strcmp(want, "int") == 0)    return builtin_int;
+    if (strcmp(want, "float") == 0)  return builtin_float;
+    if (strcmp(want, "bool") == 0)   return builtin_bool;
+    // A user struct or enum payload.
+    Token pn = {TOKEN_IDENT, want, (int)strlen(want), 0};
+    Symbol* ps = find_symbol(global_scope, pn);
+    if (ps && ps->type && (ps->type->kind == TYPE_STRUCT || ps->type->kind == TYPE_ENUM))
+        return ps->type;
+    return NULL;
 }
 
 // Lazily register a monomorphic Result<Ok, Err> family for a user-struct ok-payload
@@ -1144,9 +1403,32 @@ static const char* result_err_type_name(Type* err_type) {
 // concrete C family is emitted after the struct typedefs.
 // Returns the Result Type (a TYPE_STRUCT named after the family).
 static Type* register_result_struct_family_e(Type* struct_type, Type* err_type) {
-    if (!struct_type || struct_type->kind != TYPE_STRUCT || struct_type->struct_type.name.length == 0)
-        return NULL;
-    char sname[96]; token_to_cstr(sname, sizeof(sname), struct_type->struct_type.name);
+    if (!struct_type) return NULL;
+    // The ok payload is either a user struct (#181/#182) or a primitive. A primitive
+    // ok is spelled with the builtin's own tag ("int" -> "Int"), so a `string` error
+    // resolves to the existing builtin family (ResultInt/...) via the find_symbol
+    // check below, while a NON-string error gets its own `_<ErrTag>` family instead
+    // of collapsing onto the builtin (whose err_value is hardcoded `const char*`).
+    char sname[96];
+    const char* ok_tag = NULL;
+    switch (struct_type->kind) {
+        case TYPE_INT:    ok_tag = "Int";    break;
+        case TYPE_STRING: ok_tag = "String"; break;
+        case TYPE_FLOAT:  ok_tag = "Float";  break;
+        case TYPE_BOOL:   ok_tag = "Bool";   break;
+        case TYPE_STRUCT:
+            if (struct_type->struct_type.name.length == 0) return NULL;
+            token_to_cstr(sname, sizeof(sname), struct_type->struct_type.name);
+            ok_tag = sname;
+            break;
+        default: return NULL;
+    }
+    // Wyn-level ok type name handed to codegen (it derives the C type + tag itself).
+    const char* ok_wyn = (struct_type->kind == TYPE_INT)    ? "int"
+                       : (struct_type->kind == TYPE_STRING) ? "string"
+                       : (struct_type->kind == TYPE_FLOAT)  ? "float"
+                       : (struct_type->kind == TYPE_BOOL)   ? "bool"
+                       : sname;
     const char* ename = result_err_type_name(err_type);
     if (!ename) ename = "string";              // unusable err falls back to string
     Type* eff_err = err_type ? err_type : builtin_string;
@@ -1155,8 +1437,8 @@ static Type* register_result_struct_family_e(Type* struct_type, Type* err_type) 
     // Family name: bare "Result<Ok>" for a string error (backward compatible),
     // "Result<Ok>_<ErrTag>" otherwise.
     char fambuf[192];
-    if (strcmp(ename, "string") == 0) snprintf(fambuf, sizeof(fambuf), "Result%s", sname);
-    else                              snprintf(fambuf, sizeof(fambuf), "Result%s_%s", sname, ename);
+    if (strcmp(ename, "string") == 0) snprintf(fambuf, sizeof(fambuf), "Result%s", ok_tag);
+    else                              snprintf(fambuf, sizeof(fambuf), "Result%s_%s", ok_tag, ename);
     char* fam = strdup(fambuf);
     Token fam_tok = {TOKEN_IDENT, fam, (int)strlen(fam), 0};
 
@@ -1190,7 +1472,7 @@ static Type* register_result_struct_family_e(Type* struct_type, Type* err_type) 
     #undef REG_RES_FN
 
     extern const char* register_result_family_for_types(const char*, const char*);
-    register_result_family_for_types(sname, ename);
+    register_result_family_for_types(ok_wyn, ename);
     return res_type;
 }
 // Backward-compatible shim: string-error family.
@@ -1198,1712 +1480,45 @@ static Type* register_result_struct_family(Type* struct_type) {
     return register_result_struct_family_e(struct_type, NULL);
 }
 
-void init_checker() {
-    global_scope = calloc(1, sizeof(SymbolTable));
-    global_scope->capacity = 128;
-    global_scope->symbols = calloc(128, sizeof(Symbol));
-    had_error = false;
-    
-    // Initialize trait system
-    wyn_traits_init();
-    
-    builtin_int = make_type(TYPE_INT);
-    builtin_float = make_type(TYPE_FLOAT);
-    builtin_string = make_type(TYPE_STRING);
-    builtin_bool = make_type(TYPE_BOOL);
-    builtin_void = make_type(TYPE_VOID);
-    // Opaque C pointer type for FFI (`ptr`). A TYPE_STRUCT named "void*" so it
-    // flows through codegen_c_type_from_type's struct path to the C type "void*"
-    // and is treated as an opaque machine word (not an ARC-managed Wyn struct,
-    // which is keyed off registered struct names - "void*" is never registered).
-    builtin_ptr = make_type(TYPE_STRUCT);
-    { Token _pn = {TOKEN_IDENT, "void*", 5, 0}; builtin_ptr->struct_type.name = _pn; }
-    builtin_array = make_type(TYPE_ARRAY);
-    // int? — the return type of Task.try_recv (non-blocking receive → Option).
-    builtin_int_opt = make_type(TYPE_OPTIONAL);
-    builtin_int_opt->optional_type.inner_type = builtin_int;
-
-    // Register collection types
-    Type* builtin_map = make_type(TYPE_MAP);
-    Token map_tok = {TOKEN_IDENT, "HashMap", 7, 0};
-    add_symbol(global_scope, map_tok, builtin_map, false);
-    
-    Type* builtin_set = make_type(TYPE_SET);
-    Token set_tok = {TOKEN_IDENT, "HashSet", 7, 0};
-    add_symbol(global_scope, set_tok, builtin_set, false);
-    
-    // Register Result types
-    Type* result_int_type = make_type(TYPE_STRUCT);
-    result_int_type->struct_type.name = (Token){TOKEN_IDENT, "ResultInt", 9, 0};
-    Token result_int_tok = {TOKEN_IDENT, "ResultInt", 9, 0};
-    add_symbol(global_scope, result_int_tok, result_int_type, false);
-    
-    Type* result_string_type = make_type(TYPE_STRUCT);
-    result_string_type->struct_type.name = (Token){TOKEN_IDENT, "ResultString", 12, 0};
-    Token result_string_tok = {TOKEN_IDENT, "ResultString", 12, 0};
-    add_symbol(global_scope, result_string_tok, result_string_type, false);
-    
-    // Add built-in functions
-    const char* stdlib_funcs[] = {
-        "print", "print_float", "print_str", "print_bool", "print_hex", "print_bin", "println", "print_debug", "input", "input_float", "input_line", "printf_wyn", "string_format", "sin_approx", "cos_approx", "pi_const", "e_const",
-        "str_len", "str_eq", "str_concat", "str_upper", "str_lower", "str_contains", "str_starts_with", "str_ends_with", "str_trim",
-        "str_replace", "str_split", "str_join", "int_to_str", "str_to_int", "str_repeat", "str_reverse", "str_parse_int", "str_parse_int_failed", "str_parse_float", "str_free",
-        "split_get", "split_count", "char_at", "is_numeric", "str_count", "str_contains_substr",
-        "string_char_at", "string_length",
-        "abs_val", "min", "max", "pow_int", "clamp", "sign", "gcd", "lcm", "is_even", "is_odd",
-        "sqrt_int", "ceil_int", "floor_int", "round_int", "abs_float",
-        "swap", "clamp_float", "lerp", "map_range",
-        "bit_set", "bit_clear", "bit_toggle", "bit_check", "bit_count",
-        "arr_sum", "arr_max", "arr_min", "arr_contains", "arr_find", "arr_reverse", "arr_sort", "arr_count", "arr_fill", "arr_all", "arr_join", "arr_map_double", "arr_map_square", "arr_filter_positive", "arr_filter_even", "arr_filter_greater_than_3", "arr_reduce_sum", "arr_reduce_product",
-        "file_exists", "file_size", "file_delete", "file_append", "file_copy", "last_error_get",
-        "file_move", "file_list_dir", "file_mkdir", "file_rmdir", "file_is_file", "file_is_dir",
-        // NOTE: file_read, file_write, sys_exec are registered separately with proper types
-        "random_int", "random_range", "random_float", "seed_random", "random_bool",
-        "random_string", "random_hex", "random_uuid", "random_choice_int", "random_choice_str",
-        "random_seed_auto",
-        "time_now", "time_format",
-        "range", "array_new", "array_push", "array_push_str", "array_pop", "array_length_dyn", "len",
-        "assert_eq", "assert_true", "assert_false", "panic", "todo",
-        "await_all", "await_any",
-        "exit_program", "sleep_ms", "getenv_var", "setenv_var",
-        "Error", "TypeError", "ValueError", "DivisionByZeroError", "print_error",
-        "http_get", "http_post", "http_put", "http_delete", "http_set_header", "http_clear_headers", "http_status", "http_error",
-        "https_get", "https_post",
-        "hashmap_new", "hashmap_insert", "hashmap_get", "hashmap_has", "hashmap_remove", "hashmap_free",
-        "hashmap_insert_int", "hashmap_insert_float", "hashmap_insert_string", "hashmap_insert_bool",
-        "hashmap_get_int", "hashmap_get_float", "hashmap_get_string", "hashmap_get_bool",
-        "wyn_hashmap_new", "wyn_hashmap_insert_int", "wyn_hashmap_get_int", "wyn_hashmap_has", "wyn_hashmap_len", "wyn_hashmap_free",
-        "hashset_new", "hashset_add", "hashset_contains", "hashset_remove", "hashset_free",
-        "set_len", "set_is_empty", "set_clear", "set_union", "set_intersection", "set_difference", "set_is_subset", "set_is_superset",
-        "json_parse", "json_get_string", "json_get_int", "json_free",
-        "json_get_str", "json_get_int", "json_get_bool", "json_has_key", "json_stringify_int", "json_stringify_str", "json_stringify_bool", "json_array_stringify", "json_array_length", "json_array_get",
-        "url_encode", "url_decode", "base64_encode", "hash_string",
-        // v1.3.0 Standard Library
-        "wyn_string_len", "wyn_string_contains", "wyn_string_starts_with", "wyn_string_ends_with",
-        "wyn_string_to_upper", "wyn_string_to_lower", "wyn_string_trim", "wyn_str_replace",
-        "wyn_string_split", "wyn_string_join", "wyn_str_substring", "wyn_string_index_of",
-        "wyn_string_last_index_of", "wyn_string_repeat", "wyn_string_reverse",
-        "wyn_string_pad_left", "wyn_string_pad_right",
-        "wyn_string_pad_left_safe", "wyn_string_pad_right_safe",
-        "wyn_array_map", "wyn_array_filter", "wyn_array_reduce", "wyn_array_find",
-        "wyn_array_find_index", "wyn_array_unique", "wyn_array_join",
-        "wyn_array_first", "wyn_array_last", "wyn_array_is_empty",
-        "wyn_array_any", "wyn_array_all", "wyn_array_reverse", "wyn_array_sort",
-        "wyn_array_contains", "wyn_array_index_of", "wyn_array_last_index_of",
-        "wyn_array_slice", "wyn_array_concat", "wyn_array_fill",
-        "wyn_array_sum", "wyn_array_min", "wyn_array_max", "wyn_array_average",
-        "wyn_time_now", "wyn_time_now_millis", "wyn_time_now_micros",
-        "wyn_time_sleep", "wyn_time_sleep_millis", "wyn_time_sleep_micros",
-        "wyn_time_format", "wyn_time_parse",
-        "wyn_time_year", "wyn_time_month", "wyn_time_day",
-        "wyn_time_hour", "wyn_time_minute", "wyn_time_second",
-        "wyn_crypto_hash32", "wyn_crypto_hash64", "wyn_crypto_md5", "wyn_crypto_sha256",
-        "wyn_crypto_base64_encode", "wyn_crypto_base64_decode",
-        "wyn_crypto_random_bytes", "wyn_crypto_random_hex", "wyn_crypto_xor_cipher",
-        "wyn_math_abs", "wyn_math_min", "wyn_math_max", "wyn_math_pow",
-        "wyn_math_sqrt", "wyn_math_floor", "wyn_math_ceil", "wyn_math_round"
-    };
-    
-    for (int i = 0; i < (int)(sizeof(stdlib_funcs)/sizeof(stdlib_funcs[0])); i++) {
-        // await_all and the string-returning http builtins get real function
-        // types below - find_symbol returns the FIRST match, so they must not
-        // be added here.
-        if (strcmp(stdlib_funcs[i], "await_all") == 0) continue;
-        if (strncmp(stdlib_funcs[i], "http_", 5) == 0 ||
-            strncmp(stdlib_funcs[i], "https_", 6) == 0) continue;
-        // json_get_string returns char*; the blanket int registration made it
-        // type `int` in return position (works only in print/interp where the
-        // arg is coerced), so `s = json_get_string(..)` inferred int. The real
-        // string-typed entry is added in the JSON stdlib loop below - find_symbol
-        // returns the FIRST match, so this one must not shadow it.
-        if (strcmp(stdlib_funcs[i], "json_get_string") == 0) continue;
-        // input_line/input_float return char*/float from the runtime, not int.
-        // The blanket int entry made `s = input_line()` infer int, so codegen
-        // emitted int_to_string(s) on the returned char* and printed the line's
-        // ADDRESS as a decimal number (silent wrong output at exit 0). Real
-        // function types are registered just below; find_symbol returns the
-        // FIRST match, so these must not be added here.
-        if (strcmp(stdlib_funcs[i], "input_line") == 0) continue;
-        if (strcmp(stdlib_funcs[i], "input_float") == 0) continue;
-        Token tok = {TOKEN_IDENT, stdlib_funcs[i], (int)strlen(stdlib_funcs[i]), 0};
-        add_symbol(global_scope, tok, builtin_int, false);
-    }
-
-    // stdin builtins with their real return types (see the skips above).
-    // `input()` genuinely returns int, so it keeps the blanket entry.
-    {
-        struct { const char* name; Type* ret; } stdin_fns[] = {
-            {"input_float", builtin_float},
-            {"input_line", builtin_string},
-        };
-        for (int i = 0; i < (int)(sizeof(stdin_fns)/sizeof(stdin_fns[0])); i++) {
-            Type* ft = make_type(TYPE_FUNCTION);
-            ft->fn_type.param_count = 0;
-            ft->fn_type.param_types = NULL;
-            ft->fn_type.return_type = stdin_fns[i].ret;
-            Token tok = {TOKEN_IDENT, stdin_fns[i].name, (int)strlen(stdin_fns[i].name), 0};
-            add_symbol(global_scope, tok, ft, false);
-        }
-    }
-
-    // Bare http builtins with real types. The runtime returns char* from
-    // http_get/http_post/http_put/http_delete/https_get/https_post and
-    // http_error; the blanket int registration above made them type int in
-    // return position while Http.get/Http.post correctly typed string.
-    {
-        struct { const char* name; int pc; Type* ret; } http_fns[] = {
-            {"http_get", 1, builtin_string},
-            {"http_post", 2, builtin_string},
-            {"http_put", 2, builtin_string},
-            {"http_delete", 1, builtin_string},
-            {"https_get", 1, builtin_string},
-            {"https_post", 2, builtin_string},
-            {"http_set_header", 2, builtin_void},
-            {"http_clear_headers", 0, builtin_void},
-            {"http_status", 0, builtin_int},
-            {"http_error", 0, builtin_string},
-        };
-        for (int i = 0; i < (int)(sizeof(http_fns)/sizeof(http_fns[0])); i++) {
-            Type* ft = make_type(TYPE_FUNCTION);
-            ft->fn_type.param_count = http_fns[i].pc;
-            ft->fn_type.param_types = http_fns[i].pc
-                ? malloc(sizeof(Type*) * http_fns[i].pc) : NULL;
-            for (int p = 0; p < http_fns[i].pc; p++)
-                ft->fn_type.param_types[p] = builtin_string;
-            ft->fn_type.return_type = http_fns[i].ret;
-            Token tok = {TOKEN_IDENT, http_fns[i].name, (int)strlen(http_fns[i].name), 0};
-            add_symbol(global_scope, tok, ft, false);
-        }
-    }
-    
-    // await_all returns the array of awaited results, not int - the blanket
-    // int registration above made `println(await_all(futs))` emit
-    // to_string(<WynArray>) and die at the C level (B3, 2026-07-18).
-    // Element type is int (the only awaited payload today); re-registering
-    // OVERRIDES the entry added by the stdlib_funcs loop.
-    {
-        Type* aa_ret = make_type(TYPE_ARRAY);
-        aa_ret->array_type.element_type = builtin_int;
-        Type* aa_type = make_type(TYPE_FUNCTION);
-        aa_type->fn_type.param_count = 1;
-        aa_type->fn_type.param_types = malloc(sizeof(Type*));
-        aa_type->fn_type.param_types[0] = builtin_array;
-        aa_type->fn_type.return_type = aa_ret;
-        Token aa_tok = {TOKEN_IDENT, "await_all", 9, 0};
-        add_symbol(global_scope, aa_tok, aa_type, false);
-    }
-
-    // Add C interface functions with correct function types
-    Type* get_argc_type = make_type(TYPE_FUNCTION);
-    get_argc_type->fn_type.param_count = 0;
-    get_argc_type->fn_type.return_type = builtin_int;
-    Token get_argc_tok = {TOKEN_IDENT, "get_argc", 8, 0};
-    add_symbol(global_scope, get_argc_tok, get_argc_type, false);
-    
-    Type* get_argv_type = make_type(TYPE_FUNCTION);
-    get_argv_type->fn_type.param_count = 1;
-    get_argv_type->fn_type.param_types = malloc(sizeof(Type*));
-    get_argv_type->fn_type.param_types[0] = builtin_int;
-    get_argv_type->fn_type.return_type = builtin_string;
-    Token get_argv_tok = {TOKEN_IDENT, "get_argv", 8, 0};
-    add_symbol(global_scope, get_argv_tok, get_argv_type, false);
-    
-    Type* read_file_content_type = make_type(TYPE_FUNCTION);
-    read_file_content_type->fn_type.param_count = 1;
-    read_file_content_type->fn_type.param_types = malloc(sizeof(Type*));
-    read_file_content_type->fn_type.param_types[0] = builtin_string;
-    read_file_content_type->fn_type.return_type = builtin_string;
-    Token read_file_content_tok = {TOKEN_IDENT, "read_file_content", 17, 0};
-    add_symbol(global_scope, read_file_content_tok, read_file_content_type, false);
-    
-    Type* check_file_exists_type = make_type(TYPE_FUNCTION);
-    check_file_exists_type->fn_type.param_count = 1;
-    check_file_exists_type->fn_type.param_types = malloc(sizeof(Type*));
-    check_file_exists_type->fn_type.param_types[0] = builtin_string;
-    check_file_exists_type->fn_type.return_type = builtin_bool;
-    Token check_file_exists_tok = {TOKEN_IDENT, "check_file_exists", 17, 0};
-    add_symbol(global_scope, check_file_exists_tok, check_file_exists_type, false);
-    
-    Type* is_content_valid_type = make_type(TYPE_FUNCTION);
-    is_content_valid_type->fn_type.param_count = 1;
-    is_content_valid_type->fn_type.param_types = malloc(sizeof(Type*));
-    is_content_valid_type->fn_type.param_types[0] = builtin_string;
-    is_content_valid_type->fn_type.return_type = builtin_bool;
-    Token is_content_valid_tok = {TOKEN_IDENT, "is_content_valid", 16, 0};
-    add_symbol(global_scope, is_content_valid_tok, is_content_valid_type, false);
-    
-    // Add compiler interface functions
-    Type* c_init_lexer_type = make_type(TYPE_FUNCTION);
-    c_init_lexer_type->fn_type.param_count = 1;
-    c_init_lexer_type->fn_type.param_types = malloc(sizeof(Type*));
-    c_init_lexer_type->fn_type.param_types[0] = builtin_string;
-    c_init_lexer_type->fn_type.return_type = builtin_bool;
-    Token c_init_lexer_tok = {TOKEN_IDENT, "c_init_lexer", 12, 0};
-    add_symbol(global_scope, c_init_lexer_tok, c_init_lexer_type, false);
-    
-    Type* c_init_parser_type = make_type(TYPE_FUNCTION);
-    c_init_parser_type->fn_type.param_count = 0;
-    c_init_parser_type->fn_type.return_type = builtin_int;
-    Token c_init_parser_tok = {TOKEN_IDENT, "c_init_parser", 13, 0};
-    add_symbol(global_scope, c_init_parser_tok, c_init_parser_type, false);
-    
-    Type* c_parse_program_type = make_type(TYPE_FUNCTION);
-    c_parse_program_type->fn_type.param_count = 0;
-    c_parse_program_type->fn_type.return_type = builtin_int;
-    Token c_parse_program_tok = {TOKEN_IDENT, "c_parse_program", 15, 0};
-    add_symbol(global_scope, c_parse_program_tok, c_parse_program_type, false);
-    
-    Type* c_init_checker_type = make_type(TYPE_FUNCTION);
-    c_init_checker_type->fn_type.param_count = 0;
-    c_init_checker_type->fn_type.return_type = builtin_int;
-    Token c_init_checker_tok = {TOKEN_IDENT, "c_init_checker", 14, 0};
-    add_symbol(global_scope, c_init_checker_tok, c_init_checker_type, false);
-    
-    Type* c_check_program_type = make_type(TYPE_FUNCTION);
-    c_check_program_type->fn_type.param_count = 1;
-    c_check_program_type->fn_type.param_types = malloc(sizeof(Type*));
-    c_check_program_type->fn_type.param_types[0] = builtin_int;
-    c_check_program_type->fn_type.return_type = builtin_int;
-    Token c_check_program_tok = {TOKEN_IDENT, "c_check_program", 15, 0};
-    add_symbol(global_scope, c_check_program_tok, c_check_program_type, false);
-    
-    Type* c_checker_had_error_type = make_type(TYPE_FUNCTION);
-    c_checker_had_error_type->fn_type.param_count = 0;
-    c_checker_had_error_type->fn_type.return_type = builtin_bool;
-    Token c_checker_had_error_tok = {TOKEN_IDENT, "c_checker_had_error", 19, 0};
-    add_symbol(global_scope, c_checker_had_error_tok, c_checker_had_error_type, false);
-    
-    Type* c_generate_code_type = make_type(TYPE_FUNCTION);
-    c_generate_code_type->fn_type.param_count = 2;
-    c_generate_code_type->fn_type.param_types = malloc(2 * sizeof(Type*));
-    c_generate_code_type->fn_type.param_types[0] = builtin_int;
-    c_generate_code_type->fn_type.param_types[1] = builtin_string;
-    c_generate_code_type->fn_type.return_type = builtin_bool;
-    Token c_generate_code_tok = {TOKEN_IDENT, "c_generate_code", 15, 0};
-    add_symbol(global_scope, c_generate_code_tok, c_generate_code_type, false);
-    
-    // Add wyn_math function types
-    Type* wyn_math_abs_type = make_type(TYPE_FUNCTION);
-    wyn_math_abs_type->fn_type.param_count = 1;
-    wyn_math_abs_type->fn_type.param_types = malloc(sizeof(Type*));
-    wyn_math_abs_type->fn_type.param_types[0] = builtin_float;
-    wyn_math_abs_type->fn_type.return_type = builtin_float;
-    Token wyn_math_abs_tok = {TOKEN_IDENT, "wyn_math_abs", 12, 0};
-    add_symbol(global_scope, wyn_math_abs_tok, wyn_math_abs_type, false);
-    
-    Type* wyn_math_min_type = make_type(TYPE_FUNCTION);
-    wyn_math_min_type->fn_type.param_count = 2;
-    wyn_math_min_type->fn_type.param_types = malloc(2 * sizeof(Type*));
-    wyn_math_min_type->fn_type.param_types[0] = builtin_float;
-    wyn_math_min_type->fn_type.param_types[1] = builtin_float;
-    wyn_math_min_type->fn_type.return_type = builtin_float;
-    Token wyn_math_min_tok = {TOKEN_IDENT, "wyn_math_min", 12, 0};
-    add_symbol(global_scope, wyn_math_min_tok, wyn_math_min_type, false);
-    
-    Type* wyn_math_max_type = make_type(TYPE_FUNCTION);
-    wyn_math_max_type->fn_type.param_count = 2;
-    wyn_math_max_type->fn_type.param_types = malloc(2 * sizeof(Type*));
-    wyn_math_max_type->fn_type.param_types[0] = builtin_float;
-    wyn_math_max_type->fn_type.param_types[1] = builtin_float;
-    wyn_math_max_type->fn_type.return_type = builtin_float;
-    Token wyn_math_max_tok = {TOKEN_IDENT, "wyn_math_max", 12, 0};
-    add_symbol(global_scope, wyn_math_max_tok, wyn_math_max_type, false);
-    
-    Type* wyn_math_pow_type = make_type(TYPE_FUNCTION);
-    wyn_math_pow_type->fn_type.param_count = 2;
-    wyn_math_pow_type->fn_type.param_types = malloc(2 * sizeof(Type*));
-    wyn_math_pow_type->fn_type.param_types[0] = builtin_float;
-    wyn_math_pow_type->fn_type.param_types[1] = builtin_float;
-    wyn_math_pow_type->fn_type.return_type = builtin_float;
-    Token wyn_math_pow_tok = {TOKEN_IDENT, "wyn_math_pow", 12, 0};
-    add_symbol(global_scope, wyn_math_pow_tok, wyn_math_pow_type, false);
-    
-    Type* wyn_math_sqrt_type = make_type(TYPE_FUNCTION);
-    wyn_math_sqrt_type->fn_type.param_count = 1;
-    wyn_math_sqrt_type->fn_type.param_types = malloc(sizeof(Type*));
-    wyn_math_sqrt_type->fn_type.param_types[0] = builtin_float;
-    wyn_math_sqrt_type->fn_type.return_type = builtin_float;
-    Token wyn_math_sqrt_tok = {TOKEN_IDENT, "wyn_math_sqrt", 13, 0};
-    add_symbol(global_scope, wyn_math_sqrt_tok, wyn_math_sqrt_type, false);
-    
-    Type* wyn_math_floor_type = make_type(TYPE_FUNCTION);
-    wyn_math_floor_type->fn_type.param_count = 1;
-    wyn_math_floor_type->fn_type.param_types = malloc(sizeof(Type*));
-    wyn_math_floor_type->fn_type.param_types[0] = builtin_float;
-    wyn_math_floor_type->fn_type.return_type = builtin_float;
-    Token wyn_math_floor_tok = {TOKEN_IDENT, "wyn_math_floor", 14, 0};
-    add_symbol(global_scope, wyn_math_floor_tok, wyn_math_floor_type, false);
-    
-    Type* wyn_math_ceil_type = make_type(TYPE_FUNCTION);
-    wyn_math_ceil_type->fn_type.param_count = 1;
-    wyn_math_ceil_type->fn_type.param_types = malloc(sizeof(Type*));
-    wyn_math_ceil_type->fn_type.param_types[0] = builtin_float;
-    wyn_math_ceil_type->fn_type.return_type = builtin_float;
-    Token wyn_math_ceil_tok = {TOKEN_IDENT, "wyn_math_ceil", 13, 0};
-    add_symbol(global_scope, wyn_math_ceil_tok, wyn_math_ceil_type, false);
-    
-    Type* wyn_math_round_type = make_type(TYPE_FUNCTION);
-    wyn_math_round_type->fn_type.param_count = 1;
-    wyn_math_round_type->fn_type.param_types = malloc(sizeof(Type*));
-    wyn_math_round_type->fn_type.param_types[0] = builtin_float;
-    wyn_math_round_type->fn_type.return_type = builtin_float;
-    Token wyn_math_round_tok = {TOKEN_IDENT, "wyn_math_round", 14, 0};
-    add_symbol(global_scope, wyn_math_round_tok, wyn_math_round_type, false);
-    
-    Type* c_create_c_filename_type = make_type(TYPE_FUNCTION);
-    c_create_c_filename_type->fn_type.param_count = 1;
-    c_create_c_filename_type->fn_type.param_types = malloc(sizeof(Type*));
-    c_create_c_filename_type->fn_type.param_types[0] = builtin_string;
-    c_create_c_filename_type->fn_type.return_type = builtin_string;
-    Token c_create_c_filename_tok = {TOKEN_IDENT, "c_create_c_filename", 19, 0};
-    add_symbol(global_scope, c_create_c_filename_tok, c_create_c_filename_type, false);
-    
-    Type* c_compile_to_binary_type = make_type(TYPE_FUNCTION);
-    c_compile_to_binary_type->fn_type.param_count = 2;
-    c_compile_to_binary_type->fn_type.param_types = malloc(2 * sizeof(Type*));
-    c_compile_to_binary_type->fn_type.param_types[0] = builtin_string;
-    c_compile_to_binary_type->fn_type.param_types[1] = builtin_string;
-    c_compile_to_binary_type->fn_type.return_type = builtin_bool;
-    Token c_compile_to_binary_tok = {TOKEN_IDENT, "c_compile_to_binary", 19, 0};
-    add_symbol(global_scope, c_compile_to_binary_tok, c_compile_to_binary_type, false);
-    
-    Type* c_remove_file_type = make_type(TYPE_FUNCTION);
-    c_remove_file_type->fn_type.param_count = 1;
-    c_remove_file_type->fn_type.param_types = malloc(sizeof(Type*));
-    c_remove_file_type->fn_type.param_types[0] = builtin_string;
-    c_remove_file_type->fn_type.return_type = builtin_bool;
-    Token c_remove_file_tok = {TOKEN_IDENT, "c_remove_file", 13, 0};
-    add_symbol(global_scope, c_remove_file_tok, c_remove_file_type, false);
-    
-    // Register Result functions
-    Type* result_int_ok_type = make_type(TYPE_FUNCTION);
-    result_int_ok_type->fn_type.param_count = 1;
-    result_int_ok_type->fn_type.param_types = malloc(sizeof(Type*));
-    result_int_ok_type->fn_type.param_types[0] = builtin_int;
-    result_int_ok_type->fn_type.return_type = result_int_type;
-    Token result_int_ok_tok = {TOKEN_IDENT, "ResultInt_Ok", 12, 0};
-    add_symbol(global_scope, result_int_ok_tok, result_int_ok_type, false);
-    
-    Type* result_int_err_type = make_type(TYPE_FUNCTION);
-    result_int_err_type->fn_type.param_count = 1;
-    result_int_err_type->fn_type.param_types = malloc(sizeof(Type*));
-    result_int_err_type->fn_type.param_types[0] = builtin_string;
-    result_int_err_type->fn_type.return_type = result_int_type;
-    Token result_int_err_tok = {TOKEN_IDENT, "ResultInt_Err", 13, 0};
-    add_symbol(global_scope, result_int_err_tok, result_int_err_type, false);
-    
-    Type* result_int_is_ok_type = make_type(TYPE_FUNCTION);
-    result_int_is_ok_type->fn_type.param_count = 1;
-    result_int_is_ok_type->fn_type.param_types = malloc(sizeof(Type*));
-    result_int_is_ok_type->fn_type.param_types[0] = result_int_type;
-    result_int_is_ok_type->fn_type.return_type = builtin_int;
-    Token result_int_is_ok_tok = {TOKEN_IDENT, "ResultInt_is_ok", 15, 0};
-    add_symbol(global_scope, result_int_is_ok_tok, result_int_is_ok_type, false);
-    
-    Type* result_int_is_err_type = make_type(TYPE_FUNCTION);
-    result_int_is_err_type->fn_type.param_count = 1;
-    result_int_is_err_type->fn_type.param_types = malloc(sizeof(Type*));
-    result_int_is_err_type->fn_type.param_types[0] = result_int_type;
-    result_int_is_err_type->fn_type.return_type = builtin_int;
-    Token result_int_is_err_tok = {TOKEN_IDENT, "ResultInt_is_err", 16, 0};
-    add_symbol(global_scope, result_int_is_err_tok, result_int_is_err_type, false);
-    
-    Type* result_string_ok_type = make_type(TYPE_FUNCTION);
-    result_string_ok_type->fn_type.param_count = 1;
-    result_string_ok_type->fn_type.param_types = malloc(sizeof(Type*));
-    result_string_ok_type->fn_type.param_types[0] = builtin_string;
-    result_string_ok_type->fn_type.return_type = result_string_type;
-    Token result_string_ok_tok = {TOKEN_IDENT, "ResultString_Ok", 15, 0};
-    add_symbol(global_scope, result_string_ok_tok, result_string_ok_type, false);
-    
-    Type* result_string_err_type = make_type(TYPE_FUNCTION);
-    result_string_err_type->fn_type.param_count = 1;
-    result_string_err_type->fn_type.param_types = malloc(sizeof(Type*));
-    result_string_err_type->fn_type.param_types[0] = builtin_string;
-    result_string_err_type->fn_type.return_type = result_string_type;
-    Token result_string_err_tok = {TOKEN_IDENT, "ResultString_Err", 16, 0};
-    add_symbol(global_scope, result_string_err_tok, result_string_err_type, false);
-    
-    Type* result_string_is_ok_type = make_type(TYPE_FUNCTION);
-    result_string_is_ok_type->fn_type.param_count = 1;
-    result_string_is_ok_type->fn_type.param_types = malloc(sizeof(Type*));
-    result_string_is_ok_type->fn_type.param_types[0] = result_string_type;
-    result_string_is_ok_type->fn_type.return_type = builtin_int;
-    Token result_string_is_ok_tok = {TOKEN_IDENT, "ResultString_is_ok", 18, 0};
-    add_symbol(global_scope, result_string_is_ok_tok, result_string_is_ok_type, false);
-    
-    Type* result_string_is_err_type = make_type(TYPE_FUNCTION);
-    result_string_is_err_type->fn_type.param_count = 1;
-    result_string_is_err_type->fn_type.param_types = malloc(sizeof(Type*));
-    result_string_is_err_type->fn_type.param_types[0] = result_string_type;
-    result_string_is_err_type->fn_type.return_type = builtin_int;
-    Token result_string_is_err_tok = {TOKEN_IDENT, "ResultString_is_err", 19, 0};
-    add_symbol(global_scope, result_string_is_err_tok, result_string_is_err_type, false);
-    
-    // Register Result unwrap functions
-    Type* result_int_unwrap_type = make_type(TYPE_FUNCTION);
-    result_int_unwrap_type->fn_type.param_count = 1;
-    result_int_unwrap_type->fn_type.param_types = malloc(sizeof(Type*));
-    result_int_unwrap_type->fn_type.param_types[0] = result_int_type;
-    result_int_unwrap_type->fn_type.return_type = builtin_int;
-    Token result_int_unwrap_tok = {TOKEN_IDENT, "ResultInt_unwrap", 16, 0};
-    add_symbol(global_scope, result_int_unwrap_tok, result_int_unwrap_type, false);
-    
-    Type* result_int_unwrap_err_type = make_type(TYPE_FUNCTION);
-    result_int_unwrap_err_type->fn_type.param_count = 1;
-    result_int_unwrap_err_type->fn_type.param_types = malloc(sizeof(Type*));
-    result_int_unwrap_err_type->fn_type.param_types[0] = result_int_type;
-    result_int_unwrap_err_type->fn_type.return_type = builtin_string;
-    Token result_int_unwrap_err_tok = {TOKEN_IDENT, "ResultInt_unwrap_err", 20, 0};
-    add_symbol(global_scope, result_int_unwrap_err_tok, result_int_unwrap_err_type, false);
-    
-    Type* result_string_unwrap_type = make_type(TYPE_FUNCTION);
-    result_string_unwrap_type->fn_type.param_count = 1;
-    result_string_unwrap_type->fn_type.param_types = malloc(sizeof(Type*));
-    result_string_unwrap_type->fn_type.param_types[0] = result_string_type;
-    result_string_unwrap_type->fn_type.return_type = builtin_string;
-    Token result_string_unwrap_tok = {TOKEN_IDENT, "ResultString_unwrap", 19, 0};
-    add_symbol(global_scope, result_string_unwrap_tok, result_string_unwrap_type, false);
-    
-    Type* result_string_unwrap_err_type = make_type(TYPE_FUNCTION);
-    result_string_unwrap_err_type->fn_type.param_count = 1;
-    result_string_unwrap_err_type->fn_type.param_types = malloc(sizeof(Type*));
-    result_string_unwrap_err_type->fn_type.param_types[0] = result_string_type;
-    result_string_unwrap_err_type->fn_type.return_type = builtin_string;
-    Token result_string_unwrap_err_tok = {TOKEN_IDENT, "ResultString_unwrap_err", 23, 0};
-    add_symbol(global_scope, result_string_unwrap_err_tok, result_string_unwrap_err_type, false);
-
-    // OptionInt type and functions
-    Type* option_int_type = make_type(TYPE_STRUCT);
-    Token option_int_name = {TOKEN_IDENT, "OptionInt", 9, 0};
-    option_int_type->struct_type.name = option_int_name;
-    add_symbol(global_scope, option_int_name, option_int_type, false);
-
-    Type* oi_some_t = make_type(TYPE_FUNCTION);
-    oi_some_t->fn_type.param_count = 1;
-    oi_some_t->fn_type.param_types = malloc(sizeof(Type*));
-    oi_some_t->fn_type.param_types[0] = builtin_int;
-    oi_some_t->fn_type.return_type = option_int_type;
-    Token oi_some_tok = {TOKEN_IDENT, "OptionInt_Some", 14, 0};
-    add_symbol(global_scope, oi_some_tok, oi_some_t, false);
-
-    Type* oi_none_t = make_type(TYPE_FUNCTION);
-    oi_none_t->fn_type.param_count = 0;
-    oi_none_t->fn_type.param_types = NULL;
-    oi_none_t->fn_type.return_type = option_int_type;
-    Token oi_none_tok = {TOKEN_IDENT, "OptionInt_None", 14, 0};
-    add_symbol(global_scope, oi_none_tok, oi_none_t, false);
-
-    Type* oi_is_some_t = make_type(TYPE_FUNCTION);
-    oi_is_some_t->fn_type.param_count = 1;
-    oi_is_some_t->fn_type.param_types = malloc(sizeof(Type*));
-    oi_is_some_t->fn_type.param_types[0] = option_int_type;
-    oi_is_some_t->fn_type.return_type = builtin_int;
-    Token oi_is_some_tok = {TOKEN_IDENT, "OptionInt_is_some", 17, 0};
-    add_symbol(global_scope, oi_is_some_tok, oi_is_some_t, false);
-
-    Type* oi_is_none_t = make_type(TYPE_FUNCTION);
-    oi_is_none_t->fn_type.param_count = 1;
-    oi_is_none_t->fn_type.param_types = malloc(sizeof(Type*));
-    oi_is_none_t->fn_type.param_types[0] = option_int_type;
-    oi_is_none_t->fn_type.return_type = builtin_int;
-    Token oi_is_none_tok = {TOKEN_IDENT, "OptionInt_is_none", 17, 0};
-    add_symbol(global_scope, oi_is_none_tok, oi_is_none_t, false);
-
-    Type* oi_unwrap_t = make_type(TYPE_FUNCTION);
-    oi_unwrap_t->fn_type.param_count = 1;
-    oi_unwrap_t->fn_type.param_types = malloc(sizeof(Type*));
-    oi_unwrap_t->fn_type.param_types[0] = option_int_type;
-    oi_unwrap_t->fn_type.return_type = builtin_int;
-    Token oi_unwrap_tok = {TOKEN_IDENT, "OptionInt_unwrap", 16, 0};
-    add_symbol(global_scope, oi_unwrap_tok, oi_unwrap_t, false);
-
-    Type* oi_unwrap_or_t = make_type(TYPE_FUNCTION);
-    oi_unwrap_or_t->fn_type.param_count = 2;
-    oi_unwrap_or_t->fn_type.param_types = malloc(sizeof(Type*) * 2);
-    oi_unwrap_or_t->fn_type.param_types[0] = option_int_type;
-    oi_unwrap_or_t->fn_type.param_types[1] = builtin_int;
-    oi_unwrap_or_t->fn_type.return_type = builtin_int;
-    Token oi_unwrap_or_tok = {TOKEN_IDENT, "OptionInt_unwrap_or", 19, 0};
-    add_symbol(global_scope, oi_unwrap_or_tok, oi_unwrap_or_t, false);
-
-    // OptionString type and functions
-    Type* option_string_type = make_type(TYPE_STRUCT);
-    Token option_string_name = {TOKEN_IDENT, "OptionString", 12, 0};
-    option_string_type->struct_type.name = option_string_name;
-    add_symbol(global_scope, option_string_name, option_string_type, false);
-
-    Type* os_some_t = make_type(TYPE_FUNCTION);
-    os_some_t->fn_type.param_count = 1;
-    os_some_t->fn_type.param_types = malloc(sizeof(Type*));
-    os_some_t->fn_type.param_types[0] = builtin_string;
-    os_some_t->fn_type.return_type = option_string_type;
-    Token os_some_tok = {TOKEN_IDENT, "OptionString_Some", 17, 0};
-    add_symbol(global_scope, os_some_tok, os_some_t, false);
-
-    Type* os_none_t = make_type(TYPE_FUNCTION);
-    os_none_t->fn_type.param_count = 0;
-    os_none_t->fn_type.param_types = NULL;
-    os_none_t->fn_type.return_type = option_string_type;
-    Token os_none_tok = {TOKEN_IDENT, "OptionString_None", 17, 0};
-    add_symbol(global_scope, os_none_tok, os_none_t, false);
-
-    Type* os_is_some_t = make_type(TYPE_FUNCTION);
-    os_is_some_t->fn_type.param_count = 1;
-    os_is_some_t->fn_type.param_types = malloc(sizeof(Type*));
-    os_is_some_t->fn_type.param_types[0] = option_string_type;
-    os_is_some_t->fn_type.return_type = builtin_int;
-    Token os_is_some_tok = {TOKEN_IDENT, "OptionString_is_some", 20, 0};
-    add_symbol(global_scope, os_is_some_tok, os_is_some_t, false);
-
-    Type* os_is_none_t = make_type(TYPE_FUNCTION);
-    os_is_none_t->fn_type.param_count = 1;
-    os_is_none_t->fn_type.param_types = malloc(sizeof(Type*));
-    os_is_none_t->fn_type.param_types[0] = option_string_type;
-    os_is_none_t->fn_type.return_type = builtin_int;
-    Token os_is_none_tok = {TOKEN_IDENT, "OptionString_is_none", 20, 0};
-    add_symbol(global_scope, os_is_none_tok, os_is_none_t, false);
-
-    Type* os_unwrap_t = make_type(TYPE_FUNCTION);
-    os_unwrap_t->fn_type.param_count = 1;
-    os_unwrap_t->fn_type.param_types = malloc(sizeof(Type*));
-    os_unwrap_t->fn_type.param_types[0] = option_string_type;
-    os_unwrap_t->fn_type.return_type = builtin_string;
-    Token os_unwrap_tok = {TOKEN_IDENT, "OptionString_unwrap", 19, 0};
-    add_symbol(global_scope, os_unwrap_tok, os_unwrap_t, false);
-
-    Type* os_unwrap_or_t = make_type(TYPE_FUNCTION);
-    os_unwrap_or_t->fn_type.param_count = 2;
-    os_unwrap_or_t->fn_type.param_types = malloc(sizeof(Type*) * 2);
-    os_unwrap_or_t->fn_type.param_types[0] = option_string_type;
-    os_unwrap_or_t->fn_type.param_types[1] = builtin_string;
-    os_unwrap_or_t->fn_type.return_type = builtin_string;
-    Token os_unwrap_or_tok = {TOKEN_IDENT, "OptionString_unwrap_or", 22, 0};
-    add_symbol(global_scope, os_unwrap_or_tok, os_unwrap_or_t, false);
-
-    // OptionFloat type and functions
-    Type* optionfloat_type = make_type(TYPE_STRUCT);
-    Token OptionFloat_name = {TOKEN_IDENT, "OptionFloat", 11, 0};
-    optionfloat_type->struct_type.name = OptionFloat_name;
-    add_symbol(global_scope, OptionFloat_name, optionfloat_type, false);
-    Type* optionfloat_Some_t = make_type(TYPE_FUNCTION);
-    optionfloat_Some_t->fn_type.param_count = 1;
-    optionfloat_Some_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
-    optionfloat_Some_t->fn_type.param_types[0] = builtin_float;
-    optionfloat_Some_t->fn_type.return_type = optionfloat_type;
-    Token optionfloat_Some_tok = {TOKEN_IDENT, "OptionFloat_Some", 16, 0};
-    add_symbol(global_scope, optionfloat_Some_tok, optionfloat_Some_t, false);
-    Type* optionfloat_None_t = make_type(TYPE_FUNCTION);
-    optionfloat_None_t->fn_type.param_count = 0;
-    optionfloat_None_t->fn_type.param_types = NULL;
-    optionfloat_None_t->fn_type.return_type = optionfloat_type;
-    Token optionfloat_None_tok = {TOKEN_IDENT, "OptionFloat_None", 16, 0};
-    add_symbol(global_scope, optionfloat_None_tok, optionfloat_None_t, false);
-    Type* optionfloat_is_some_t = make_type(TYPE_FUNCTION);
-    optionfloat_is_some_t->fn_type.param_count = 1;
-    optionfloat_is_some_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
-    optionfloat_is_some_t->fn_type.param_types[0] = optionfloat_type;
-    optionfloat_is_some_t->fn_type.return_type = builtin_int;
-    Token optionfloat_is_some_tok = {TOKEN_IDENT, "OptionFloat_is_some", 19, 0};
-    add_symbol(global_scope, optionfloat_is_some_tok, optionfloat_is_some_t, false);
-    Type* optionfloat_is_none_t = make_type(TYPE_FUNCTION);
-    optionfloat_is_none_t->fn_type.param_count = 1;
-    optionfloat_is_none_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
-    optionfloat_is_none_t->fn_type.param_types[0] = optionfloat_type;
-    optionfloat_is_none_t->fn_type.return_type = builtin_int;
-    Token optionfloat_is_none_tok = {TOKEN_IDENT, "OptionFloat_is_none", 19, 0};
-    add_symbol(global_scope, optionfloat_is_none_tok, optionfloat_is_none_t, false);
-    Type* optionfloat_unwrap_t = make_type(TYPE_FUNCTION);
-    optionfloat_unwrap_t->fn_type.param_count = 1;
-    optionfloat_unwrap_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
-    optionfloat_unwrap_t->fn_type.param_types[0] = optionfloat_type;
-    optionfloat_unwrap_t->fn_type.return_type = builtin_float;
-    Token optionfloat_unwrap_tok = {TOKEN_IDENT, "OptionFloat_unwrap", 18, 0};
-    add_symbol(global_scope, optionfloat_unwrap_tok, optionfloat_unwrap_t, false);
-    Type* optionfloat_unwrap_or_t = make_type(TYPE_FUNCTION);
-    optionfloat_unwrap_or_t->fn_type.param_count = 2;
-    optionfloat_unwrap_or_t->fn_type.param_types = malloc(sizeof(Type*) * 2);
-    optionfloat_unwrap_or_t->fn_type.param_types[0] = optionfloat_type;
-    optionfloat_unwrap_or_t->fn_type.param_types[1] = builtin_float;
-    optionfloat_unwrap_or_t->fn_type.return_type = builtin_float;
-    Token optionfloat_unwrap_or_tok = {TOKEN_IDENT, "OptionFloat_unwrap_or", 21, 0};
-    add_symbol(global_scope, optionfloat_unwrap_or_tok, optionfloat_unwrap_or_t, false);
-
-    // OptionBool type and functions
-    Type* optionbool_type = make_type(TYPE_STRUCT);
-    Token OptionBool_name = {TOKEN_IDENT, "OptionBool", 10, 0};
-    optionbool_type->struct_type.name = OptionBool_name;
-    add_symbol(global_scope, OptionBool_name, optionbool_type, false);
-    Type* optionbool_Some_t = make_type(TYPE_FUNCTION);
-    optionbool_Some_t->fn_type.param_count = 1;
-    optionbool_Some_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
-    optionbool_Some_t->fn_type.param_types[0] = builtin_bool;
-    optionbool_Some_t->fn_type.return_type = optionbool_type;
-    Token optionbool_Some_tok = {TOKEN_IDENT, "OptionBool_Some", 15, 0};
-    add_symbol(global_scope, optionbool_Some_tok, optionbool_Some_t, false);
-    Type* optionbool_None_t = make_type(TYPE_FUNCTION);
-    optionbool_None_t->fn_type.param_count = 0;
-    optionbool_None_t->fn_type.param_types = NULL;
-    optionbool_None_t->fn_type.return_type = optionbool_type;
-    Token optionbool_None_tok = {TOKEN_IDENT, "OptionBool_None", 15, 0};
-    add_symbol(global_scope, optionbool_None_tok, optionbool_None_t, false);
-    Type* optionbool_is_some_t = make_type(TYPE_FUNCTION);
-    optionbool_is_some_t->fn_type.param_count = 1;
-    optionbool_is_some_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
-    optionbool_is_some_t->fn_type.param_types[0] = optionbool_type;
-    optionbool_is_some_t->fn_type.return_type = builtin_int;
-    Token optionbool_is_some_tok = {TOKEN_IDENT, "OptionBool_is_some", 18, 0};
-    add_symbol(global_scope, optionbool_is_some_tok, optionbool_is_some_t, false);
-    Type* optionbool_is_none_t = make_type(TYPE_FUNCTION);
-    optionbool_is_none_t->fn_type.param_count = 1;
-    optionbool_is_none_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
-    optionbool_is_none_t->fn_type.param_types[0] = optionbool_type;
-    optionbool_is_none_t->fn_type.return_type = builtin_int;
-    Token optionbool_is_none_tok = {TOKEN_IDENT, "OptionBool_is_none", 18, 0};
-    add_symbol(global_scope, optionbool_is_none_tok, optionbool_is_none_t, false);
-    Type* optionbool_unwrap_t = make_type(TYPE_FUNCTION);
-    optionbool_unwrap_t->fn_type.param_count = 1;
-    optionbool_unwrap_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
-    optionbool_unwrap_t->fn_type.param_types[0] = optionbool_type;
-    optionbool_unwrap_t->fn_type.return_type = builtin_bool;
-    Token optionbool_unwrap_tok = {TOKEN_IDENT, "OptionBool_unwrap", 17, 0};
-    add_symbol(global_scope, optionbool_unwrap_tok, optionbool_unwrap_t, false);
-    Type* optionbool_unwrap_or_t = make_type(TYPE_FUNCTION);
-    optionbool_unwrap_or_t->fn_type.param_count = 2;
-    optionbool_unwrap_or_t->fn_type.param_types = malloc(sizeof(Type*) * 2);
-    optionbool_unwrap_or_t->fn_type.param_types[0] = optionbool_type;
-    optionbool_unwrap_or_t->fn_type.param_types[1] = builtin_bool;
-    optionbool_unwrap_or_t->fn_type.return_type = builtin_bool;
-    Token optionbool_unwrap_or_tok = {TOKEN_IDENT, "OptionBool_unwrap_or", 20, 0};
-    add_symbol(global_scope, optionbool_unwrap_or_tok, optionbool_unwrap_or_t, false);
-
-    // ResultFloat type and functions
-    Type* resultfloat_type = make_type(TYPE_STRUCT);
-    Token ResultFloat_name = {TOKEN_IDENT, "ResultFloat", 11, 0};
-    resultfloat_type->struct_type.name = ResultFloat_name;
-    add_symbol(global_scope, ResultFloat_name, resultfloat_type, false);
-    Type* resultfloat_Ok_t = make_type(TYPE_FUNCTION);
-    resultfloat_Ok_t->fn_type.param_count = 1;
-    resultfloat_Ok_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
-    resultfloat_Ok_t->fn_type.param_types[0] = builtin_float;
-    resultfloat_Ok_t->fn_type.return_type = resultfloat_type;
-    Token resultfloat_Ok_tok = {TOKEN_IDENT, "ResultFloat_Ok", 14, 0};
-    add_symbol(global_scope, resultfloat_Ok_tok, resultfloat_Ok_t, false);
-    Type* resultfloat_Err_t = make_type(TYPE_FUNCTION);
-    resultfloat_Err_t->fn_type.param_count = 1;
-    resultfloat_Err_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
-    resultfloat_Err_t->fn_type.param_types[0] = builtin_string;
-    resultfloat_Err_t->fn_type.return_type = resultfloat_type;
-    Token resultfloat_Err_tok = {TOKEN_IDENT, "ResultFloat_Err", 15, 0};
-    add_symbol(global_scope, resultfloat_Err_tok, resultfloat_Err_t, false);
-    Type* resultfloat_is_ok_t = make_type(TYPE_FUNCTION);
-    resultfloat_is_ok_t->fn_type.param_count = 1;
-    resultfloat_is_ok_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
-    resultfloat_is_ok_t->fn_type.param_types[0] = resultfloat_type;
-    resultfloat_is_ok_t->fn_type.return_type = builtin_int;
-    Token resultfloat_is_ok_tok = {TOKEN_IDENT, "ResultFloat_is_ok", 17, 0};
-    add_symbol(global_scope, resultfloat_is_ok_tok, resultfloat_is_ok_t, false);
-    Type* resultfloat_is_err_t = make_type(TYPE_FUNCTION);
-    resultfloat_is_err_t->fn_type.param_count = 1;
-    resultfloat_is_err_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
-    resultfloat_is_err_t->fn_type.param_types[0] = resultfloat_type;
-    resultfloat_is_err_t->fn_type.return_type = builtin_int;
-    Token resultfloat_is_err_tok = {TOKEN_IDENT, "ResultFloat_is_err", 18, 0};
-    add_symbol(global_scope, resultfloat_is_err_tok, resultfloat_is_err_t, false);
-    Type* resultfloat_unwrap_t = make_type(TYPE_FUNCTION);
-    resultfloat_unwrap_t->fn_type.param_count = 1;
-    resultfloat_unwrap_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
-    resultfloat_unwrap_t->fn_type.param_types[0] = resultfloat_type;
-    resultfloat_unwrap_t->fn_type.return_type = builtin_float;
-    Token resultfloat_unwrap_tok = {TOKEN_IDENT, "ResultFloat_unwrap", 18, 0};
-    add_symbol(global_scope, resultfloat_unwrap_tok, resultfloat_unwrap_t, false);
-    Type* resultfloat_unwrap_err_t = make_type(TYPE_FUNCTION);
-    resultfloat_unwrap_err_t->fn_type.param_count = 1;
-    resultfloat_unwrap_err_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
-    resultfloat_unwrap_err_t->fn_type.param_types[0] = resultfloat_type;
-    resultfloat_unwrap_err_t->fn_type.return_type = builtin_string;
-    Token resultfloat_unwrap_err_tok = {TOKEN_IDENT, "ResultFloat_unwrap_err", 22, 0};
-    add_symbol(global_scope, resultfloat_unwrap_err_tok, resultfloat_unwrap_err_t, false);
-    Type* resultfloat_unwrap_or_t = make_type(TYPE_FUNCTION);
-    resultfloat_unwrap_or_t->fn_type.param_count = 2;
-    resultfloat_unwrap_or_t->fn_type.param_types = malloc(sizeof(Type*) * 2);
-    resultfloat_unwrap_or_t->fn_type.param_types[0] = resultfloat_type;
-    resultfloat_unwrap_or_t->fn_type.param_types[1] = builtin_float;
-    resultfloat_unwrap_or_t->fn_type.return_type = builtin_float;
-    Token resultfloat_unwrap_or_tok = {TOKEN_IDENT, "ResultFloat_unwrap_or", 21, 0};
-    add_symbol(global_scope, resultfloat_unwrap_or_tok, resultfloat_unwrap_or_t, false);
-
-    // ResultBool type and functions
-    Type* resultbool_type = make_type(TYPE_STRUCT);
-    Token ResultBool_name = {TOKEN_IDENT, "ResultBool", 10, 0};
-    resultbool_type->struct_type.name = ResultBool_name;
-    add_symbol(global_scope, ResultBool_name, resultbool_type, false);
-    Type* resultbool_Ok_t = make_type(TYPE_FUNCTION);
-    resultbool_Ok_t->fn_type.param_count = 1;
-    resultbool_Ok_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
-    resultbool_Ok_t->fn_type.param_types[0] = builtin_bool;
-    resultbool_Ok_t->fn_type.return_type = resultbool_type;
-    Token resultbool_Ok_tok = {TOKEN_IDENT, "ResultBool_Ok", 13, 0};
-    add_symbol(global_scope, resultbool_Ok_tok, resultbool_Ok_t, false);
-    Type* resultbool_Err_t = make_type(TYPE_FUNCTION);
-    resultbool_Err_t->fn_type.param_count = 1;
-    resultbool_Err_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
-    resultbool_Err_t->fn_type.param_types[0] = builtin_string;
-    resultbool_Err_t->fn_type.return_type = resultbool_type;
-    Token resultbool_Err_tok = {TOKEN_IDENT, "ResultBool_Err", 14, 0};
-    add_symbol(global_scope, resultbool_Err_tok, resultbool_Err_t, false);
-    Type* resultbool_is_ok_t = make_type(TYPE_FUNCTION);
-    resultbool_is_ok_t->fn_type.param_count = 1;
-    resultbool_is_ok_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
-    resultbool_is_ok_t->fn_type.param_types[0] = resultbool_type;
-    resultbool_is_ok_t->fn_type.return_type = builtin_int;
-    Token resultbool_is_ok_tok = {TOKEN_IDENT, "ResultBool_is_ok", 16, 0};
-    add_symbol(global_scope, resultbool_is_ok_tok, resultbool_is_ok_t, false);
-    Type* resultbool_is_err_t = make_type(TYPE_FUNCTION);
-    resultbool_is_err_t->fn_type.param_count = 1;
-    resultbool_is_err_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
-    resultbool_is_err_t->fn_type.param_types[0] = resultbool_type;
-    resultbool_is_err_t->fn_type.return_type = builtin_int;
-    Token resultbool_is_err_tok = {TOKEN_IDENT, "ResultBool_is_err", 17, 0};
-    add_symbol(global_scope, resultbool_is_err_tok, resultbool_is_err_t, false);
-    Type* resultbool_unwrap_t = make_type(TYPE_FUNCTION);
-    resultbool_unwrap_t->fn_type.param_count = 1;
-    resultbool_unwrap_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
-    resultbool_unwrap_t->fn_type.param_types[0] = resultbool_type;
-    resultbool_unwrap_t->fn_type.return_type = builtin_bool;
-    Token resultbool_unwrap_tok = {TOKEN_IDENT, "ResultBool_unwrap", 17, 0};
-    add_symbol(global_scope, resultbool_unwrap_tok, resultbool_unwrap_t, false);
-    Type* resultbool_unwrap_err_t = make_type(TYPE_FUNCTION);
-    resultbool_unwrap_err_t->fn_type.param_count = 1;
-    resultbool_unwrap_err_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
-    resultbool_unwrap_err_t->fn_type.param_types[0] = resultbool_type;
-    resultbool_unwrap_err_t->fn_type.return_type = builtin_string;
-    Token resultbool_unwrap_err_tok = {TOKEN_IDENT, "ResultBool_unwrap_err", 21, 0};
-    add_symbol(global_scope, resultbool_unwrap_err_tok, resultbool_unwrap_err_t, false);
-    Type* resultbool_unwrap_or_t = make_type(TYPE_FUNCTION);
-    resultbool_unwrap_or_t->fn_type.param_count = 2;
-    resultbool_unwrap_or_t->fn_type.param_types = malloc(sizeof(Type*) * 2);
-    resultbool_unwrap_or_t->fn_type.param_types[0] = resultbool_type;
-    resultbool_unwrap_or_t->fn_type.param_types[1] = builtin_bool;
-    resultbool_unwrap_or_t->fn_type.return_type = builtin_bool;
-    Token resultbool_unwrap_or_tok = {TOKEN_IDENT, "ResultBool_unwrap_or", 20, 0};
-    add_symbol(global_scope, resultbool_unwrap_or_tok, resultbool_unwrap_or_t, false);
-
-    // System functions
-    Type* sys_exec_t = make_type(TYPE_FUNCTION);
-    sys_exec_t->fn_type.param_count = 1;
-    sys_exec_t->fn_type.param_types = malloc(sizeof(Type*));
-    sys_exec_t->fn_type.param_types[0] = builtin_string;
-    sys_exec_t->fn_type.return_type = builtin_string;
-    Token sys_exec_tok = {TOKEN_IDENT, "System_exec", 11, 0};
-    add_symbol(global_scope, sys_exec_tok, sys_exec_t, false);
-
-    Type* sys_exec_code_t = make_type(TYPE_FUNCTION);
-    sys_exec_code_t->fn_type.param_count = 1;
-    sys_exec_code_t->fn_type.param_types = malloc(sizeof(Type*));
-    sys_exec_code_t->fn_type.param_types[0] = builtin_string;
-    sys_exec_code_t->fn_type.return_type = builtin_int;
-    Token sys_exec_code_tok = {TOKEN_IDENT, "System_exec_code", 16, 0};
-    add_symbol(global_scope, sys_exec_code_tok, sys_exec_code_t, false);
-
-    Type* sys_exit_t = make_type(TYPE_FUNCTION);
-    sys_exit_t->fn_type.param_count = 1;
-    sys_exit_t->fn_type.param_types = malloc(sizeof(Type*));
-    sys_exit_t->fn_type.param_types[0] = builtin_int;
-    sys_exit_t->fn_type.return_type = builtin_void;
-    Token sys_exit_tok = {TOKEN_IDENT, "System_exit", 11, 0};
-    add_symbol(global_scope, sys_exit_tok, sys_exit_t, false);
-
-    Type* sys_env_t = make_type(TYPE_FUNCTION);
-    sys_env_t->fn_type.param_count = 1;
-    sys_env_t->fn_type.param_types = malloc(sizeof(Type*));
-    sys_env_t->fn_type.param_types[0] = builtin_string;
-    sys_env_t->fn_type.return_type = builtin_string;
-    Token sys_env_tok = {TOKEN_IDENT, "System_env", 10, 0};
-    add_symbol(global_scope, sys_env_tok, sys_env_t, false);
-
-    // Conversion functions
-    Type* itos_t = make_type(TYPE_FUNCTION);
-    itos_t->fn_type.param_count = 1;
-    itos_t->fn_type.param_types = malloc(sizeof(Type*));
-    itos_t->fn_type.param_types[0] = builtin_int;
-    itos_t->fn_type.return_type = builtin_string;
-    Token itos_tok = {TOKEN_IDENT, "int_to_string", 13, 0};
-    add_symbol(global_scope, itos_tok, itos_t, false);
-
-    Type* ftos_t = make_type(TYPE_FUNCTION);
-    ftos_t->fn_type.param_count = 1;
-    ftos_t->fn_type.param_types = malloc(sizeof(Type*));
-    ftos_t->fn_type.param_types[0] = builtin_float;
-    ftos_t->fn_type.return_type = builtin_string;
-    Token ftos_tok = {TOKEN_IDENT, "float_to_string", 15, 0};
-    add_symbol(global_scope, ftos_tok, ftos_t, false);
-
-    // Math stdlib - register all Math_ functions
-    struct { const char* name; int nlen; int param_count; Type* p1; Type* p2; Type* ret; } reg_math_fns[] = {
-        {"Math_abs", 8, 1, builtin_float, NULL, builtin_float},
-        {"Math_max", 8, 2, builtin_float, builtin_float, builtin_float},
-        {"Math_min", 8, 2, builtin_float, builtin_float, builtin_float},
-        {"Math_pow", 8, 2, builtin_float, builtin_float, builtin_float},
-        {"Math_sqrt", 9, 1, builtin_float, NULL, builtin_float},
-        {"Math_floor", 10, 1, builtin_float, NULL, builtin_float},
-        {"Math_ceil", 9, 1, builtin_float, NULL, builtin_float},
-        {"Math_round", 10, 1, builtin_float, NULL, builtin_float},
-        {"Math_sin", 8, 1, builtin_float, NULL, builtin_float},
-        {"Math_cos", 8, 1, builtin_float, NULL, builtin_float},
-        {"Math_tan", 8, 1, builtin_float, NULL, builtin_float},
-        {"Math_round_to", 13, 2, builtin_float, builtin_int, builtin_float},
-        {"Math_atan2", 10, 2, builtin_float, builtin_float, builtin_float},
-        {"Math_pi", 7, 0, NULL, NULL, builtin_float},
-        {"Math_e", 6, 0, NULL, NULL, builtin_float},
-        {"Math_random", 11, 0, NULL, NULL, builtin_float},
-    };
-    for (int i = 0; i < (int)(sizeof(reg_math_fns)/sizeof(reg_math_fns[0])); i++) {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = reg_math_fns[i].param_count;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
-        if (reg_math_fns[i].p1) ft->fn_type.param_types[0] = reg_math_fns[i].p1;
-        if (reg_math_fns[i].p2) ft->fn_type.param_types[1] = reg_math_fns[i].p2;
-        ft->fn_type.return_type = reg_math_fns[i].ret;
-        Token tok = {TOKEN_IDENT, reg_math_fns[i].name, reg_math_fns[i].nlen, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-
-    // String stdlib - function-style str_ functions
-    struct { const char* name; int nlen; int pc; Type* p1; Type* p2; Type* p3; Type* ret; } str_fns[] = {
-        {"str_len", 7, 1, builtin_string, NULL, NULL, builtin_int},
-        {"str_upper", 9, 1, builtin_string, NULL, NULL, builtin_string},
-        {"str_lower", 9, 1, builtin_string, NULL, NULL, builtin_string},
-        {"str_trim", 8, 1, builtin_string, NULL, NULL, builtin_string},
-        {"str_contains", 12, 2, builtin_string, builtin_string, NULL, builtin_int},
-        {"str_starts_with", 15, 2, builtin_string, builtin_string, NULL, builtin_int},
-        {"str_ends_with", 13, 2, builtin_string, builtin_string, NULL, builtin_int},
-        {"str_index_of", 12, 2, builtin_string, builtin_string, NULL, builtin_int},
-        {"str_replace", 11, 3, builtin_string, builtin_string, builtin_string, builtin_string},
-        {"str_substring", 13, 3, builtin_string, builtin_int, builtin_int, builtin_string},
-        {"str_repeat", 10, 2, builtin_string, builtin_int, NULL, builtin_string},
-        {"str_concat", 10, 2, builtin_string, builtin_string, NULL, builtin_string},
-        {"str_to_int", 10, 1, builtin_string, NULL, NULL, builtin_int},
-    };
-    for (int i = 0; i < (int)(sizeof(str_fns)/sizeof(str_fns[0])); i++) {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = str_fns[i].pc;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
-        if (str_fns[i].p1) ft->fn_type.param_types[0] = str_fns[i].p1;
-        if (str_fns[i].p2) ft->fn_type.param_types[1] = str_fns[i].p2;
-        if (str_fns[i].p3) ft->fn_type.param_types[2] = str_fns[i].p3;
-        ft->fn_type.return_type = str_fns[i].ret;
-        Token tok = {TOKEN_IDENT, str_fns[i].name, str_fns[i].nlen, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-
-    // Path stdlib
-    struct { const char* name; int nlen; } reg_path_fns[] = {
-        {"Path_basename", 13}, {"Path_dirname", 12},
-        {"Path_extension", 14}, {"Path_join", 9},
-    };
-    for (int i = 0; i < 4; i++) {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = (i == 3) ? 2 : 1; // Path_join takes 2
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
-        ft->fn_type.param_types[0] = builtin_string;
-        if (i == 3) ft->fn_type.param_types[1] = builtin_string;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, reg_path_fns[i].name, reg_path_fns[i].nlen, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    
-    // JSON stdlib
-    Type* json_obj_type = make_type(TYPE_MAP);
-    struct { const char* name; int nlen; int pc; Type* p1; Type* p2; Type* p3; Type* ret; } json_fns[] = {
-        {"json_new", 8, 0, NULL, NULL, NULL, json_obj_type},
-        {"json_set_string", 15, 3, json_obj_type, builtin_string, builtin_string, builtin_void},
-        {"json_set_int", 12, 3, json_obj_type, builtin_string, builtin_int, builtin_void},
-        // param0 is the JSON handle. json_parse() is registered (blanket loop) as
-        // a plain int handle, so accept int here (not json_obj_type) or a var
-        // holding a parsed doc fails the arg check. Return type MUST be string so
-        // `s = json_get_string(..)` infers string everywhere, not just in
-        // print/interp position (json_get_int stays shadowed as unchecked int).
-        {"json_get_string", 15, 2, builtin_int, builtin_string, NULL, builtin_string},
-        {"json_get_int", 12, 2, json_obj_type, builtin_string, NULL, builtin_int},
-        {"json_stringify", 14, 1, json_obj_type, NULL, NULL, builtin_string},
-        {"Regex_match", 11, 2, builtin_string, builtin_string, NULL, builtin_bool},
-        {"Regex_replace", 13, 3, builtin_string, builtin_string, builtin_string, builtin_string},
-    };
-    for (int i = 0; i < 8; i++) {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = json_fns[i].pc;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
-        if (json_fns[i].p1) ft->fn_type.param_types[0] = json_fns[i].p1;
-        if (json_fns[i].p2) ft->fn_type.param_types[1] = json_fns[i].p2;
-        if (json_fns[i].p3) ft->fn_type.param_types[2] = json_fns[i].p3;
-        ft->fn_type.return_type = json_fns[i].ret;
-        Token tok = {TOKEN_IDENT, json_fns[i].name, json_fns[i].nlen, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-
-    // Register namespace identifiers so checker doesn't reject File.read() etc.
-    // Also register their methods with proper return types
-    const char* namespaces[] = {"File", "Path", "DateTime", "Time", "Json", "Http", "HashMap", "HashSet", "Regex", "System", "Terminal", "Color", "Test", "Math", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", "Template", "Socket", "Ws", "Args", "Base64", "Toml", "Bcrypt", "Random", "Web", "Smtp", "App", "Shared", "Ptr", NULL};
-    for (int i = 0; namespaces[i]; i++) {
-        Token ns_tok = {TOKEN_IDENT, namespaces[i], (int)strlen(namespaces[i]), 0};
-        if (!find_symbol(global_scope, ns_tok)) {
-            add_symbol(global_scope, ns_tok, builtin_int, false);
-        }
-    }
-    
-    // Register loaded user modules as namespace symbols
-    {
-        extern int get_module_count(void);
-        extern void* get_module_entry_at(int index);
-        int mc = get_module_count();
-        for (int mi = 0; mi < mc; mi++) {
-            typedef struct { char* name; void* ast; } ME;
-            ME* mod = (ME*)get_module_entry_at(mi);
-            // Register short name (last segment after /)
-            char* slash = strrchr(mod->name, '/');
-            const char* short_name = slash ? slash + 1 : mod->name;
-            Token ns_tok = {TOKEN_IDENT, short_name, (int)strlen(short_name), 0};
-            if (!find_symbol(global_scope, ns_tok)) {
-                add_symbol(global_scope, ns_tok, builtin_int, false);
-            }
-        }
-    }
-
-    // File namespace methods
-    struct { const char* name; int nlen; int pc; Type* p1; Type* p2; Type* ret; } file_ns_fns[] = {
-        {"File_read", 9, 1, builtin_string, NULL, builtin_string},
-        {"File_write", 10, 2, builtin_string, builtin_string, builtin_int},
-        {"File_exists", 11, 1, builtin_string, NULL, builtin_int},
-        {"File_delete", 11, 1, builtin_string, NULL, builtin_int},
-        {"File_copy", 9, 2, builtin_string, builtin_string, builtin_int},
-        {"File_move", 9, 2, builtin_string, builtin_string, builtin_int},
-        {"File_size", 9, 1, builtin_string, NULL, builtin_int},
-        {"File_is_dir", 11, 1, builtin_string, NULL, builtin_int},
-        {"File_is_file", 12, 1, builtin_string, NULL, builtin_int},
-        {"File_mkdir", 10, 1, builtin_string, NULL, builtin_int},
-        {"File_list_dir", 13, 1, builtin_string, NULL, builtin_string},
-        {"File_append", 11, 2, builtin_string, builtin_string, builtin_int},
-        {"File_cwd", 8, 0, NULL, NULL, builtin_string},
-        {"File_open", 9, 2, builtin_string, builtin_string, builtin_int},
-        {"File_read_line", 14, 1, builtin_int, NULL, builtin_string},
-        {"File_write_line", 15, 2, builtin_int, builtin_string, builtin_int},
-        {"File_eof", 8, 1, builtin_int, NULL, builtin_int},
-        {"File_close", 10, 1, builtin_int, NULL, builtin_void},
-    };
-    for (int i = 0; i < (int)(sizeof(file_ns_fns)/sizeof(file_ns_fns[0])); i++) {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = file_ns_fns[i].pc;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
-        ft->fn_type.param_types[0] = file_ns_fns[i].p1;
-        if (file_ns_fns[i].p2) ft->fn_type.param_types[1] = file_ns_fns[i].p2;
-        ft->fn_type.return_type = file_ns_fns[i].ret;
-        Token tok = {TOKEN_IDENT, file_ns_fns[i].name, file_ns_fns[i].nlen, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-
-    // File.read_lines(path) -> [string] (week-one stdlib, P5). Registered with
-    // its real array return type so downstream len()/for/indexing all see
-    // [string] instead of the old builtin_string placeholder.
-    {
-        Type* lines_ret = make_type(TYPE_ARRAY);
-        lines_ret->array_type.element_type = builtin_string;
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.return_type = lines_ret;
-        Token tok = {TOKEN_IDENT, "File_read_lines", 15, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-
-    // Json.keys(j) -> [string] (real array return type, so for/len/index work).
-    {
-        Type* keys_ret = make_type(TYPE_ARRAY);
-        keys_ret->array_type.element_type = builtin_string;
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_int;  // json handle
-        ft->fn_type.return_type = keys_ret;
-        Token tok = {TOKEN_IDENT, "Json_keys", 9, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-
-    // HashMap namespace: HashMap.new() -> HashMap_new()
-    Type* map_type = make_type(TYPE_MAP);
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 0;
-        ft->fn_type.param_types = NULL;
-        ft->fn_type.return_type = map_type;
-        Token tok = {TOKEN_IDENT, "HashMap_new", 11, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-
-    // HashSet namespace: HashSet.new() -> HashSet_new()
-    Type* set_type = make_type(TYPE_SET);
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 0;
-        ft->fn_type.param_types = NULL;
-        ft->fn_type.return_type = set_type;
-        Token tok = {TOKEN_IDENT, "HashSet_new", 11, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-
-    // Json namespace
-    Type* json_type = make_type(TYPE_MAP); // opaque pointer
-    struct { const char* name; int nlen; int pc; Type* p1; Type* p2; Type* p3; Type* ret; } json_ns_fns[] = {
-        {"Json_new", 8, 0, NULL, NULL, NULL, json_type},
-        {"Json_set_string", 15, 3, json_type, builtin_string, builtin_string, builtin_void},
-        {"Json_set_int", 12, 3, json_type, builtin_string, builtin_int, builtin_void},
-        {"Json_set_bool", 13, 3, json_type, builtin_string, builtin_int, builtin_void},
-        // Json_get_string and Json_get_int moved to new_fns for flexible type checking
-        // {"Json_get_string", 15, 2, json_type, builtin_string, NULL, builtin_string},
-        // {"Json_get_int", 12, 2, json_type, builtin_string, NULL, builtin_int},
-        {"Json_stringify", 14, 1, json_type, NULL, NULL, builtin_string},
-    };
-    // Iterate the actual array length - two entries were commented out above, so
-    // a hardcoded 6 read one past the end (ASan: stack-buffer-overflow here).
-    int json_ns_fn_count = (int)(sizeof(json_ns_fns) / sizeof(json_ns_fns[0]));
-    for (int i = 0; i < json_ns_fn_count; i++) {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = json_ns_fns[i].pc;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
-        if (json_ns_fns[i].p1) ft->fn_type.param_types[0] = json_ns_fns[i].p1;
-        if (json_ns_fns[i].p2) ft->fn_type.param_types[1] = json_ns_fns[i].p2;
-        if (json_ns_fns[i].p3) ft->fn_type.param_types[2] = json_ns_fns[i].p3;
-        ft->fn_type.return_type = json_ns_fns[i].ret;
-        Token tok = {TOKEN_IDENT, json_ns_fns[i].name, json_ns_fns[i].nlen, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-
-    // Http namespace
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "Http_get", 8, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-
-    // Regex namespace
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 2;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.param_types[1] = builtin_string;
-        ft->fn_type.return_type = builtin_int;
-        Token tok = {TOKEN_IDENT, "Regex_match", 11, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 3;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.param_types[1] = builtin_string;
-        ft->fn_type.param_types[2] = builtin_string;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "Regex_replace", 13, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-
-    // Terminal namespace
-    struct { const char* name; int nlen; int pc; Type* p1; Type* p2; Type* ret; } term_fns[] = {
-        {"Terminal_cols", 13, 0, NULL, NULL, builtin_int},
-        {"Terminal_rows", 13, 0, NULL, NULL, builtin_int},
-        {"Terminal_raw_mode", 17, 0, NULL, NULL, builtin_void},
-        {"Terminal_restore", 16, 0, NULL, NULL, builtin_void},
-        {"Terminal_read_key", 17, 0, NULL, NULL, builtin_int},
-        {"Terminal_clear", 14, 0, NULL, NULL, builtin_void},
-        {"Terminal_write", 14, 1, builtin_string, NULL, builtin_void},
-        {"Terminal_move", 13, 2, builtin_int, builtin_int, builtin_void},
-    };
-    for (int i = 0; i < 8; i++) {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = term_fns[i].pc;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
-        if (term_fns[i].p1) ft->fn_type.param_types[0] = term_fns[i].p1;
-        if (term_fns[i].p2) ft->fn_type.param_types[1] = term_fns[i].p2;
-        ft->fn_type.return_type = term_fns[i].ret;
-        Token tok = {TOKEN_IDENT, term_fns[i].name, term_fns[i].nlen, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-
-    // DateTime stdlib
-    // Color namespace - string-returning color functions
-    const char* color_fn_names[] = {
-        "Color_red", "Color_green", "Color_yellow", "Color_blue",
-        "Color_magenta", "Color_cyan", "Color_gray", "Color_bold",
-        "Color_dim", "Color_underline"
-    };
-    for (int i = 0; i < (int)(sizeof(color_fn_names)/sizeof(color_fn_names[0])); i++) {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, color_fn_names[i], strlen(color_fn_names[i]), 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-
-    Type* dt_now_t = make_type(TYPE_FUNCTION);
-    dt_now_t->fn_type.param_count = 0;
-    dt_now_t->fn_type.param_types = NULL;
-    dt_now_t->fn_type.return_type = builtin_int;
-    Token dt_now_tok = {TOKEN_IDENT, "DateTime_now", 12, 0};
-    add_symbol(global_scope, dt_now_tok, dt_now_t, false);
-    
-    // DateTime.millis / DateTime.micros
-    Type* dt_millis_t = make_type(TYPE_FUNCTION);
-    dt_millis_t->fn_type.param_count = 0;
-    dt_millis_t->fn_type.param_types = NULL;
-    dt_millis_t->fn_type.return_type = builtin_int;
-    Token dt_millis_tok = {TOKEN_IDENT, "DateTime_millis", 15, 0};
-    add_symbol(global_scope, dt_millis_tok, dt_millis_t, false);
-    Type* dt_micros_t = make_type(TYPE_FUNCTION);
-    dt_micros_t->fn_type.param_count = 0;
-    dt_micros_t->fn_type.param_types = NULL;
-    dt_micros_t->fn_type.return_type = builtin_int;
-    Token dt_micros_tok = {TOKEN_IDENT, "DateTime_micros", 15, 0};
-    add_symbol(global_scope, dt_micros_tok, dt_micros_t, false);
-    
-    Type* dt_format_t = make_type(TYPE_FUNCTION);
-    dt_format_t->fn_type.param_count = 2;
-    dt_format_t->fn_type.param_types = malloc(sizeof(Type*) * 2);
-    dt_format_t->fn_type.param_types[0] = builtin_int;
-    dt_format_t->fn_type.param_types[1] = builtin_string;
-    dt_format_t->fn_type.return_type = builtin_string;
-    Token dt_format_tok = {TOKEN_IDENT, "DateTime_format", 15, 0};
-    add_symbol(global_scope, dt_format_tok, dt_format_t, false);
-    
-    Type* dt_sleep_t = make_type(TYPE_FUNCTION);
-    dt_sleep_t->fn_type.param_count = 1;
-    dt_sleep_t->fn_type.param_types = malloc(sizeof(Type*));
-    dt_sleep_t->fn_type.param_types[0] = builtin_int;
-    dt_sleep_t->fn_type.return_type = builtin_void;
-    Token dt_sleep_tok = {TOKEN_IDENT, "DateTime_sleep", 14, 0};
-    add_symbol(global_scope, dt_sleep_tok, dt_sleep_t, false);
-
-    // Http namespace - additional methods
-    {
-        // Http.post(url, data) -> string
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 2;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.param_types[1] = builtin_string;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "Http_post", 9, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 2;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.param_types[1] = builtin_string;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "Http_put", 8, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "Http_delete", 11, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        // Http.serve(port) -> int (server fd)
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_int;
-        ft->fn_type.return_type = builtin_int;
-        Token tok = {TOKEN_IDENT, "Http_serve", 10, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        // Http.accept(server_fd) -> string (request data)
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_int;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "Http_accept", 11, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        // Http.respond(client_fd, status, content_type, body)
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 4;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 4);
-        ft->fn_type.param_types[0] = builtin_int;
-        ft->fn_type.param_types[1] = builtin_int;
-        ft->fn_type.param_types[2] = builtin_string;
-        ft->fn_type.param_types[3] = builtin_string;
-        ft->fn_type.return_type = builtin_void;
-        Token tok = {TOKEN_IDENT, "Http_respond", 12, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        // Http.respond_json(fd, status, json_string)
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 3;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
-        ft->fn_type.param_types[0] = builtin_int;
-        ft->fn_type.param_types[1] = builtin_int;
-        ft->fn_type.param_types[2] = builtin_string;
-        ft->fn_type.return_type = builtin_void;
-        Token tok = {TOKEN_IDENT, "Http_respond_json", 17, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        // Http.respond_html(fd, status, html_string)
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 3;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 3);
-        ft->fn_type.param_types[0] = builtin_int;
-        ft->fn_type.param_types[1] = builtin_int;
-        ft->fn_type.param_types[2] = builtin_string;
-        ft->fn_type.return_type = builtin_void;
-        Token tok = {TOKEN_IDENT, "Http_respond_html", 17, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 2;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.param_types[1] = builtin_string;
-        ft->fn_type.return_type = builtin_void;
-        Token tok = {TOKEN_IDENT, "Http_set_header", 15, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-
-    // Url namespace
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "Url_encode", 10, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "Url_decode", 10, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-
-    // Path namespace - already registered above
-
-    // System namespace
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "System_exec", 11, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.return_type = builtin_int;
-        Token tok = {TOKEN_IDENT, "System_exec_code", 16, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "System_env", 10, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-
-    // Math namespace - already registered above
-
-    // Net namespace
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_int;
-        ft->fn_type.return_type = builtin_int;
-        Token tok = {TOKEN_IDENT, "Net_listen", 10, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 2;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
-        ft->fn_type.param_types[0] = builtin_string;
-        ft->fn_type.param_types[1] = builtin_int;
-        ft->fn_type.return_type = builtin_int;
-        Token tok = {TOKEN_IDENT, "Net_connect", 11, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 2;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
-        ft->fn_type.param_types[0] = builtin_int;
-        ft->fn_type.param_types[1] = builtin_string;
-        ft->fn_type.return_type = builtin_int;
-        Token tok = {TOKEN_IDENT, "Net_send", 8, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_int;
-        ft->fn_type.return_type = builtin_string;
-        Token tok = {TOKEN_IDENT, "Net_recv", 8, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = 1;
-        ft->fn_type.param_types = malloc(sizeof(Type*));
-        ft->fn_type.param_types[0] = builtin_int;
-        ft->fn_type.return_type = builtin_int;
-        Token tok = {TOKEN_IDENT, "Net_close", 9, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-
-    // Task namespace
-    struct { const char* name; int nlen; Type* ret; int pc; Type* p1; } reg_task_fns[] = {
-        {"Task_value", 10, builtin_int, 1, builtin_int},
-        {"Task_get", 8, builtin_int, 1, builtin_int},
-        {"Task_set", 8, builtin_void, 2, builtin_int},
-        {"Task_add", 8, builtin_void, 2, builtin_int},
-        {"Task_channel", 12, builtin_int, 1, builtin_int},
-        {"Task_send", 9, builtin_void, 2, builtin_int},
-        {"Task_recv", 9, builtin_int, 1, builtin_int},
-        {"Task_close", 10, builtin_void, 1, builtin_int},
-        // Task.try_recv(ch) — non-blocking receive returning int? (Some/none).
-        {"Task_try_recv", 13, builtin_int_opt, 1, builtin_int},
-        {"Task_select_2", 13, builtin_int, 2, builtin_int},
-        {"Task_select_3", 13, builtin_int, 3, builtin_int},
-        // S4 cooperative cancellation: Task.cancel(handle) requests cancellation
-        // of an awaited spawn; Task.is_cancelled() lets a running task check if it
-        // was cancelled (0 args - reads the current coroutine).
-        {"Task_cancel", 11, builtin_void, 1, builtin_int},
-        {"Task_is_cancelled", 17, builtin_bool, 0, builtin_int},
-    };
-    for (int i = 0; i < (int)(sizeof(reg_task_fns)/sizeof(reg_task_fns[0])); i++) {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = reg_task_fns[i].pc;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
-        ft->fn_type.param_types[0] = reg_task_fns[i].p1;
-        ft->fn_type.param_types[1] = builtin_int;
-        ft->fn_type.return_type = reg_task_fns[i].ret;
-        Token tok = {TOKEN_IDENT, reg_task_fns[i].name, reg_task_fns[i].nlen, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-
-    // Ptr namespace - FFI pointer-cell helpers for C out-parameters (`T**`).
-    // Ptr.cell() -> ptr (a heap slot holding one pointer); Ptr.read(cell) -> ptr
-    // (the pointer the callee stored); Ptr.write(cell, p); Ptr.free(cell).
-    {
-        struct { const char* name; int nlen; Type* ret; int pc; Type* p0; Type* p1; } reg_ptr_fns[] = {
-            {"Ptr_cell",  8, builtin_ptr,  0, NULL,        NULL},
-            {"Ptr_read",  8, builtin_ptr,  1, builtin_ptr, NULL},
-            {"Ptr_write", 9, builtin_void, 2, builtin_ptr, builtin_ptr},
-            {"Ptr_free",  8, builtin_void, 1, builtin_ptr, NULL},
-        };
-        for (int i = 0; i < (int)(sizeof(reg_ptr_fns)/sizeof(reg_ptr_fns[0])); i++) {
-            Type* ft = make_type(TYPE_FUNCTION);
-            ft->fn_type.param_count = reg_ptr_fns[i].pc;
-            ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
-            ft->fn_type.param_types[0] = reg_ptr_fns[i].p0;
-            ft->fn_type.param_types[1] = reg_ptr_fns[i].p1;
-            ft->fn_type.return_type = reg_ptr_fns[i].ret;
-            Token tok = {TOKEN_IDENT, reg_ptr_fns[i].name, reg_ptr_fns[i].nlen, 0};
-            add_symbol(global_scope, tok, ft, false);
-        }
-    }
-
-    // Db namespace
-    struct { const char* name; int nlen; Type* ret; int pc; Type* p1; } reg_db_fns[] = {
-        {"Db_open", 7, builtin_int, 1, builtin_string},
-        {"Db_exec", 7, builtin_int, 2, builtin_int},
-        {"Db_query", 8, builtin_string, 2, builtin_int},
-        {"Db_query_one", 12, builtin_string, 2, builtin_int},
-        {"Db_last_insert_id", 17, builtin_int, 1, builtin_int},
-        {"Db_error", 8, builtin_string, 1, builtin_int},
-        {"Db_close", 8, builtin_void, 1, builtin_int},
-    };
-    for (int i = 0; i < 7; i++) {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = reg_db_fns[i].pc;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 2);
-        ft->fn_type.param_types[0] = reg_db_fns[i].p1;
-
-    // New module registrations
-    struct { const char* name; int nlen; int nparams; Type* ret; } new_fns[] = {
-        {"Json_parse", 10, 1, builtin_int},
-        {"Json_stringify", 14, 1, builtin_string},
-        {"Json_get", 8, 2, builtin_string},
-        {"Json_get_string", 15, 2, builtin_string},
-        {"Json_get_int", 12, 2, builtin_int},
-        {"Json_has", 8, 2, builtin_int},
-        // Json_keys registered separately below with its real [string] return
-        // type (find_symbol returns the first match, so no builtin_string entry
-        // here may shadow it).
-        {"Json_array_len", 14, 1, builtin_int},
-        {"Json_array_get", 14, 2, builtin_int},
-        {"Json_node_str", 13, 1, builtin_string},
-        {"Encoding_base64_encode", 22, 1, builtin_string},
-        {"Encoding_base64_decode", 22, 1, builtin_string},
-        {"Encoding_hex_encode", 19, 1, builtin_string},
-        {"Crypto_sha256", 13, 1, builtin_string},
-        {"Crypto_md5", 10, 1, builtin_string},
-        {"Os_platform", 11, 0, builtin_string},
-        {"Os_arch", 7, 0, builtin_string},
-        {"Os_hostname", 11, 0, builtin_string},
-        {"Os_pid", 6, 0, builtin_int},
-        {"Os_temp_dir", 11, 0, builtin_string},
-        {"Os_home_dir", 11, 0, builtin_string},
-        {"Uuid_generate", 13, 0, builtin_string},
-        {"Math_clamp", 10, 3, builtin_int},
-        {"Math_sign", 9, 1, builtin_int},
-        {"DateTime_diff", 13, 2, builtin_int},
-        {"DateTime_add_seconds", 20, 2, builtin_int},
-        {"DateTime_to_iso", 15, 1, builtin_string},
-        {"regex_find", 10, 2, builtin_int},
-        {"regex_find_all", 14, 2, builtin_string},
-        {"Net_resolve", 11, 1, builtin_string},
-        {"Db_escape", 9, 1, builtin_string},
-        {"Db_table_exists", 15, 2, builtin_int},
-        {"Log_debug", 9, 1, builtin_void},
-        {"Log_info", 8, 1, builtin_void},
-        {"Log_warn", 8, 1, builtin_void},
-        {"Log_error", 9, 1, builtin_void},
-        {"Log_set_level", 13, 1, builtin_void},
-        {"Process_exec_capture", 20, 1, builtin_string},
-        {"Process_exec_status", 19, 1, builtin_int},
-        // File_read_lines registered with its real [string] return type next to
-        // the other File namespace fns (find_symbol returns the FIRST match, so
-        // a builtin_string entry here would shadow the typed one).
-        {"Http_timeout", 12, 1, builtin_int},
-        {"Http_listen", 11, 1, builtin_int},
-        {"Http_accept", 11, 1, builtin_string},
-        {"Http_accept_fd", 14, 1, builtin_int},
-        {"Http_read_request", 17, 1, builtin_string},
-        {"Http_method", 11, 1, builtin_string},
-        {"Http_path", 9, 1, builtin_string},
-        {"Http_body", 9, 1, builtin_string},
-        {"Http_req_body", 13, 1, builtin_string},
-        {"Http_fd", 7, 1, builtin_int},
-        {"Http_respond", 12, 4, builtin_void},
-        {"Http_respond_json", 17, 3, builtin_void},
-        {"Http_respond_with_header", 24, 5, builtin_void},
-        {"Http_close_client", 17, 1, builtin_void},
-        {"Http_route_match", 16, 3, builtin_int},
-        {"Ws_connect", 10, 1, builtin_int},
-        {"Ws_send", 7, 2, builtin_int},
-        {"Ws_recv", 7, 1, builtin_string},
-        {"Socket_connect", 14, 1, builtin_int},
-        {"Socket_send", 11, 2, builtin_int},
-        {"Socket_recv", 11, 1, builtin_string},
-        {"Crypto_sha1", 11, 1, builtin_string},
-        {"Crypto_sha1_base64", 18, 1, builtin_string},
-        {"Crypto_hmac_sha256", 18, 2, builtin_string},
-        {"Crypto_hmac_sha256_hex", 22, 2, builtin_string},
-        {"Crypto_random_bytes", 19, 1, builtin_string},
-        {"Json_to_pretty_string", 21, 1, builtin_string},
-        {"Csv_parse", 9, 1, builtin_int},
-        {"Csv_row_count", 13, 1, builtin_int},
-        {"Csv_get", 7, 2, builtin_string},
-        {"Csv_get_field", 13, 3, builtin_string},
-        {"Csv_col_count", 13, 1, builtin_int},
-        {"Csv_header", 10, 1, builtin_string},
-        {"Csv_header_count", 16, 1, builtin_int},
-        {"Http_get_json", 13, 1, builtin_int},
-        {"Http_post_json", 14, 2, builtin_int},
-        {"Json_get_float", 14, 2, builtin_float},
-        {"Json_get_bool", 13, 2, builtin_int},
-        {"Json_get_array", 14, 2, builtin_int},
-        {"Json_get_object", 15, 2, builtin_int},
-        {"File_glob", 9, 1, builtin_string},
-        {"File_walk_dir", 13, 1, builtin_string},
-        {"File_temp_file", 14, 1, builtin_string},
-        {"DateTime_format_duration", 24, 1, builtin_string},
-        {"DateTime_day_of_week", 20, 1, builtin_int},
-        {"DateTime_year", 13, 1, builtin_int},
-        {"DateTime_month", 14, 1, builtin_int},
-        {"DateTime_day", 12, 1, builtin_int},
-        {"DateTime_hour", 13, 1, builtin_int},
-        {"DateTime_minute", 15, 1, builtin_int},
-        {"DateTime_second", 15, 1, builtin_int},
-        {"regex_split", 11, 2, builtin_string},
-        {"Regex_split", 11, 2, builtin_string},
-        {"Regex_find", 10, 2, builtin_int},
-        {"Regex_find_all", 14, 2, builtin_string},
-        {"Encoding_hex_decode", 19, 1, builtin_string},
-        {"Encoding_csv_parse", 18, 1, builtin_string},
-        // Missing functions from audit
-        {"Env_get", 7, 1, builtin_string},
-        {"Env_set", 7, 2, builtin_int},
-        {"File_rename", 11, 2, builtin_int},
-        {"Db_open", 7, 1, builtin_int},
-        {"Db_close", 8, 1, builtin_void},
-        {"Db_exec", 7, 2, builtin_int},
-        {"Db_exec_p", 9, 3, builtin_int},
-        {"Db_query", 8, 2, builtin_string},
-        {"Db_query_one", 12, 2, builtin_string},
-        {"Db_query_p", 10, 3, builtin_string},
-        {"Db_error", 8, 1, builtin_string},
-        {"Db_last_insert_id", 17, 1, builtin_int},
-        {"Http_body", 9, 1, builtin_string},
-        {"Http_header", 11, 2, builtin_string},
-        {"Http_status", 11, 1, builtin_int},
-        {"Http_ctx_fd", 11, 1, builtin_int},
-        {"Http_set_timeout", 16, 1, builtin_void},
-        {"Http_close_server", 17, 1, builtin_void},
-        {"Http_free", 9, 1, builtin_void},
-        {"Time_now_millis", 15, 0, builtin_int},
-        {"Time_format", 11, 1, builtin_string},
-        {"Time_sleep", 10, 1, builtin_void},
-        {"Task_channel", 12, 0, builtin_int},
-        {"Task_value", 10, 1, builtin_int},
-        {"Task_get", 8, 1, builtin_int},
-        {"Task_recv", 9, 1, builtin_int},
-        {"Task_try_recv", 13, 1, builtin_int_opt},
-        {"Task_select_2", 13, 1, builtin_int},
-        {"Task_select_3", 13, 1, builtin_int},
-        {"Task_free_value", 15, 1, builtin_void},
-        {"Math_abs", 8, 1, builtin_int},
-        {"Socket_set_timeout", 18, 2, builtin_int},
-        {"Socket_set_nonblocking", 22, 2, builtin_int},
-        {"Socket_poll_read", 16, 2, builtin_int},
-        {"Socket_read_line", 16, 1, builtin_string},
-        {"Socket_close", 12, 1, builtin_void},
-        {"Ws_close", 8, 1, builtin_void},
-        {"System_gc", 9, 0, builtin_void},
-        {"System_load_env", 15, 0, builtin_void},
-        {"System_set_env", 14, 2, builtin_int},
-        {"Data_save", 9, 2, builtin_void},
-        {"Template_render", 15, 2, builtin_string},
-        {"Template_render_string", 22, 2, builtin_string},
-        {"String_char_from_int", 20, 1, builtin_string},
-        {"String_char", 11, 1, builtin_string},
-        {"String_from_chars", 17, 1, builtin_string},
-        {"Fs_read_file", 12, 1, builtin_string},
-        {"Queue_push", 10, 1, builtin_void},
-        {"Queue_pop", 9, 0, builtin_int},
-        {"Queue_peek", 10, 1, builtin_int},
-        {"Queue_len", 9, 1, builtin_int},
-        {"Queue_is_empty", 14, 1, builtin_int},
-        {"Stack_push", 10, 1, builtin_void},
-        {"Stack_pop", 9, 1, builtin_int},
-        {"Stack_peek", 10, 1, builtin_int},
-        {"Stack_len", 9, 1, builtin_int},
-        {"Stack_is_empty", 14, 1, builtin_int},
-        {"Terminal_color", 14, 1, builtin_void},
-        {"Terminal_bg", 11, 1, builtin_void},
-        {"Terminal_bold", 12, 1, builtin_void},
-        {"Terminal_dim", 12, 1, builtin_void},
-        {"Terminal_underline", 18, 1, builtin_void},
-        {"Terminal_reset", 14, 1, builtin_void},
-        {"Terminal_hide_cursor", 20, 1, builtin_void},
-        {"Terminal_show_cursor", 20, 1, builtin_void},
-        {"Terminal_box", 12, 1, builtin_void},
-        {"Terminal_progress", 17, 1, builtin_void},
-        {"Terminal_print_color", 20, 1, builtin_void},
-        {"Test_init", 9, 1, builtin_void},
-        {"Test_assert", 11, 1, builtin_void},
-        {"Test_describe", 13, 1, builtin_void},
-        {"Test_skip", 9, 1, builtin_void},
-        {"Test_summary", 12, 1, builtin_int},
-        {"Json_set", 8, 1, builtin_void},
-    };
-    int new_fns_count = sizeof(new_fns) / sizeof(new_fns[0]);
-    for (int i = 0; i < new_fns_count; i++) {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = new_fns[i].nparams;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * (new_fns[i].nparams + 1));
-        // Use generic type for params - C compiler validates actual types
-        for (int p = 0; p < new_fns[i].nparams; p++) ft->fn_type.param_types[p] = builtin_int;
-        ft->fn_type.is_variadic = true; // Allow flexible arg types for builtins
-        ft->fn_type.return_type = new_fns[i].ret;
-        Token tok = {TOKEN_IDENT, new_fns[i].name, new_fns[i].nlen, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-
-    // Gui namespace
-    struct { const char* name; int nlen; Type* ret; int pc; } reg_gui_fns[] = {
-        {"Gui_create", 10, builtin_int, 3},
-        {"Gui_clear", 9, builtin_void, 3},
-        {"Gui_color", 9, builtin_void, 3},
-        {"Gui_rect", 8, builtin_void, 4},
-        {"Gui_line", 8, builtin_void, 4},
-        {"Gui_point", 9, builtin_void, 2},
-        {"Gui_present", 11, builtin_void, 0},
-        {"Gui_poll", 8, builtin_string, 0},
-        {"Gui_running", 11, builtin_int, 0},
-        {"Gui_delay", 9, builtin_void, 1},
-        {"Gui_width", 9, builtin_int, 0},
-        {"Gui_height", 10, builtin_int, 0},
-        {"Gui_destroy", 11, builtin_void, 0},
-        {"Gui_text", 8, builtin_void, 4},
-        {"Gui_text_input", 14, builtin_void, 4},
-        {"Gui_text_input_activate", 23, builtin_void, 1},
-        {"Gui_text_input_key", 18, builtin_int, 1},
-        {"Gui_text_input_value", 20, builtin_string, 0},
-        {"Gui_text_input_clear", 20, builtin_void, 0},
-        {"Gui_text_input_set", 18, builtin_void, 1},
-        {"Gui_button", 10, builtin_void, 5},
-        {"Gui_button_clicked", 18, builtin_int, 6},
-        {"Gui_panel", 9, builtin_void, 4},
-        {"Gui_progress", 12, builtin_void, 5},
-        {"Gui_circle", 10, builtin_void, 3},
-        {"Gui_label", 9, builtin_void, 3},
-        {"Gui_rect_outline", 16, builtin_void, 4},
-        {"Gui_key_pressed", 15, builtin_int, 1},
-        {"Gui_mouse_x", 11, builtin_int, 0},
-        {"Gui_mouse_y", 11, builtin_int, 0},
-        {"Gui_mouse_down", 14, builtin_int, 0},
-        {"Gui_ticks", 9, builtin_int, 0},
-        {"Gui_load_sprite", 15, builtin_int, 1},
-        {"Gui_draw_sprite", 15, builtin_void, 3},
-        {"Gui_draw_sprite_scaled", 22, builtin_void, 5},
-    };
-    for (int i = 0; i < (int)(sizeof(reg_gui_fns)/sizeof(reg_gui_fns[0])); i++) {
-        Type* ft = make_type(TYPE_FUNCTION);
-        ft->fn_type.param_count = reg_gui_fns[i].pc;
-        ft->fn_type.param_types = malloc(sizeof(Type*) * 4);
-        for (int j = 0; j < 4; j++) ft->fn_type.param_types[j] = builtin_int;
-        if (i == 0) ft->fn_type.param_types[0] = builtin_string; // create(title, w, h)
-        if (i == 7) ft->fn_type.param_types[0] = NULL; // poll()
-        if (i == 13) { ft->fn_type.param_types[2] = builtin_string; } // text(x, y, str, scale)
-        ft->fn_type.return_type = reg_gui_fns[i].ret;
-        Token tok = {TOKEN_IDENT, reg_gui_fns[i].name, reg_gui_fns[i].nlen, 0};
-        add_symbol(global_scope, tok, ft, false);
-    }
-    }
+// reg_fn - register one builtin function signature in the global scope.
+//
+// Every builtin was hand-rolled as an 11-line block:
+//
+//     {
+//         Type* ft = make_type(TYPE_FUNCTION);
+//         ft->fn_type.param_count = 4;
+//         ft->fn_type.param_types = malloc(sizeof(Type*) * 4);
+//         ft->fn_type.param_types[0] = builtin_int;
+//         ...
+//         Token tok = {TOKEN_IDENT, "Http_respond", 12, 0};
+//         add_symbol(global_scope, tok, ft, false);
+//     }
+//
+// 126 of them, ~1400 lines of the 1707-line init_checker. Besides the bulk, the
+// hand-written form carries a hazard the helper removes: the Token length is a
+// HAND-COUNTED literal (`"Http_respond", 12`). Miscount it and the symbol is
+// registered under a truncated or overlong name, so the builtin silently does not
+// resolve - a bug you cannot see by reading the line it is on. strlen() cannot be
+// miscounted.
+//
+// Variadic in the param types, terminated by the count, so a signature reads as one
+// line that looks like the Wyn declaration it mirrors.
+static void reg_fn(const char* name, Type* ret, int npar, ...) {
+    Type* ft = make_type(TYPE_FUNCTION);
+    ft->fn_type.param_count = npar;
+    ft->fn_type.param_types = npar ? malloc(sizeof(Type*) * npar) : NULL;
+    va_list ap;
+    va_start(ap, npar);
+    for (int i = 0; i < npar; i++) ft->fn_type.param_types[i] = va_arg(ap, Type*);
+    va_end(ap);
+    ft->fn_type.return_type = ret;
+    Token tok = {TOKEN_IDENT, name, (int)strlen(name), 0};
+    add_symbol(global_scope, tok, ft, false);
 }
+
+// init_checker() lives in checker_builtins.c - see the header comment there.
+#include "checker_builtins.c"
+
 
 Symbol* find_symbol(SymbolTable* scope, Token name) {
     if (name.length <= 0 || !name.start) {
@@ -3211,8 +1826,19 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 return current_self_type;
             }
             
-            // Check for built-in Option/Result constants
-            if (expr->token.length == 4 && memcmp(expr->token.start, "none", 4) == 0) {
+            // Check for built-in Option/Result constants.
+            //
+            // A DECLARED VARIABLE WINS. This test used to run before the scope lookup
+            // below, so any local spelled `none` was forced to int no matter what it
+            // held: `none = f()` where f returns string, then `g(none)` against a
+            // `string` parameter, reported "Expected: string, Got: int" - pointing at
+            // the call rather than at the name, which is why it reads as a mystery.
+            // `none` is not a reserved word (the parser accepts it as an identifier and
+            // every other name tested - nil, null, empty, result - is unaffected), so
+            // shadowing it is legal and must behave like shadowing anything else.
+            // Found while building VisualWyn, which worked around it by renaming.
+            if (expr->token.length == 4 && memcmp(expr->token.start, "none", 4) == 0 &&
+                !find_symbol(scope, expr->token)) {
                 expr->expr_type = builtin_int;  // Return type is pointer to Option
                 return builtin_int;
             }
@@ -3260,6 +1886,22 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             if (expr->token.length == 4 && memcmp(expr->token.start, "void", 4) == 0) {
                 expr->expr_type = builtin_void;
                 return builtin_void;
+            }
+            // The FFI pointer family. Missing here, a type annotation naming
+            // `ptr`/`cstr` in a position that is checked as an EXPRESSION - a
+            // STRUCT FIELD is the one that bites - fell through to the
+            // undefined-variable branch and was rejected outright, with a
+            // "Did you mean: Ptr?" pointing at the unrelated Ptr namespace:
+            //   struct Row { buf: ptr }  ->  Error: Undefined variable 'ptr'
+            // #235 fixed the same omission in the four ladders behind a module
+            // pub fn signature; field types were not in that fix's scope.
+            if (expr->token.length == 3 && memcmp(expr->token.start, "ptr", 3) == 0) {
+                expr->expr_type = builtin_ptr;
+                return builtin_ptr;
+            }
+            if (expr->token.length == 4 && memcmp(expr->token.start, "cstr", 4) == 0) {
+                expr->expr_type = builtin_string;
+                return builtin_string;
             }
             }
 
@@ -3623,11 +2265,89 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return left;
         }
         case EXPR_CALL: {
+            // A `mut` parameter is written back through a POINTER, so the argument must be
+            // something that HAS an address. A literal or a temporary is meaningless -- there
+            // is nowhere for the callee's write to go -- and it used to be ACCEPTED:
+            //
+            //     fn add(mut n: int, by: int) { n = n + by }
+            //     add(3, 5)          // compiled, then SEGFAULTED: the literal 3 was
+            //                        // dereferenced as an address
+            //     bump(make())       // failed the C compile instead
+            //
+            // Two different late failures for one mistake, neither naming the argument.
+            //
+            // Checked HERE, at the top of EXPR_CALL, because the per-argument validation
+            // further down only runs for a callee that resolved to a TYPE_FUNCTION symbol --
+            // a plain call to a user function returns earlier, so a guard placed there never
+            // fired (verified by probe, not assumed).
+            if (expr->call.callee && expr->call.callee->type == EXPR_IDENT) {
+                char _fnb[256];
+                token_to_cstr(_fnb, sizeof(_fnb), expr->call.callee->token);
+                for (int _ai = 0; _ai < expr->call.arg_count; _ai++) {
+                    if (!checker_fn_param_is_mut(_fnb, _ai)) continue;
+                    if (expr_is_addressable(expr->call.args[_ai])) continue;
+                    fprintf(stderr,
+                        "\nError at line %d: argument %d of '%s' is declared `mut`, so it "
+                        "must be a variable\n",
+                        expr->call.args[_ai]->token.line, _ai + 1, _fnb);
+                    show_source_line(expr->call.args[_ai]->token.line);
+                    fprintf(stderr,
+                        "  \033[33mWhy:\033[0m a `mut` parameter is written back to the "
+                        "caller, and a literal or temporary has nowhere to write to.\n");
+                    fprintf(stderr,
+                        "  \033[33mFix:\033[0m assign it first -- `var x = ...` then "
+                        "`%s(x, ...)`.\n", _fnb);
+                    had_error = true;
+                }
+            }
             // Check for named arguments
             bool _has_named_args = false;
             if (expr->call.arg_names) {
                 for (int i = 0; i < expr->call.arg_count; i++)
                     if (expr->call.arg_names[i].length > 0) { _has_named_args = true; break; }
+            }
+            // Check for enum constructor calls: EnumName::Variant(args)
+            //
+            // The parser folds `Shape::Circle` into ONE EXPR_IDENT whose text is
+            // "Shape::Circle", so this never reached the EXPR_FIELD_ACCESS path below that
+            // handles the equivalent `Shape.Circle(...)`. The name IS registered, but as a
+            // value symbol of the enum type rather than as a function, so a CALL through it
+            // fell all the way to the module-qualified-call handling and came back
+            // `builtin_int`. The expression then had no enum type for anything downstream to
+            // see:
+            //
+            //     a = Shape::Circle(1.0)      // a: int
+            //     xs = [a]                    // array_push_int(&arr, a)  -> C error:
+            //                                 //   passing 'Shape' to parameter of type
+            //                                 //   'long long'
+            //
+            // It only SURFACED in an array literal, because that is where codegen consults
+            // the element's expr_type; `a` alone, and `take(Shape::Circle(1.0))`, both worked,
+            // which is why this looked like "arrays of data enums are broken". The dot form
+            // was fine throughout -- the two spellings simply disagreed.
+            if (expr->call.callee->type == EXPR_IDENT) {
+                Token qn = expr->call.callee->token;
+                int sep = -1;
+                for (int i = 0; i + 1 < qn.length; i++)
+                    if (qn.start[i] == ':' && qn.start[i+1] == ':') { sep = i; break; }
+                if (sep > 0) {
+                    // Resolve the enum half; the C constructor is EnumName_VariantName.
+                    Token ename = {TOKEN_IDENT, qn.start, sep, qn.line};
+                    Symbol* esym = find_symbol(scope, ename);
+                    if (esym && esym->type && esym->type->kind == TYPE_ENUM) {
+                        char cname[256];
+                        snprintf(cname, sizeof(cname), "%.*s_%.*s", sep, qn.start,
+                                 qn.length - sep - 2, qn.start + sep + 2);
+                        Token ctok = {TOKEN_IDENT, cname, (int)strlen(cname), qn.line};
+                        Symbol* csym = find_symbol(scope, ctok);
+                        if (csym && csym->type && csym->type->kind == TYPE_FUNCTION) {
+                            for (int i = 0; i < expr->call.arg_count; i++)
+                                check_expr(expr->call.args[i], scope);
+                            expr->expr_type = esym->type;
+                            return esym->type;
+                        }
+                    }
+                }
             }
             // Check for enum constructor calls: EnumName.Variant(args)
             if (expr->call.callee->type == EXPR_FIELD_ACCESS &&
@@ -4431,10 +3151,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         snprintf(actual_str, sizeof(actual_str), "%s", type_to_string(actual_type));
                         snprintf(context, sizeof(context), "argument %d", i + 1);
                         
-                        type_error_mismatch(expected_str, actual_str, context, 
+                        type_error_mismatch(expected_str, actual_str, context,
                                           expr->call.args[i]->token.line, 0);
                         had_error = true;
                     }
+
                 }
             }
             
@@ -4804,6 +3525,47 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         ns_sym = find_symbol(global_scope, ns_tok2);
                     }
                     if (ns_sym && ns_sym->type && ns_sym->type->kind == TYPE_FUNCTION) {
+                        // ARITY, before the return type is adopted.
+                        //
+                        // This is the only place a dotted module call - `m.foo(...)`,
+                        // which the parser gives us as a METHOD_CALL - meets its real
+                        // signature. Without a check here the call was never
+                        // validated at all: `m.needs_arg()` with the argument missing
+                        // passed `wyn check` clean and then failed as a raw C compiler
+                        // error ("too few arguments to function call") pointing at
+                        // generated code the programmer never wrote. The `::` spelling
+                        // of the identical call WAS checked (it resolves as an
+                        // EXPR_CALL and reaches the T1.5.4 validation), so the two
+                        // syntaxes disagreed - and the dot form is the one every
+                        // program and every doc uses.
+                        //
+                        // Deliberately narrow, because this path also carries builtin
+                        // namespaces (Time.now_millis, System.args) whose registered
+                        // types are not all faithful:
+                        //   - variadic and overloaded callees are skipped entirely;
+                        //     an overload set resolves by argument type, so "no
+                        //     overload takes this many" is a different diagnostic and
+                        //     reporting the first overload's arity would mislead.
+                        //   - min_param_count carries defaulted parameters, so a call
+                        //     that omits an argument WITH a default stays legal.
+                        // A call that is fine today therefore stays fine; only a call
+                        // that could not have compiled is now reported here instead of
+                        // by the C compiler.
+                        if (!ns_sym->type->fn_type.is_variadic &&
+                            ns_sym->next_overload == NULL) {
+                            int _pc = ns_sym->type->fn_type.param_count;
+                            int _min = ns_sym->type->fn_type.min_param_count;
+                            if (_min < 0) _min = _pc;
+                            if (expr->method_call.arg_count < _min ||
+                                expr->method_call.arg_count > _pc) {
+                                char _fq[256];
+                                snprintf(_fq, sizeof(_fq), "%s.%s", obj_name, method_name);
+                                type_error_wrong_arg_count(_fq, _pc,
+                                                           expr->method_call.arg_count,
+                                                           method.line, 0);
+                                had_error = true;
+                            }
+                        }
                         Type* ret = ns_sym->type->fn_type.return_type;
                         if (ret) {
                             expr->expr_type = ret;
@@ -4819,6 +3581,34 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         if (strcmp(rt, "float") == 0) { expr->expr_type = builtin_float; return builtin_float; }
                         if (strcmp(rt, "array") == 0) { expr->expr_type = builtin_array; return builtin_array; }
                         expr->expr_type = builtin_int; return builtin_int;
+                    }
+                    // Still nothing: ask the module's OWN AST. Neither of the two
+                    // lookups above can answer for a module loaded from the package
+                    // cache - the symbol may not be registered under either spelling,
+                    // and lookup_module_fn_return_type is a hardcoded table of stdlib
+                    // builtins (types.c), so a package's functions are absent from it.
+                    //
+                    // Falling through here defaulted to int, so a `pub fn ... -> string`
+                    // in a git-fetched package produced
+                    // "Cannot compare int with string" on a perfectly correct
+                    // comparison - which is how this was found: WynCanvas importing
+                    // the `gui` package as a real dependency rather than a symlink.
+                    {
+                        extern const char* get_module_fn_builtin_return(const char*, const char*);
+                        const char* mr = get_module_fn_builtin_return(obj_name, method_name);
+                        if (mr) {
+                            if (strcmp(mr, "string") == 0) { expr->expr_type = builtin_string; return builtin_string; }
+                            if (strcmp(mr, "bool") == 0)   { expr->expr_type = builtin_bool;   return builtin_bool; }
+                            if (strcmp(mr, "float") == 0)  { expr->expr_type = builtin_float;  return builtin_float; }
+                            if (strcmp(mr, "int") == 0)    { expr->expr_type = builtin_int;    return builtin_int; }
+                            // A `-> [T]` return. Without this the array fell through to
+                            // the int default, so `xs = m.many()` then `xs.len()` failed
+                            // with "Unknown method 'len' for type 'int'" - and only in
+                            // codegen, since `wyn check` reported no errors.
+                            // "array" or "array:<element>" - see the element-type note in
+                            // get_module_fn_builtin_return.
+                            if (strncmp(mr, "array", 5) == 0) { expr->expr_type = builtin_array; return builtin_array; }
+                        }
                     }
                 }
             }
@@ -5547,6 +4337,56 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 // Check type compatibility (considering optionality)
                 Type* sym_inner = get_inner_type(sym->type);
                 Type* val_inner = get_inner_type(val_type);
+                // The `!= TYPE_STRUCT` clause below exempted a STRUCT-typed target
+                // from ALL assignment checking, so once a variable held a struct you
+                // could assign anything to it and only the C compiler objected:
+                //
+                //   m = A { n: 1 }
+                //   m = 860          // wyn check: no errors
+                //   -> error: assigning to 'A' from incompatible type 'int'
+                //
+                // Verified for int, string AND a different struct - three
+                // check-passes/build-fails cases. The reverse (int target, struct
+                // value) was already rejected and same-struct assignment is fine, so
+                // the hole was exactly this direction. Found by the fuzzer at three
+                // separate seeds once its generator emitted structs.
+                //
+                // Deliberately narrow, because this sits on every assignment in the
+                // language: it fires only when the VALUE is a plain scalar, or when
+                // both sides are named user structs with DIFFERENT names. The
+                // monomorphic Option*/Result* families are TYPE_STRUCT too and are
+                // reassigned across family names legitimately, so they are excluded
+                // by name rather than risk rejecting correct code.
+                if (sym_inner->kind == TYPE_STRUCT && sym_inner->struct_type.name.length > 0 &&
+                    val_inner && val_inner->kind != TYPE_STRUCT) {
+                    int val_is_scalar = val_inner->kind == TYPE_INT || val_inner->kind == TYPE_FLOAT ||
+                                        val_inner->kind == TYPE_BOOL || val_inner->kind == TYPE_STRING;
+                    if (val_is_scalar) {
+                        fprintf(stderr, "\033[31m\033[1mError:\033[0m Type mismatch in assignment to '%.*s' (line %d)\n",
+                                expr->assign.name.length, expr->assign.name.start, expr->assign.name.line);
+                        fprintf(stderr, "  \033[1mExpected:\033[0m %.*s (struct)\n",
+                                sym_inner->struct_type.name.length, sym_inner->struct_type.name.start);
+                        fprintf(stderr, "  \033[1mGot:\033[0m      %s\n", type_to_string(val_inner));
+                        had_error = true;
+                        return NULL;
+                    }
+                }
+                if (sym_inner->kind == TYPE_STRUCT && val_inner && val_inner->kind == TYPE_STRUCT &&
+                    sym_inner->struct_type.name.length > 0 && val_inner->struct_type.name.length > 0) {
+                    Token sn = sym_inner->struct_type.name, vn = val_inner->struct_type.name;
+                    int same = sn.length == vn.length && memcmp(sn.start, vn.start, sn.length) == 0;
+                    int builtin_family =
+                        (sn.length >= 6 && (memcmp(sn.start, "Option", 6) == 0 || memcmp(sn.start, "Result", 6) == 0)) ||
+                        (vn.length >= 6 && (memcmp(vn.start, "Option", 6) == 0 || memcmp(vn.start, "Result", 6) == 0));
+                    if (!same && !builtin_family) {
+                        fprintf(stderr, "\033[31m\033[1mError:\033[0m Type mismatch in assignment to '%.*s' (line %d)\n",
+                                expr->assign.name.length, expr->assign.name.start, expr->assign.name.line);
+                        fprintf(stderr, "  \033[1mExpected:\033[0m %.*s (struct)\n", sn.length, sn.start);
+                        fprintf(stderr, "  \033[1mGot:\033[0m      %.*s (struct)\n", vn.length, vn.start);
+                        had_error = true;
+                        return NULL;
+                    }
+                }
                 if (sym_inner->kind != val_inner->kind &&
                     sym_inner->kind != TYPE_STRUCT) {
                     fprintf(stderr, "\033[31m\033[1mError:\033[0m Type mismatch in assignment to '%.*s' (line %d)\n",
@@ -5585,9 +4425,42 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // Walk interpolation expressions to mark variables as used
             for (int i = 0; i < expr->string_interp.count; i++) {
                 if (expr->string_interp.expressions[i]) {
-                    check_expr(expr->string_interp.expressions[i], scope);
+                    Type* it = check_expr(expr->string_interp.expressions[i], scope);
+                    // A struct here needs a __wyn_str_<Name> helper in the
+                    // generated C: to_string is a _Generic whose default arm is
+                    // int_to_string, so a struct used to be passed by value to a
+                    // `long long` parameter and the C compile failed AFTER
+                    // `wyn check` reported no errors (PLAN_v1.21 S1). Recorded
+                    // here rather than in codegen because this pass is the one
+                    // that necessarily visits every expression with its type
+                    // resolved, so no interpolation site can be missed.
+                    if (it && it->kind == TYPE_STRUCT && it->struct_type.name.length > 0) {
+                        char sn[128];
+                        token_to_cstr(sn, sizeof(sn), it->struct_type.name);
+                        extern void register_interpolated_struct(const char*);
+                        register_interpolated_struct(sn);
+                    }
                 }
             }
+            // SET expr_type, do not merely return it. Bare-assignment hoisting
+            // (codegen_stmt.c) reads `init->expr_type` to pick the C declaration and
+            // falls back to `long long` when it is NULL - so a variable whose FIRST
+            // assignment was an interpolated string inside any if/else-if/else block
+            // was declared `long long`, and println printed its POINTER ADDRESS as a
+            // decimal number:
+            //
+            //   if n == 1 {
+            //     s = "v${n}"
+            //     println(s)     // -> 4345226036
+            //   }
+            //
+            // A wrong answer at exit 0, and it BUILT because `wyn build` passes -w,
+            // which suppresses the clang int-conversion diagnostic that would
+            // otherwise have named it. Same class as the input_line() defect that
+            // printed a line's address. A plain string literal was fine (its
+            // expr_type is set elsewhere), and top level was fine, which is why this
+            // only showed up in a conditional.
+            expr->expr_type = builtin_string;
             return builtin_string;
         case EXPR_AWAIT:
             if (expr->await.expr) {
@@ -5818,9 +4691,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 had_error = true;
                 return builtin_int;
             }
-            // Result is Option<field_type>: reuse the family machinery.
+            // Result is Option<field_type>: reuse the family machinery. A data-carrying enum
+            // field is a C struct, so it needs the monomorphic family too.
             Type* result;
-            if (field_type->kind == TYPE_STRUCT) {
+            if (field_type->kind == TYPE_STRUCT ||
+                (field_type->kind == TYPE_ENUM && enum_name_is_data_enum(field_type->name))) {
                 result = register_option_struct_family(field_type);
             } else {
                 const char* fam = "OptionInt";
@@ -6199,10 +5074,23 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 Token ob_name = {TOKEN_IDENT, "OptionBool", 10, 0};
                 Symbol* sym = find_symbol(scope, ob_name);
                 if (sym) { expr->expr_type = sym->type; return sym->type; }
-            } else if (inner_type->kind == TYPE_STRUCT && inner_type->struct_type.name.length > 0) {
-                // `Struct?` -> the monomorphic Option<Struct> family (lazily made).
+            } else if ((inner_type->kind == TYPE_STRUCT && inner_type->struct_type.name.length > 0) ||
+                       (inner_type->kind == TYPE_ENUM && enum_name_is_data_enum(inner_type->name))) {
+                // `Struct?` -> the monomorphic Option<Struct> family (lazily made). A
+                // data-carrying enum lowers to a C struct, so `Shape?` gets OptionShape the
+                // same way; the plain-enum branch below still collapses to OptionInt.
                 Type* opt_type = register_option_struct_family(inner_type);
                 if (opt_type) { expr->expr_type = opt_type; return opt_type; }
+            } else if (inner_type->kind == TYPE_ENUM &&
+                       !enum_name_is_data_enum(inner_type->name)) {
+                // `Enum?` -> OptionInt: a PLAIN enum is an int in C, and OptionInt is
+                // what `Some(Code::X)`/`None` actually produce. Falling through to the
+                // generic TYPE_OPTIONAL below made a `c: Code?` PARAMETER reject its own
+                // argument ("Expected: optional (Option<T>) / Got: struct (struct)").
+                // A data-carrying enum is a C struct, so it keeps the generic fallback.
+                Token oi_name = {TOKEN_IDENT, "OptionInt", 9, 0};
+                Symbol* sym = find_symbol(scope, oi_name);
+                if (sym) { expr->expr_type = sym->type; return sym->type; }
             }
 
             // Fallback: generic optional type
@@ -6368,8 +5256,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             Type* inner_type = check_expr(expr->option.value, scope);
             if (!inner_type) return NULL;
             // A user-struct payload gets its own monomorphic family Option<Struct>
-            // (e.g. `Some(User{...})` -> OptionUser), registered on demand.
-            if (inner_type->kind == TYPE_STRUCT && inner_type->struct_type.name.length > 0) {
+            // (e.g. `Some(User{...})` -> OptionUser), registered on demand. A DATA-carrying
+            // enum payload (`Some(Shape::Circle(1.5))` -> OptionShape) takes the same path,
+            // since it is a C struct; a PLAIN enum falls through to OptionInt below.
+            if ((inner_type->kind == TYPE_STRUCT && inner_type->struct_type.name.length > 0) ||
+                (inner_type->kind == TYPE_ENUM && enum_name_is_data_enum(inner_type->name))) {
                 Type* opt_type = register_option_struct_family(inner_type);
                 if (opt_type) { expr->expr_type = opt_type; return opt_type; }
             }
@@ -6421,6 +5312,46 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             
             // For numeric negation (-), return the operand type
             if (expr->unary.op.type == TOKEN_MINUS) {
+                // NEGATING A NON-NUMBER type-checked clean and then died in the C
+                // compiler, which is the v1.21 soundness rule broken:
+                //
+                //   println(-71.to_string())   // wyn check: no errors
+                //   -> error: invalid argument type 'char *' to unary expression
+                //
+                // because a method call binds tighter than unary minus, so this is
+                // `-(71.to_string())` - negating a string. Measured: string, array
+                // and struct operands all check-pass and fail to build; int, float
+                // and bool all build. So exactly the first three are rejected here.
+                //
+                // Found by the FUZZER once the generator emitted method calls on
+                // int literals, and it is the reason the fuzz oracle's allowlist of
+                // C-error phrasings is being replaced with "any build failure after
+                // check is a violation" - this error text was not in that list, so
+                // the fuzzer had been silently tolerating it.
+                //
+                // Anything the checker could not resolve is left alone: a false
+                // rejection here would be worse than the hole, and an unresolved
+                // type is not evidence of a bad operand.
+                if (operand_type->kind == TYPE_STRING || operand_type->kind == TYPE_ARRAY ||
+                    operand_type->kind == TYPE_STRUCT || operand_type->kind == TYPE_MAP ||
+                    operand_type->kind == TYPE_SET || operand_type->kind == TYPE_JSON) {
+                    // expr->token.line is 0 for a unary node; the OPERATOR token
+                    // carries the position, with the operand as a fallback.
+                    int _uline = expr->unary.op.line;
+                    if (_uline == 0 && expr->unary.operand) _uline = expr->unary.operand->token.line;
+                    fprintf(stderr, "Error at line %d: cannot negate ", _uline);
+                    print_type_name(operand_type);
+                    fprintf(stderr, " - unary '-' applies to int and float\n");
+                    show_source_line(_uline);
+                    if (operand_type->kind == TYPE_STRING) {
+                        fprintf(stderr, "  \033[34mHelp:\033[0m a method call binds tighter than "
+                                        "unary minus, so \033[1m-n.to_string()\033[0m negates the "
+                                        "STRING. Write \033[1m(-n).to_string()\033[0m to negate the "
+                                        "number first.\n");
+                    }
+                    had_error = true;
+                    return builtin_int;
+                }
                 expr->expr_type = operand_type;
                 return operand_type;
             }
@@ -6926,6 +5857,15 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                     }
                     // Allow int/bool interchangeability (comparisons return int but work as bool)
                     bool types_match = (current_function_return_type->kind == return_expr_type->kind) ||
+                        // FFI `ptr` (TYPE_STRUCT "void*") and a machine word are
+                        // interchangeable here for the same reason
+                        // wyn_is_type_compatible allows it at a call boundary: `0` is
+                        // the null idiom, and an unresolved `-> ptr` annotation still
+                        // defaults to int. Without this, `pub fn f() -> ptr { return
+                        // extern_returning_ptr() }` was rejected with
+                        // "Expected int, got void*" on correct code.
+                        (is_ptr_type(current_function_return_type) && return_expr_type->kind == TYPE_INT) ||
+                        (is_ptr_type(return_expr_type) && current_function_return_type->kind == TYPE_INT) ||
                         (current_function_return_type->kind == TYPE_BOOL && return_expr_type->kind == TYPE_INT) ||
                         (current_function_return_type->kind == TYPE_INT && return_expr_type->kind == TYPE_BOOL) ||
                         (current_function_return_type->kind == TYPE_ENUM && return_expr_type->kind == TYPE_ENUM) ||
@@ -7041,6 +5981,32 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                         add_symbol(&for_scope, stmt->for_stmt.loop_var, builtin_string, false);
                     }
                 } else {
+                    // A STRING is not iterable. Codegen's for-in fallthrough assigns
+                    // the iterable to a `WynArray` unconditionally, so `for c in s`
+                    // emitted invalid C and died as a bare "internal codegen error"
+                    // AFTER passing `wyn check` - the v1.21 soundness rule is that a
+                    // program which checks must build.
+                    //
+                    // Rejected here rather than given a meaning: iterating a string
+                    // could reasonably yield characters, bytes, or grapheme clusters,
+                    // and silently picking one would be a language decision smuggled
+                    // in as a bug fix. `.split("")` already spells "by character"
+                    // explicitly, and splitting on a separator is what the reported
+                    // case actually wanted (`for f in File::walk_dir(d).split("\n")`).
+                    if (array_type && array_type->kind == TYPE_STRING) {
+                        fprintf(stderr,
+                                "\nError at line %d: cannot iterate a string directly\n",
+                                stmt->for_stmt.loop_var.line);
+                        show_source_line(stmt->for_stmt.loop_var.line);
+                        fprintf(stderr,
+                                "  \033[34mHelp:\033[0m be explicit about the unit:\n"
+                                "    for %.*s in s.split(\"\") { ... }      // one character at a time\n"
+                                "    for %.*s in s.split(\"\\n\") { ... }    // one line at a time\n"
+                                "    for i in 0..s.len() { ... }         // by index\n",
+                                stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start,
+                                stmt->for_stmt.loop_var.length, stmt->for_stmt.loop_var.start);
+                        had_error = true;
+                    }
                     add_symbol(&for_scope, stmt->for_stmt.loop_var, elem_type, false);
                     // Add index variable for indexed iteration: for i, v in arr
                     if (stmt->for_stmt.has_index) {
@@ -7253,27 +6219,17 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 }
             }
 
-            // Gate (not yet implemented): a struct field whose declared type is a
-            // function type (`fn_ptr: fn(int) -> int`). Codegen currently types
-            // such a field as `long long` and lowers `h.fn_ptr(x)` as a method
-            // call (`Handler_fn_ptr(...)`), leaking a raw-C error. Reject at check
-            // with a clear message until closure/function-pointer fields are
-            // implemented, so nothing passes check then fails to build.
-            for (int i = 0; i < stmt->struct_decl.field_count; i++) {
-                Expr* ft = stmt->struct_decl.field_types[i];
-                if (ft && ft->type == EXPR_OPTIONAL_TYPE) ft = ft->optional_type.inner_type;
-                if (ft && ft->type == EXPR_FN_TYPE) {
-                    fprintf(stderr,
-                        "Error at line %d: struct '%.*s' field '%.*s' has a function type,"
-                        " which is not yet supported as a struct field.\n"
-                        "  Workaround: store the closure in a variable and call it directly,"
-                        " or pass it as a function argument.\n",
-                        stmt->struct_decl.name.line,
-                        (int)stmt->struct_decl.name.length, stmt->struct_decl.name.start,
-                        (int)stmt->struct_decl.fields[i].length, stmt->struct_decl.fields[i].start);
-                    had_error = true;
-                }
-            }
+            // Function-typed struct fields (`on_click: fn() -> void`) ARE supported:
+            // the field is emitted as WynClosure and `b.on_click()` is lowered
+            // through {fn, env} (see the EXPR_FN_TYPE branch in codegen_stmt.c and
+            // the EXPR_FIELD_ACCESS callee branch in codegen_expr.c). This used to
+            // be a hard check-time error because codegen typed the field
+            // `long long` and lowered the call as a method call
+            // (`Button_on_click(...)`, a symbol that does not exist).
+            //
+            // Kept as a comment rather than deleted because the OPTIONAL form
+            // (`on_click: fn() -> void ?`) is still NOT wired up - Option<closure>
+            // has no family type - and this is where a future gate for it belongs.
 
             // Gate (not yet implemented): a struct field whose declared type is a
             // HashMap/HashSet (or bare map/set) container. Codegen silently types
@@ -7677,9 +6633,27 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             register_import(stmt->import.module.start, stmt->import.module.line);
             break;
         case STMT_TEST:
-            // Check test block body
+            // Check the test body in its OWN child scope, exactly as STMT_FN
+            // does for a function body.
+            //
+            // Each `test` block is lowered to a separate function, so its
+            // locals are genuinely independent at runtime. Checking the body
+            // in the enclosing scope instead let a `var` declared in one test
+            // leak its inferred type into every later test reusing the name:
+            //     test "a" { var b = returns_float() ... }
+            //     test "b" { var b = returns_int()   ... }
+            // the second block resolved `b` to the first block's float symbol
+            // and rejected valid code with "Type mismatch ... Expected: int,
+            // Got: float". The two names occupy disjoint runtime scopes, so
+            // this was a checker-only false positive.
             if (stmt->test_stmt.body) {
-                check_stmt(stmt->test_stmt.body, scope);
+                SymbolTable test_scope = {0};
+                test_scope.parent = scope;
+                test_scope.capacity = 32;
+                test_scope.symbols = calloc(32, sizeof(Symbol));
+                test_scope.count = 0;
+                check_stmt(stmt->test_stmt.body, &test_scope);
+                free(test_scope.symbols);
             }
             break;
         case STMT_MATCH: {
@@ -7738,6 +6712,20 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                                 if (ps && ps->type && ps->type->kind == TYPE_STRUCT) bound_type = ps->type;
                             }
                         }
+                        // Result family Ok(v)/Err(e): bind the arm variable to the real
+                        // payload type (see result_arm_payload_type). Previously only
+                        // the Option families were handled here, so every Result arm
+                        // binding was typed `int`.
+                        {
+                            // Select the arm by VARIANT NAME, not by `is_some`: the
+                            // parser sets is_some=true for any data-carrying variant
+                            // pattern, `Err(e)` included, so is_some cannot tell the
+                            // two Result arms apart. Codegen keys off the name too.
+                            Token _vn = match_case->pattern->option.variant_name;
+                            bool _is_err = (_vn.length == 3 && memcmp(_vn.start, "Err", 3) == 0);
+                            Type* _rp = result_arm_payload_type(match_value_type, !_is_err);
+                            if (_rp) bound_type = _rp;
+                        }
                         if (match_value_type && match_value_type->kind == TYPE_ENUM) {
                             Token variant_name = match_case->pattern->option.variant_name;
                             EnumStmt* enum_def = find_enum_definition(match_value_type->name);
@@ -7780,9 +6768,53 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 int enum_variant_count = 0;
                 (void)enum_variant_count;
                 
-                // Scan global scope for enum types and see if patterns match
-                for (int s = 0; s < global_scope->count; s++) {
+                // Scan global scope for enum types and see if patterns match.
+                //
+                // ONLY consider the enum the scrutinee actually IS. This loop used
+                // to try EVERY enum in global scope and accept the first whose
+                // variant list contained ANY arm name, without ever consulting the
+                // scrutinee. So a user enum that happens to declare a variant named
+                // Ok / Err / Some / None hijacked the exhaustiveness check of a
+                // GENUINE Result/Option match elsewhere in the same program:
+                //
+                //     enum Verdict { Ok, Over }
+                //     match real(true) { Ok(v) => .. Err(e) => .. }
+                //     -> Error: non-exhaustive match, missing case: Over
+                //
+                // demanding a Verdict variant be covered by a match on a Result.
+                // Ok/Err/Some/None are ordinary identifiers (the lexer dropped
+                // TOKEN_OK/TOKEN_ERR so they could be used as names), so those are
+                // legal variant names and this fired on correct code.
+                //
+                // When the scrutinee has no enum type at all - a bare int/string
+                // match, or a value the checker could not resolve - the old
+                // any-enum scan is kept, because that is the case the heuristic was
+                // written for and narrowing it there would lose real diagnostics.
+                Token _mv_enum = {0}; int _mv_is_enum = 0;
+                if (match_value_type && match_value_type->kind == TYPE_ENUM &&
+                    match_value_type->name.length > 0) {
+                    _mv_enum = match_value_type->name; _mv_is_enum = 1;
+                }
+                // A match on a builtin Option/Result family is never a user-enum
+                // match. The scrutinee there is a STRUCT (ResultInt, OptionString,
+                // OptionUser, ...), so the enum-name test above cannot exclude it,
+                // and it is the case that actually broke: `Ok(v)`/`Err(e)` arms are
+                // spelled exactly like the variants of a user enum that happens to
+                // declare an Ok. Option/Result exhaustiveness is a two-variant
+                // property handled by their own lowering, not by this scan.
+                int _mv_builtin_family = 0;
+                if (match_value_type && match_value_type->kind == TYPE_STRUCT &&
+                    match_value_type->struct_type.name.length >= 6) {
+                    const char* _n = match_value_type->struct_type.name.start;
+                    int _l = match_value_type->struct_type.name.length;
+                    if ((_l >= 6 && memcmp(_n, "Option", 6) == 0) ||
+                        (_l >= 6 && memcmp(_n, "Result", 6) == 0)) _mv_builtin_family = 1;
+                }
+                for (int s = 0; s < global_scope->count && !_mv_builtin_family; s++) {
                     Symbol* sym = &global_scope->symbols[s];
+                    if (_mv_is_enum && !(sym->name.length == _mv_enum.length &&
+                                         memcmp(sym->name.start, _mv_enum.start, _mv_enum.length) == 0))
+                        continue;
                     if (sym->type && sym->type->kind == TYPE_ENUM) {
                         // Check if any of our patterns match this enum's variants
                         for (int i = 0; i < stmt->match_stmt.case_count; i++) {
@@ -7889,7 +6921,28 @@ static Type* imported_type_from_expr(Expr* type_expr) {
     if (t.length == 3 && memcmp(t.start, "int", 3) == 0) return builtin_int;
     if (t.length == 5 && memcmp(t.start, "array", 5) == 0) return builtin_array;
     if (t.length == 4 && memcmp(t.start, "void", 4) == 0) return builtin_void;
-    return builtin_int;  // structs/enums default to int-sized handle here
+    // The FFI pointer family, mapped exactly as extern_map_type does it. Missing
+    // here, `pub fn cstr_through(s: cstr) -> cstr` registered as returning int, so
+    // handing its result to an `extern fn atoi(s: cstr)` was rejected with
+    // "Expected string, got int" - the annotation was right and the call was right.
+    if (t.length == 3 && memcmp(t.start, "ptr", 3) == 0) return builtin_ptr;
+    if (t.length == 4 && memcmp(t.start, "cstr", 4) == 0) return builtin_string;
+    // A STRUCT or ENUM the module returns. The name is resolvable by now: pass -1
+    // (check_program) merges module exports and pass 0 registers their types
+    // BEFORE the import-registration loop reaches here, so the symbol exists.
+    //
+    // Defaulting these to builtin_int made `var b = lib.make()` type `b` as int,
+    // and every field access on it then degraded to int as well - so
+    // `b.items[0]` reported "member reference base type 'long long' is not a
+    // structure". Codegen was taught to emit the right C type for the RETURN
+    // (get_module_fn_struct_return, #229) but the checker's type stayed wrong,
+    // which is why the C declaration looked correct while uses of it did not.
+    {
+        Symbol* s = find_symbol(global_scope, t);
+        if (s && s->type && (s->type->kind == TYPE_STRUCT || s->type->kind == TYPE_ENUM))
+            return s->type;
+    }
+    return builtin_int;  // unresolvable name: int-sized handle, as before
 }
 
 // W9: is `name` legitimately flat-callable in `prog` - i.e. defined as a
@@ -7919,6 +6972,25 @@ static bool flat_callable_in_program(Program* prog, const char* name, int name_l
 static Type* imported_fn_type(FnStmt* fn) {
     Type* fn_type = make_type(TYPE_FUNCTION);
     fn_type->fn_type.param_count = fn->param_count;
+    // Required-parameter count, counted the same way the local-function path
+    // counts it: walk back from the end while the parameter has a default.
+    //
+    // Without this the field kept make_type's -1 sentinel, so an imported
+    // function's DEFAULTED parameters were invisible to any caller-side arity
+    // check - `pub fn f(a: int, b: int = 5)` looked like it required both. That
+    // was harmless while nothing checked arity on the dotted path; it stops being
+    // harmless the moment something does, which is why it is fixed here rather
+    // than worked around at the call site.
+    {
+        int min_params = fn->param_count;
+        if (fn->param_defaults) {
+            for (int j = fn->param_count - 1; j >= 0; j--) {
+                if (fn->param_defaults[j]) min_params = j;
+                else break;
+            }
+        }
+        fn_type->fn_type.min_param_count = min_params;
+    }
     fn_type->fn_type.param_types = fn->param_count
         ? malloc(sizeof(Type*) * fn->param_count) : NULL;
     for (int k = 0; k < fn->param_count; k++) {
@@ -8388,6 +7460,61 @@ void check_program(Program* prog) {
         }
     }
     
+    // Pass -0.5: reject a DUPLICATE top-level declaration.
+    //
+    // Declaring the same struct, enum or function twice type-checked clean and
+    // then failed the C compile with a wall of "redefinition of 'E0'" /
+    // "redefinition of enumerator 'E0_Some_TAG'" - the v1.21 soundness rule broken
+    // by a plain copy-paste, which is how it happens in real editing.
+    //
+    // Found by the fuzzer: a line-duplicating mutant produced two identical enum
+    // declarations, and the strict oracle (any post-check build failure is a
+    // violation) reported it. The old allowlist oracle would have called it a
+    // clean rejection, because "redefinition of" was not one of its four
+    // recognised phrasings.
+    //
+    // Only DIRECT declarations are compared. A module's public types are spliced
+    // into the program wrapped in STMT_EXPORT, and the same module reached by two
+    // import paths can legitimately appear more than once (that double-emission
+    // has its own history), so counting those would be a false rejection on
+    // correct code - much worse than the hole being closed.
+    {
+        typedef struct { const char* start; int len; const char* kind; int line; } DeclRef;
+        int cap = prog->count > 0 ? prog->count : 1;
+        DeclRef* seen = malloc(sizeof(DeclRef) * cap);
+        int seen_n = 0;
+        for (int i = 0; i < prog->count; i++) {
+            Stmt* s = prog->stmts[i];
+            if (s->type == STMT_EXPORT) continue;   // module-spliced: see above
+            Token nm; const char* kind;
+            if (s->type == STMT_STRUCT)      { nm = s->struct_decl.name; kind = "struct"; }
+            else if (s->type == STMT_ENUM)   { nm = s->enum_decl.name;   kind = "enum"; }
+            else if (s->type == STMT_FN)     { nm = s->fn.name;          kind = "function"; }
+            else continue;
+            if (nm.length <= 0) continue;
+            int dup = -1;
+            for (int j = 0; j < seen_n; j++) {
+                if (seen[j].len == nm.length && strcmp(seen[j].kind, kind) == 0 &&
+                    memcmp(seen[j].start, nm.start, nm.length) == 0) { dup = j; break; }
+            }
+            if (dup >= 0) {
+                fprintf(stderr, "Error at line %d: %s '%.*s' is already defined",
+                        nm.line, kind, nm.length, nm.start);
+                if (seen[dup].line > 0) fprintf(stderr, " (line %d)", seen[dup].line);
+                fprintf(stderr, "\n");
+                show_source_line(nm.line);
+                fprintf(stderr, "  \033[34mHelp:\033[0m remove the duplicate, or rename one of them. "
+                                "Two definitions of one %s cannot both be emitted.\n", kind);
+                had_error = true;
+            } else if (seen_n < cap) {
+                seen[seen_n].start = nm.start; seen[seen_n].len = nm.length;
+                seen[seen_n].kind = kind;      seen[seen_n].line = nm.line;
+                seen_n++;
+            }
+        }
+        free(seen);
+    }
+
     // Pass 0: Register all struct types, enums, and constants first (so functions can reference them)
     for (int i = 0; i < prog->count; i++) {
         Stmt* pass0_stmt = prog->stmts[i];
@@ -8419,7 +7546,25 @@ void check_program(Program* prog) {
                     struct_type->struct_type.field_types[_fi] = ft ? ft : builtin_int;
                 }
             }
-            add_symbol(global_scope, struct_decl->name, struct_type, false);
+            // A user struct SHADOWS a same-named builtin stdlib namespace.
+            //
+            // init_checker() registers all 42 namespaces (File, Path, Time, Color, Log,
+            // Env, Task, ...) as global symbols typed `int`, and it runs before parsing, so
+            // it cannot know what the program declares. add_symbol appends without
+            // replacing and find_symbol returns the FIRST hash match, so the namespace won
+            // and `struct Path` resolved to an int -- which surfaced far away as
+            // "Type mismatch at line 1:0 / Expected: enum, Got: string", naming neither the
+            // struct nor a real line. Retyping the existing symbol here makes the user's
+            // declaration win, which is the only sensible resolution: a struct and a
+            // namespace are different kinds of name, and only the struct is in this file.
+            {
+                Symbol* prior = find_symbol(global_scope, struct_decl->name);
+                if (prior && prior->type && prior->type->kind != TYPE_STRUCT) {
+                    prior->type = struct_type;
+                } else {
+                    add_symbol(global_scope, struct_decl->name, struct_type, false);
+                }
+            }
         } else if (pass0_stmt->type == STMT_ENUM) {
             // Register enum type and variants early so functions can use them
             EnumStmt* enum_decl = &pass0_stmt->enum_decl;
@@ -9266,35 +8411,53 @@ void check_program(Program* prog) {
                             if (fn->return_type->call.arg_count > 0 &&
                                 fn->return_type->call.args[0]->type == EXPR_IDENT) {
                                 Token inner = fn->return_type->call.args[0]->token;
-                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)
+                                // Resolve E once, up front: it decides whether a PRIMITIVE
+                                // ok payload may use the builtin family at all. A primitive
+                                // ok with a non-string E must get its own monomorphic family
+                                // — the builtin's err_value is hardcoded `const char*`, so
+                                // reusing it silently discards E (uncompilable C for a struct
+                                // E, a segfault for a scalar E).
+                                Type* err_t = NULL;
+                                if (fn->return_type->call.arg_count > 1 &&
+                                    fn->return_type->call.args[1]->type == EXPR_IDENT) {
+                                    Token en = fn->return_type->call.args[1]->token;
+                                    if (en.length == 6 && memcmp(en.start, "string", 6) == 0) err_t = builtin_string;
+                                    else if (en.length == 3 && memcmp(en.start, "int", 3) == 0) err_t = builtin_int;
+                                    else if (en.length == 5 && memcmp(en.start, "float", 5) == 0) err_t = builtin_float;
+                                    else if (en.length == 4 && memcmp(en.start, "bool", 4) == 0) err_t = builtin_bool;
+                                    else {
+                                        Symbol* es = find_symbol(global_scope, en);
+                                        if (es && es->type) err_t = es->type;
+                                    }
+                                }
+                                int err_is_str = (!err_t || err_t->kind == TYPE_STRING);
+                                Type* prim_ok = NULL;
+                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0) {
                                     concrete = (Token){TOKEN_IDENT, "ResultString", 12, 0};
-                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0)
+                                    prim_ok = builtin_string;
+                                } else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0) {
                                     concrete = (Token){TOKEN_IDENT, "ResultFloat", 11, 0};
-                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)
+                                    prim_ok = builtin_float;
+                                } else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0) {
                                     concrete = (Token){TOKEN_IDENT, "ResultBool", 10, 0};
-                                else if (inner.length != 3 || memcmp(inner.start, "int", 3) != 0) {
+                                    prim_ok = builtin_bool;
+                                } else if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0) {
+                                    prim_ok = builtin_int;   // `concrete` already ResultInt
+                                }
+                                if (prim_ok) {
+                                    // Primitive ok: builtin family for a string E (unchanged),
+                                    // own `Result<Tag>_<ErrTag>` family otherwise.
+                                    if (!err_is_str)
+                                        struct_res = register_result_struct_family_e(prim_ok, err_t);
+                                } else {
                                     // `Result<Struct, E>` - resolve the user struct and
                                     // make its monomorphic Result<Struct, E> family the
                                     // signature type (mirrors the `-> Struct?` path). The
                                     // error type E is resolved too (string/scalar/struct)
                                     // so the family carries the real err C type.
                                     Symbol* st = find_symbol(global_scope, inner);
-                                    if (st && st->type && st->type->kind == TYPE_STRUCT) {
-                                        Type* err_t = NULL;
-                                        if (fn->return_type->call.arg_count > 1 &&
-                                            fn->return_type->call.args[1]->type == EXPR_IDENT) {
-                                            Token en = fn->return_type->call.args[1]->token;
-                                            if (en.length == 6 && memcmp(en.start, "string", 6) == 0) err_t = builtin_string;
-                                            else if (en.length == 3 && memcmp(en.start, "int", 3) == 0) err_t = builtin_int;
-                                            else if (en.length == 5 && memcmp(en.start, "float", 5) == 0) err_t = builtin_float;
-                                            else if (en.length == 4 && memcmp(en.start, "bool", 4) == 0) err_t = builtin_bool;
-                                            else {
-                                                Symbol* es = find_symbol(global_scope, en);
-                                                if (es && es->type) err_t = es->type;
-                                            }
-                                        }
+                                    if (st && st->type && st->type->kind == TYPE_STRUCT)
                                         struct_res = register_result_struct_family_e(st->type, err_t);
-                                    }
                                 }
                             }
                             if (struct_res) {
@@ -9321,9 +8484,12 @@ void check_program(Program* prog) {
                             concrete = (Token){TOKEN_IDENT, "OptionBool", 10, 0};
                         else if (inner->token.length != 3 || memcmp(inner->token.start, "int", 3) != 0) {
                             // `-> Struct?` - resolve the user struct and make its
-                            // monomorphic Option<Struct> family the signature type.
+                            // monomorphic Option<Struct> family the signature type. A
+                            // DATA-carrying enum takes the same path (it is a C struct);
+                            // register_option_struct_family() returns NULL for a PLAIN
+                            // enum, which correctly falls through to OptionInt below.
                             Symbol* st = find_symbol(global_scope, inner->token);
-                            if (st && st->type && st->type->kind == TYPE_STRUCT)
+                            if (st && st->type)
                                 struct_opt = register_option_struct_family(st->type);
                         }
                     }
@@ -9334,22 +8500,30 @@ void check_program(Program* prog) {
                         fn_type->fn_type.return_type = sym ? sym->type : builtin_int;
                     }
                 } else if (fn->return_type->type == EXPR_ARRAY) {
-                    // Array type like [int] or [string]
+                    // Array type like [int], [string] or [S].
+                    //
+                    // This used to inline a four-way int/string/float/bool chain, so a
+                    // STRUCT or ENUM element fell through and left element_type NULL:
+                    //
+                    //     fn make() -> [S] { ... }
+                    //     for s in make() { print(s.name) }    // s was `long long`
+                    //
+                    // `wyn check` passed and the C compiler then rejected the program
+                    // with "member reference base type 'long long' is not a structure
+                    // or union" - so returning an array of structs, the natural way to
+                    // structure any program with records in it, was unusable. Adding an
+                    // explicit `var xs: [S] = make()` worked, because the ANNOTATION
+                    // path already used the resolver below; that asymmetry is what made
+                    // this read as a rule about annotations rather than a gap here.
+                    //
+                    // resolve_array_elem_annotation() is the same resolver the
+                    // annotated-variable and parameter paths use, and it also handles
+                    // nested arrays ([[float]]) and map elements, so those come along
+                    // rather than needing their own arms later.
                     Type* array_type = make_type(TYPE_ARRAY);
                     if (fn->return_type->array.count > 0 && fn->return_type->array.elements[0]) {
-                        Expr* elem_type_expr = fn->return_type->array.elements[0];
-                        if (elem_type_expr->type == EXPR_IDENT) {
-                            Token elem_type_name = elem_type_expr->token;
-                            if (elem_type_name.length == 3 && memcmp(elem_type_name.start, "int", 3) == 0) {
-                                array_type->array_type.element_type = builtin_int;
-                            } else if (elem_type_name.length == 6 && memcmp(elem_type_name.start, "string", 6) == 0) {
-                                array_type->array_type.element_type = builtin_string;
-                            } else if (elem_type_name.length == 5 && memcmp(elem_type_name.start, "float", 5) == 0) {
-                                array_type->array_type.element_type = builtin_float;
-                            } else if (elem_type_name.length == 4 && memcmp(elem_type_name.start, "bool", 4) == 0) {
-                                array_type->array_type.element_type = builtin_bool;
-                            }
-                        }
+                        array_type->array_type.element_type =
+                            resolve_array_elem_annotation(fn->return_type->array.elements[0]);
                     }
                     fn_type->fn_type.return_type = array_type;
                 } else if (fn->return_type->type == EXPR_FN_TYPE) {

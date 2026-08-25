@@ -1,7 +1,10 @@
 #!/bin/bash
 # Nested-aggregate feature suite: verifies the FULLY-IMPLEMENTED cases run with
-# correct output, and the two DEFERRED cases (function-typed struct field,
-# array of closures) produce a CLEAN CHECK-TIME error instead of leaking raw C.
+# correct output, and the remaining DEFERRED case (array of closures) produces a
+# CLEAN CHECK-TIME error instead of leaking raw C.
+#
+# Function-typed struct fields USED to be the other deferred case; they are now
+# implemented and asserted by value below.
 # Guards the "check passes then codegen leaks C / long-long-casts the aggregate"
 # cliff the second HN review found.
 set -uo pipefail
@@ -78,10 +81,14 @@ fn main() -> int {
 }
 WYN
 
-# --- DEFERRED (must be a clean check-time error, never raw C) ---
-
-# 4a. function-typed struct field
-gate fn_field "not yet supported as a struct field" <<'WYN'
+# 6. function-typed struct field - the callback/event-handler shape.
+# Was a DEFERRED case gated on a clean check-time error; now implemented, so it
+# is asserted by VALUE. That matters more than usual here: the two bugs this
+# feature had both produced a wrong number at exit 0 rather than a failure, so a
+# gate on "does it compile" would have passed against both. 21 * 2 = 42.
+# Full coverage of the shapes (named fn, capturing lambda, float/string/void,
+# multiple fields) lives in tests/errors/run_fn_field_test.sh.
+runok fn_field 42 <<'WYN'
 struct Handler { name: string, fn_ptr: fn(int) -> int }
 fn main() -> int {
     h = Handler{ name: "double", fn_ptr: (x) => x * 2 }
@@ -89,6 +96,8 @@ fn main() -> int {
     return 0
 }
 WYN
+
+# --- DEFERRED (must be a clean check-time error, never raw C) ---
 
 # 4b. array of closures
 gate fn_array "arrays of functions/closures are not yet supported" <<'WYN'

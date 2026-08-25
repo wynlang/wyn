@@ -1,0 +1,67 @@
+// Every method-form call on a Json receiver emitted NOTHING.
+//
+// #291 introduced TYPE_JSON so a Json handle would stop being typed TYPE_MAP
+// (which made scope-exit hashmap_free walk a WynJson and abort). It did not add a
+// codegen dispatch branch for the resulting "json" receiver_type, so a method call
+// on a Json fell through every branch and emitted an empty statement:
+//
+//     var a = Json.new()
+//     a.set_int("i", 1)        // emitted `;`  -- silently discarded, exit 0
+//     println(a.stringify())   // {}           -- the writes were simply gone
+//     var v = a.get_int("i")   // `long long v = ;` -> error: expected expression
+//
+// A silent no-op in statement position and a build failure in expression position,
+// both after `wyn check` reported no errors. One fix closes both: `j.m(a)` now
+// lowers exactly as `Json.m(j, a)` does, by prefix rather than a method whitelist,
+// so the two spellings cannot drift apart again - which is how this arose.
+//
+// EXPECT: ns={"i": 1, "s": "x", "b": 1}
+// EXPECT: mt={"i": 1, "s": "x", "b": 1}
+// EXPECT: identical=true
+// EXPECT: roundtrip i=1 s=x
+// EXPECT: pretty-nonempty=true
+
+fn build_ns() -> string {
+    var a = Json.new()
+    Json.set_int(a, "i", 1)
+    Json.set_string(a, "s", "x")
+    Json.set_bool(a, "b", true)
+    return Json.stringify(a)
+}
+
+fn build_mt() -> string {
+    var a = Json.new()
+    a.set_int("i", 1)
+    a.set_string("s", "x")
+    a.set_bool("b", true)
+    return a.stringify()
+}
+
+fn main() {
+    var ns = build_ns()
+    var mt = build_mt()
+    // NOTE `"b": 1`, not `"b": true`: Json.set_bool serialises a bool as a
+    // NUMBER, so the JSON loses the boolean type. Pre-existing and unrelated to
+    // the method form (the namespace spelling does the same), asserted as it
+    // actually behaves rather than as a wish. Logged in ROADMAP.
+    println("ns=${ns}")
+    println("mt=${mt}")
+
+    // The two spellings must agree byte for byte. Before the fix `mt` was `{}`
+    // while `ns` was correct, which is the whole defect in one comparison.
+    println("identical=${ns == mt}")
+
+    // stringify -> parse -> get is the loop real code performs (build a body, send
+    // it; receive a body, read it), and #294 made it closed. Reading uses the
+    // NAMESPACE getters deliberately: Json.parse returns the int-typed handle side
+    // of the documented split representation, so method-form getters on a parsed
+    // handle are a separate, still-open item (see ROADMAP) and are not asserted here.
+    var j = Json.parse(mt)
+    println("roundtrip i=${Json.get_int(j, "i")} s=${Json.get_string(j, "s")}")
+
+    // A second struct-side method through the method form, to prove the fix is not
+    // special-cased to the three setters.
+    var b = Json.new()
+    b.set_int("n", 42)
+    println("pretty-nonempty=${b.stringify().len() > 2}")
+}

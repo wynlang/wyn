@@ -1,0 +1,96 @@
+// Regression: an indexed read of a data-enum array returned `long long`.
+//
+//   xs = [Shape.Circle(1.5)]
+//   name_of(xs[0])     ->  C: passing 'long long' to parameter of incompatible type 'Shape'
+//
+// A data-carrying enum is a C struct (a tagged union), so an indexed read needs
+// array_get_struct with the enum's own C type. The index dispatch tested for TYPE_STRUCT and
+// let TYPE_ENUM fall through to array_get_int.
+//
+// `for s in xs` over the SAME array already worked -- that path makes the plain-vs-data
+// distinction with the same is_data_enum_type predicate. Only the indexed read was missing
+// it, so a program could iterate an array fine and fail the moment it read one element by
+// index. That asymmetry is why the fix reuses the same predicate rather than inventing a new
+// test.
+//
+// Second half of the fix: the emission site read `elem_type->struct_type.name`, which is an
+// empty token for an enum Type (the name lives in Type.name), so the naive version emitted
+// `array_get_struct(xs, 0, )`.
+//
+// EXPECT: each index gives its own element: circle:1.5,square:7,dot
+// EXPECT: negative index reads from the end: dot
+// EXPECT: an index loop matches for-in
+// EXPECT: for-in still works: circle:1.5,square:7,dot
+// EXPECT: a plain enum array still reads as an int: 111
+// EXPECT: a dataless variant of a data enum reads back correctly
+// EXPECT: struct arrays are unaffected: 5
+
+enum Shape { Circle(float), Square(int), Dot }
+enum Plain { Up, Down, Reset }
+
+struct P { x: int }
+
+fn name_of(s: Shape) -> string {
+    match s {
+        Circle(r) => return "circle:${r}"
+        Square(n) => return "square:${n}"
+        Dot => return "dot"
+    }
+}
+
+fn main() {
+    xs = [Shape.Circle(1.5), Shape.Square(7), Shape.Dot]
+
+    // The core assertion is per-index VALUES, not that it compiles. A read with the wrong
+    // element type can return the first element for every index -- the right count, the
+    // wrong data, silently, at exit 0. That failure mode has shipped before on the
+    // plain-enum push path, so each index is checked separately.
+    print("each index gives its own element: ${name_of(xs[0])},${name_of(xs[1])},${name_of(xs[2])}")
+
+    // Negative indexing is a documented feature and goes through the same read. It was
+    // silently broken for STRUCT arrays once before (the fixup lived in the checked path
+    // that the struct macro bypassed), so it is pinned here for the enum case.
+    print("negative index reads from the end: ${name_of(xs[0 - 1])}")
+
+    // An index loop is how most code actually reads an array, and it must agree with for-in.
+    idx_out = []
+    for i in 0..xs.len() {
+        idx_out.push(name_of(xs[i]))
+    }
+    forin_out = []
+    for s in xs {
+        forin_out.push(name_of(s))
+    }
+    if idx_out.join(",") == forin_out.join(",") {
+        print("an index loop matches for-in")
+    } else {
+        print("DISAGREE: idx=${idx_out.join(",")} forin=${forin_out.join(",")}")
+    }
+    print("for-in still works: ${forin_out.join(",")}")
+
+    // A PLAIN enum is an int in C and must STAY on the int path -- this is the arm a
+    // careless widening of the guard would break. 1+10+100 distinguishes "all three read
+    // correctly" from any collapse to one variant.
+    ps = [Plain.Up, Plain.Down, Plain.Reset]
+    n = 0
+    for i in 0..ps.len() {
+        match ps[i] {
+            Up => n = n + 1
+            Down => n = n + 10
+            Reset => n = n + 100
+        }
+    }
+    print("a plain enum array still reads as an int: ${n}")
+
+    // A payload-free variant OF A DATA enum is stored in the tagged union like any other
+    // variant, so reading it by index must not confuse it with a plain enum's constant.
+    if name_of(xs[2]) == "dot" {
+        print("a dataless variant of a data enum reads back correctly")
+    } else {
+        print("DATALESS BROKE: ${name_of(xs[2])}")
+    }
+
+    // The struct path shares this branch -- it must be unchanged.
+    qs = [P { x: 5 }]
+    print("struct arrays are unaffected: ${qs[0].x}")
+}

@@ -1,0 +1,139 @@
+// Regression: a user struct named after a builtin stdlib NAMESPACE broke type-checking,
+// with an error that named neither the struct nor a real line:
+//
+//   Error: Type mismatch at line 1:0   Expected: enum (enum)   Got: string (text string)
+//
+// Cause: init_checker() registers all 42 namespaces (File, Path, Time, Color, Log, Env,
+// Task, ...) as global symbols typed `int`, and it runs BEFORE parsing, so it cannot know
+// what the program declares. add_symbol appends without replacing and find_symbol returns
+// the FIRST hash match, so the namespace won and `struct Path` resolved to an int.
+//
+// All four ingredients were needed to trigger it -- a Result with the struct as its ok
+// payload, an enum error, a match, and a call in the Err arm taking the enum -- which is why
+// `struct Color` in tests/validation/epic1_final.wyn kept checking clean. This file has all
+// four, using several of the most natural names a user would actually pick.
+//
+// EXPECT: path cost=4
+// EXPECT: path err=empty
+// EXPECT: time secs=90
+// EXPECT: color rgb=255
+// EXPECT: log level=2
+// EXPECT: task id=7
+// EXPECT: env pairs=1
+
+enum Fault {
+    Empty
+    Bad
+}
+
+fn fault_name(f: Fault) -> string {
+    if f == Fault::Empty {
+        return "empty"
+    }
+    return "bad"
+}
+
+// `Path` -- the name that surfaced this, from a graph app's shortest-path result.
+struct Path {
+    cost: int
+    hops: [int]
+}
+
+// Four more namespace names a user would plausibly claim.
+struct Time {
+    secs: int
+}
+
+struct Color {
+    r: int
+    g: int
+    b: int
+}
+
+struct Log {
+    level: int
+}
+
+struct Task {
+    id: int
+}
+
+struct Env {
+    pairs: int
+}
+
+fn find_path(ok: bool) -> Result<Path, Fault> {
+    if not ok {
+        return Err(Fault::Empty)
+    }
+    return Ok(Path { cost: 4, hops: [0, 2, 1, 3] })
+}
+
+fn make_time(ok: bool) -> Result<Time, Fault> {
+    if not ok {
+        return Err(Fault::Bad)
+    }
+    return Ok(Time { secs: 90 })
+}
+
+fn make_color(ok: bool) -> Result<Color, Fault> {
+    if not ok {
+        return Err(Fault::Bad)
+    }
+    return Ok(Color { r: 255, g: 0, b: 0 })
+}
+
+fn make_log(ok: bool) -> Result<Log, Fault> {
+    if not ok {
+        return Err(Fault::Bad)
+    }
+    return Ok(Log { level: 2 })
+}
+
+fn make_task(ok: bool) -> Result<Task, Fault> {
+    if not ok {
+        return Err(Fault::Bad)
+    }
+    return Ok(Task { id: 7 })
+}
+
+fn make_env(ok: bool) -> Result<Env, Fault> {
+    if not ok {
+        return Err(Fault::Bad)
+    }
+    return Ok(Env { pairs: 1 })
+}
+
+fn main() {
+    // The exact failing shape: match on Result<Struct, Enum>, and call a fn taking the
+    // enum from the Err arm.
+    match find_path(true) {
+        Ok(p) => print("path cost=${p.cost}")
+        Err(e) => print("path err=${fault_name(e)}")
+    }
+    match find_path(false) {
+        Ok(p) => print("path cost=${p.cost}")
+        Err(e) => print("path err=${fault_name(e)}")
+    }
+
+    match make_time(true) {
+        Ok(t) => print("time secs=${t.secs}")
+        Err(e) => print("time err=${fault_name(e)}")
+    }
+    match make_color(true) {
+        Ok(c) => print("color rgb=${c.r}")
+        Err(e) => print("color err=${fault_name(e)}")
+    }
+    match make_log(true) {
+        Ok(l) => print("log level=${l.level}")
+        Err(e) => print("log err=${fault_name(e)}")
+    }
+    match make_task(true) {
+        Ok(t) => print("task id=${t.id}")
+        Err(e) => print("task err=${fault_name(e)}")
+    }
+    match make_env(true) {
+        Ok(v) => print("env pairs=${v.pairs}")
+        Err(e) => print("env err=${fault_name(e)}")
+    }
+}

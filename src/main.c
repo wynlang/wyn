@@ -70,6 +70,332 @@ void build_source_list(char* buf, int bufsize, const char* prefix) {
     }
 }
 
+// LIBRARY NAME OVERRIDE.
+//
+// The artifact name normally derives from the source file's basename, which is right
+// for `wyn build mathlib.wyn --python` (-> libmathlib + mathlib.py). It is WRONG when
+// the whole project is built with no file argument: `wyn init --lib python mylib`
+// scaffolds entry = "src/main.wyn" and prints
+// `python3 -c "from mylib import add"`, but naming from the file gives libmain.dylib
+// and main.py - so the scaffold's own instructions failed with ModuleNotFoundError
+// even after the library itself built correctly. When wyn.toml names the project, that
+// name wins.
+// The C compiler's stderr goes to a PER-PROCESS file in the temp directory. It used to
+// be a bare relative "wyn_cc_err.txt", i.e. in the CURRENT DIRECTORY, so two concurrent
+// `wyn run` invocations in one directory reported each other's diagnostics - naming a
+// file the user was not building. The `build` path was fixed first; this shares that fix
+// with the `run` and shared-library paths instead of a third copy of it.
+//
+// The directory must be resolved per platform: Windows cmd.exe has no /tmp, and a `2>`
+// to a non-existent path fails the whole command line with "The system cannot find the
+// path specified." before the compiler ever runs - which is exactly how the first cut of
+// the `build`-path fix broke the Windows smoke test.
+//
+// `out_path` gets the plain path (for fopen/unlink); `out_redir` gets it QUOTED, for
+// splicing into a shell command line, because %TEMP% is routinely
+// C:\Users\<name>\AppData\Local\Temp - a path with spaces in it.
+void wyn_cc_err_paths(char* out_path, size_t path_sz, char* out_redir, size_t redir_sz) {
+#ifdef _WIN32
+    const char* tmpdir = getenv("TEMP");
+    if (!tmpdir || !tmpdir[0]) tmpdir = getenv("TMP");
+    if (!tmpdir || !tmpdir[0]) tmpdir = ".";
+#else
+    const char* tmpdir = getenv("TMPDIR");
+    if (!tmpdir || !tmpdir[0]) tmpdir = "/tmp";
+#endif
+    size_t tdl = strlen(tmpdir);
+    int has_sep = tdl > 0 && (tmpdir[tdl-1] == '/' || tmpdir[tdl-1] == '\\');
+    snprintf(out_path, path_sz, "%s%swyn_cc_err.%ld.txt",
+             tmpdir, has_sep ? "" : "/", (long)getpid());
+    if (out_redir && redir_sz) snprintf(out_redir, redir_sz, "\"%s\"", out_path);
+}
+
+static char g_library_name[128] = "";
+void wyn_set_library_name(const char* n) {
+    if (!n || !n[0]) return;
+    // SANITIZE to a valid module identifier. A project name is free text and hyphens are
+    // idiomatic in one ("math-lib"), but `import math-lib` is a Python SYNTAX ERROR and
+    // `require("math-lib")` resolves as a package path rather than the file - so naming
+    // the wrapper straight from wyn.toml produced a file nobody could import. Anything
+    // that is not [A-Za-z0-9_] becomes '_', and a leading digit is prefixed, since an
+    // identifier may not start with one.
+    size_t w = 0;
+    if (n[0] >= '0' && n[0] <= '9' && w + 1 < sizeof(g_library_name)) g_library_name[w++] = '_';
+    for (size_t i = 0; n[i] && w + 1 < sizeof(g_library_name); i++) {
+        char c = n[i];
+        int ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                 (c >= '0' && c <= '9') || c == '_';
+        g_library_name[w++] = ok ? c : '_';
+    }
+    g_library_name[w] = '\0';
+}
+
+// wyn_emit_shared_library - build a .dylib/.so/.dll from the already-generated C and,
+// for --python / --node, write the FFI wrapper beside it.
+//
+// EXTRACTED so that BOTH `wyn run` and `wyn build` can reach it. It used to live inline
+// under `run`, which meant `wyn build x.wyn --python` - the spelling the docs and
+// `wyn init --lib python` both tell you to use - could not reach it at all: `build`
+// parsed --python into a string used only for the progress line, then produced an
+// ordinary executable and printed a success message. No .dylib, no .py, exit 0.
+//
+// mode: 1 = --shared (library only), 2 = --python (+ .py ctypes wrapper),
+//       3 = --node   (+ .js ffi-napi wrapper).
+// Returns 0 on success, 1 on failure.
+//
+// The CALLER must have put codegen into library mode (codegen_set_library_mode(true))
+// BEFORE generating the C, or small functions come out `static inline` and are absent
+// from the library's symbol table - see the comment on codegen_set_library_mode.
+int wyn_emit_shared_library(const char* file, Program* prog, int shared_mode,
+                            const char* wyn_root, const char* opt_level,
+                            const char* platform_libs, int have_prebuilt_runtime,
+                            int keep_artifacts, struct timespec _ts_start) {
+    // Named have_prebuilt_runtime rather than rt_check because in `run` the
+    // corresponding value is a FILE* that is fclose()d before this is reached; only
+    // its truthiness ("libwyn_rt.a exists") travels here.
+    const int rt_check = have_prebuilt_runtime;
+    struct timespec _ts_end;
+        char lib_name[256] = {0};
+        if (g_library_name[0]) {
+            // wyn.toml named the project - use that, so the import name matches what
+            // the scaffold and the docs tell the user to write.
+            snprintf(lib_name, sizeof(lib_name), "%s", g_library_name);
+        } else {
+            const char* base = strrchr(file, '/');
+            base = base ? base + 1 : file;
+            snprintf(lib_name, sizeof(lib_name), "%s", base);
+            char* ldot = strrchr(lib_name, '.'); if (ldot) *ldot = 0;
+        }
+#ifdef __APPLE__
+        const char* lib_ext = "dylib"; const char* shared_flags = "-dynamiclib";
+#elif _WIN32
+        const char* lib_ext = "dll"; const char* shared_flags = "-shared";
+#else
+        const char* lib_ext = "so"; const char* shared_flags = "-shared";
+#endif
+        char lib_path[512];
+        snprintf(lib_path, sizeof(lib_path), "lib%s.%s", lib_name, lib_ext);
+        char shared_cmd[8192];
+        // ALWAYS compile the runtime FROM SOURCE for a shared library, even when the
+        // prebuilt runtime/libwyn_rt.a exists.
+        //
+        // That archive is built WITHOUT -fPIC. On macOS that is invisible, because Mach-O
+        // is position-independent by default and the link succeeds. On Linux the ELF
+        // linker refuses outright:
+        //
+        //   relocation R_AARCH64_ADR_PREL_PG_HI21 against symbol `ws_blocked' which may
+        //   bind externally can not be used when making a shared object; recompile with -fPIC
+        //   /usr/bin/ld: final link failed: bad value
+        //
+        // so --python/--shared/--node could NEVER have worked on Linux - the failure was
+        // then swallowed by `2>wyn_cc_err.txt` plus the unlink below, which is why it
+        // presented as a silent exit 1 with no artifacts and no message. Costs a slower
+        // one-off compile for a library build, which is the right trade for producing an
+        // artifact that links at all. (rt_check is therefore unused here now.)
+        (void)rt_check;
+        char src_list[4096];
+        build_source_list(src_list, sizeof(src_list), wyn_root);
+        // -D_GNU_SOURCE is required, not optional: under -std=c11 glibc hides strdup,
+        // strndup and friends behind a feature macro, so compiling the runtime sources
+        // directly fails on Linux with "implicit declaration of function 'strdup'". The
+        // Makefile passes it for every ordinary build (CFLAGS) and this path was the one
+        // place that did not.
+        char _lib_cc_err[512], _lib_cc_redir[544];
+        wyn_cc_err_paths(_lib_cc_err, sizeof(_lib_cc_err), _lib_cc_redir, sizeof(_lib_cc_redir));
+        snprintf(shared_cmd, sizeof(shared_cmd),
+                 "gcc -std=c11 -D_GNU_SOURCE %s -fwrapv -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -I %s/vendor/minicoro -o %s %s.c %s %s 2>%s",
+                 opt_level, shared_flags, wyn_root, wyn_root, lib_path, file, src_list, platform_libs, _lib_cc_redir);
+        int result = system(shared_cmd);
+        // A FAILED library build must say why. The error was being written to
+        // wyn_cc_err.txt and then unlinked unread, so a Linux user saw exit 1 and nothing
+        // else - no message, no artifact, no clue.
+        if (result != 0) {
+            FILE* _ce = fopen(_lib_cc_err, "r");
+            if (_ce) {
+                char _line[512];
+                fprintf(stderr, "\033[31mError:\033[0m could not build the shared library:\n");
+                int _n = 0;
+                while (_n < 8 && fgets(_line, sizeof(_line), _ce)) { fputs(_line, stderr); _n++; }
+                fclose(_ce);
+            }
+        }
+        if (result == 0) {
+            clock_gettime(CLOCK_MONOTONIC, &_ts_end);
+            double _ms = (_ts_end.tv_sec - _ts_start.tv_sec) * 1000.0 + (_ts_end.tv_nsec - _ts_start.tv_nsec) / 1e6;
+            fprintf(stderr, "\033[32m✓\033[0m Built shared library: %s (%.0fms)\n", lib_path, _ms);
+        }
+        if (result == 0 && shared_mode == 2) {
+            char py_path[512]; snprintf(py_path, sizeof(py_path), "%s.py", lib_name);
+            FILE* py = fopen(py_path, "w");
+            if (py) {
+                fprintf(py, "\"\"\"Auto-generated Python wrapper for %s.wyn - created by Wyn\"\"\"\n", lib_name);
+                fprintf(py, "import ctypes, os, sys\n\n");
+                fprintf(py, "_dir = os.path.dirname(os.path.abspath(__file__))\n");
+                fprintf(py, "if sys.platform == 'darwin':\n    _ext = 'dylib'\nelif sys.platform == 'win32':\n    _ext = 'dll'\nelse:\n    _ext = 'so'\n");
+                fprintf(py, "_lib = ctypes.CDLL(os.path.join(_dir, f'lib%s.{_ext}'))\n\n", lib_name);
+                for (int fi = 0; fi < prog->count; fi++) {
+                    Stmt* s = prog->stmts[fi];
+                    if (s->type != STMT_FN) continue;
+                    if (s->fn.name.length == 4 && memcmp(s->fn.name.start, "main", 4) == 0) continue;
+                    if (s->fn.receiver_type.length > 0) continue;
+                    char fname[128]; snprintf(fname, sizeof(fname), "%.*s", s->fn.name.length, s->fn.name.start);
+                    // C keyword prefix
+                    const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                    const char* cpfx = "";
+                    for (int k = 0; _ckw[k]; k++) { if (strcmp(fname, _ckw[k]) == 0) { cpfx = "_"; break; } }
+                    // Return type
+                    const char* py_res = "ctypes.c_longlong";
+                    int ret_is_str = 0;
+                    if (s->fn.return_type && s->fn.return_type->type == EXPR_IDENT) {
+                        Token rt = s->fn.return_type->token;
+                        if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) { py_res = "ctypes.c_char_p"; ret_is_str = 1; }
+                        else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) py_res = "ctypes.c_double";
+                        else if (rt.length == 4 && memcmp(rt.start, "bool", 4) == 0) py_res = "ctypes.c_bool";
+                    } else if (!s->fn.return_type) { py_res = "None"; }
+                    // Wyn signature as comment
+                    fprintf(py, "# %s(", fname);
+                    for (int p = 0; p < s->fn.param_count; p++) {
+                        if (p > 0) fprintf(py, ", ");
+                        fprintf(py, "%.*s: %.*s", s->fn.params[p].length, s->fn.params[p].start,
+                                s->fn.param_types[p] ? s->fn.param_types[p]->token.length : 3,
+                                s->fn.param_types[p] ? s->fn.param_types[p]->token.start : "int");
+                    }
+                    fprintf(py, ")");
+                    if (s->fn.return_type && s->fn.return_type->type == EXPR_IDENT)
+                        fprintf(py, " -> %.*s", s->fn.return_type->token.length, s->fn.return_type->token.start);
+                    fprintf(py, "\n");
+                    // argtypes
+                    fprintf(py, "_lib.%s%s.argtypes = [", cpfx, fname);
+                    for (int p = 0; p < s->fn.param_count; p++) {
+                        if (p > 0) fprintf(py, ", ");
+                        if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
+                            Token pt = s->fn.param_types[p]->token;
+                            if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) fprintf(py, "ctypes.c_char_p");
+                            else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) fprintf(py, "ctypes.c_double");
+                            else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) fprintf(py, "ctypes.c_bool");
+                            else fprintf(py, "ctypes.c_longlong");
+                        } else fprintf(py, "ctypes.c_longlong");
+                    }
+                    fprintf(py, "]\n");
+                    fprintf(py, "_lib.%s%s.restype = %s\n\n", cpfx, fname, py_res);
+                    // Python wrapper function with type hints
+                    fprintf(py, "def %s(", fname);
+                    for (int p = 0; p < s->fn.param_count; p++) {
+                        if (p > 0) fprintf(py, ", ");
+                        fprintf(py, "%.*s", s->fn.params[p].length, s->fn.params[p].start);
+                        // Add type hint
+                        if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
+                            Token pt = s->fn.param_types[p]->token;
+                            if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) fprintf(py, ": str");
+                            else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) fprintf(py, ": float");
+                            else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) fprintf(py, ": bool");
+                            else if (pt.length == 3 && memcmp(pt.start, "int", 3) == 0) fprintf(py, ": int");
+                        }
+                    }
+                    // Return type hint
+                    if (ret_is_str) fprintf(py, ") -> str:\n");
+                    else if (strcmp(py_res, "ctypes.c_double") == 0) fprintf(py, ") -> float:\n");
+                    else if (strcmp(py_res, "ctypes.c_bool") == 0) fprintf(py, ") -> bool:\n");
+                    else if (strcmp(py_res, "None") == 0) fprintf(py, ") -> None:\n");
+                    else fprintf(py, ") -> int:\n");
+                    // Encode string params
+                    for (int p = 0; p < s->fn.param_count; p++) {
+                        if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
+                            Token pt = s->fn.param_types[p]->token;
+                            if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0)
+                                fprintf(py, "    %.*s = %.*s.encode() if isinstance(%.*s, str) else %.*s\n",
+                                        s->fn.params[p].length, s->fn.params[p].start,
+                                        s->fn.params[p].length, s->fn.params[p].start,
+                                        s->fn.params[p].length, s->fn.params[p].start,
+                                        s->fn.params[p].length, s->fn.params[p].start);
+                        }
+                    }
+                    fprintf(py, "    _r = _lib.%s%s(", cpfx, fname);
+                    for (int p = 0; p < s->fn.param_count; p++) {
+                        if (p > 0) fprintf(py, ", ");
+                        fprintf(py, "%.*s", s->fn.params[p].length, s->fn.params[p].start);
+                    }
+                    fprintf(py, ")\n");
+                    if (ret_is_str) fprintf(py, "    return _r.decode() if _r else \"\"\n");
+                    else if (strcmp(py_res, "None") != 0) fprintf(py, "    return _r\n");
+                    fprintf(py, "\n");
+                }
+                fclose(py);
+                fprintf(stderr, "\033[32m✓\033[0m Generated Python wrapper: %s\n", py_path);
+            }
+        }
+        // Generate Node.js wrapper if --node (mode 3)
+        if (result == 0 && shared_mode == 3) {
+            char js_path[512]; snprintf(js_path, sizeof(js_path), "%s.js", lib_name);
+            FILE* js = fopen(js_path, "w");
+            if (js) {
+                fprintf(js, "// Auto-generated Node.js wrapper for %s.wyn - created by Wyn\n", lib_name);
+                fprintf(js, "const ffi = require('ffi-napi');\n");
+                fprintf(js, "const path = require('path');\n\n");
+                fprintf(js, "const ext = process.platform === 'darwin' ? 'dylib' : process.platform === 'win32' ? 'dll' : 'so';\n");
+                fprintf(js, "const lib = ffi.Library(path.join(__dirname, `lib%s.${ext}`), {\n", lib_name);
+                
+                int first_fn = 1;
+                for (int fi = 0; fi < prog->count; fi++) {
+                    Stmt* s = prog->stmts[fi];
+                    if (s->type != STMT_FN) continue;
+                    if (s->fn.name.length == 4 && memcmp(s->fn.name.start, "main", 4) == 0) continue;
+                    if (s->fn.receiver_type.length > 0) continue;
+                    
+                    char fname[128]; snprintf(fname, sizeof(fname), "%.*s", s->fn.name.length, s->fn.name.start);
+                    // C keyword prefix
+                    const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                    const char* cpfx = "";
+                    for (int k = 0; _ckw[k]; k++) { if (strcmp(fname, _ckw[k]) == 0) { cpfx = "_"; break; } }
+                    
+                    // Return type
+                    const char* js_ret = "'int64'";
+                    if (s->fn.return_type && s->fn.return_type->type == EXPR_IDENT) {
+                        Token rt = s->fn.return_type->token;
+                        if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) js_ret = "'string'";
+                        else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) js_ret = "'double'";
+                        else if (rt.length == 4 && memcmp(rt.start, "bool", 4) == 0) js_ret = "'bool'";
+                    } else if (!s->fn.return_type) { js_ret = "'void'"; }
+                    
+                    if (!first_fn) fprintf(js, ",\n");
+                    fprintf(js, "  '%s%s': [%s, [", cpfx, fname, js_ret);
+                    for (int p = 0; p < s->fn.param_count; p++) {
+                        if (p > 0) fprintf(js, ", ");
+                        if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
+                            Token pt = s->fn.param_types[p]->token;
+                            if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) fprintf(js, "'string'");
+                            else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) fprintf(js, "'double'");
+                            else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) fprintf(js, "'bool'");
+                            else fprintf(js, "'int64'");
+                        } else fprintf(js, "'int64'");
+                    }
+                    fprintf(js, "]]");
+                    first_fn = 0;
+                }
+                fprintf(js, "\n});\n\n");
+                
+                // Export wrapper functions
+                for (int fi = 0; fi < prog->count; fi++) {
+                    Stmt* s = prog->stmts[fi];
+                    if (s->type != STMT_FN) continue;
+                    if (s->fn.name.length == 4 && memcmp(s->fn.name.start, "main", 4) == 0) continue;
+                    if (s->fn.receiver_type.length > 0) continue;
+                    char fname[128]; snprintf(fname, sizeof(fname), "%.*s", s->fn.name.length, s->fn.name.start);
+                    const char* cpfx = "";
+                    const char* _ckw2[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
+                    for (int k = 0; _ckw2[k]; k++) { if (strcmp(fname, _ckw2[k]) == 0) { cpfx = "_"; break; } }
+                    fprintf(js, "exports.%s = lib.%s%s;\n", fname, cpfx, fname);
+                }
+                fclose(js);
+                fprintf(stderr, "\033[32m✓\033[0m Generated Node.js wrapper: %s\n", js_path);
+                fprintf(stderr, "  Install ffi-napi: npm install ffi-napi\n");
+            }
+        }
+        if (!keep_artifacts) { char cp[512]; snprintf(cp, sizeof(cp), "%s.c", file); unlink(cp); }
+        unlink(_lib_cc_err);
+        return result == 0 ? 0 : 1;
+}
+
 // Portable recursive `mkdir -p`. Creates every component of `path`, tolerating
 // components that already exist. Works on Windows (via _mkdir, which itself
 // accepts forward slashes) and POSIX (mkdir(p, 0755)) without shelling out to
@@ -371,6 +697,124 @@ static void wynter_encourage(void) {
             wynter_compile_tips[wynter_compile_tip_idx++ % 5]);
 }
 
+// A misspelled stdlib namespace method (`Time.now_ms()`) survives the checker on
+// purpose: namespace methods are permissive there because an allowlist would
+// reject the ~100 runtime functions the checker has no table entry for. It then
+// lowers to a plain C call and dies at C-compile with
+//   error: call to undeclared function 'Time_now_ms'
+// which names a symbol that appears nowhere in the user's source. This scans the
+// C compiler's stderr for that shape and reprints it in Wyn spelling. Diagnostic
+// only - it never changes which programs compile, and it stays silent unless the
+// leaked symbol really looks like `Namespace_method` (capitalised first segment),
+// so an ordinary missing FFI function is reported the old way.
+//
+// FOUR namespaces lower to a LOWERCASE C prefix instead (`HashMap.has` ->
+// `hashmap_has`), so the capitalised-first-letter test above skipped them and
+// they fell through to a bare "compilation failed (internal codegen error)" with
+// no name, no line and nothing to act on. Measured, not guessed: these are the
+// only four `emit("<lowercase>_%.*s(")` blind prefixes in codegen_expr.c, and a
+// probe of all 43 builtin namespaces reported exactly these four as untranslated.
+// The table maps the C prefix back to the Wyn spelling; an unlisted lowercase
+// symbol is still reported the old way, because it is far more likely to be a
+// genuine missing FFI function than a namespace typo.
+//
+// THREE C-toolchain wordings must be handled, which is a cross-platform trap
+// rather than a style choice. Clang says "call to undeclared function 'f'" and
+// GCC 14 says "implicit declaration of function 'f'", both ERRORS. On GCC 13 an
+// implicit declaration is only a WARNING, so the compile SUCCEEDS and the program
+// dies at LINK time with a third wording that quotes differently:
+//   undefined reference to `hashmap_contains'
+// i.e. a backtick open-quote and a plain close-quote. Handling only the two
+// compile wordings made this translator silent on the whole GCC-13 platform --
+// found by CI (ubuntu-latest is GCC 13), not by local testing on clang.
+static const struct { const char* c_prefix; const char* wyn_ns; } wyn_lowercase_namespaces[] = {
+    {"hashmap_", "HashMap"},
+    {"hashset_", "HashSet"},
+    {"regex_",   "Regex"},
+    {"random_",  "Random"},
+    {NULL, NULL}
+};
+
+static int wyn_report_undeclared_namespace_call(const char* cc_err_path) {
+    FILE* f = fopen(cc_err_path, "r");
+    if (!f) return 0;
+    char line[2048];
+    int reported = 0;
+    while (fgets(line, sizeof(line), f)) {
+        // Clang and GCC 14 both fail the COMPILE and quote with '...'. GCC 13
+        // only warns, so it reaches the LINKER, which quotes with `...' -- hence
+        // the separate open-quote character per wording.
+        char open_q = '\'';
+        bool from_linker = false;
+        const char* m = strstr(line, "call to undeclared function '");
+        if (!m) m = strstr(line, "implicit declaration of function '");
+        if (!m) {
+            m = strstr(line, "undefined reference to `");
+            if (m) { open_q = '`'; from_linker = true; }
+        }
+        if (!m) continue;
+        const char* q = strchr(m, open_q);
+        if (!q) continue;
+        q++;
+        const char* end = strchr(q, '\'');
+        if (!end || end - q >= 200) continue;
+        char sym[200];
+        size_t n = (size_t)(end - q);
+        memcpy(sym, q, n);
+        sym[n] = '\0';
+        // The `Namespace_method` shape: an uppercase first letter and an
+        // underscore with a non-empty method after it. Failing that, one of the
+        // four known lowercase prefixes, which name the same kind of typo.
+        const char* ns = NULL;
+        const char* method = NULL;
+        char* us = strchr(sym, '_');
+        if (sym[0] >= 'A' && sym[0] <= 'Z' && us && us != sym && us[1] != '\0') {
+            *us = '\0';
+            ns = sym;
+            method = us + 1;
+        } else {
+            for (int li = 0; wyn_lowercase_namespaces[li].c_prefix; li++) {
+                size_t pl = strlen(wyn_lowercase_namespaces[li].c_prefix);
+                // The `sym[pl]` test is defensive, not load-bearing: the parser
+                // rejects an empty method name ("Expected field or method name
+                // after '.'"), so a bare `hashmap_` cannot be emitted. Mutating
+                // it out changes no test, which is why it is called out here
+                // rather than left looking covered.
+                if (strncmp(sym, wyn_lowercase_namespaces[li].c_prefix, pl) == 0 &&
+                    sym[pl] != '\0') {
+                    ns = wyn_lowercase_namespaces[li].wyn_ns;
+                    method = sym + pl;
+                    break;
+                }
+            }
+        }
+        if (!ns) continue;
+        // A LINK failure is ambiguous in a way a compile failure is not: an
+        // `extern fn Foo_bar` that is declared but never linked produces exactly
+        // the same "undefined reference" as a namespace typo, and the corpus has
+        // 84 such declarations (Raylib_*, Win_*). Claiming "Foo.bar is not a
+        // function Wyn knows about" for a genuine missing library symbol would be
+        // worse than the bare message it replaces, so the linker path is
+        // restricted to names that really are builtin namespaces. The compile
+        // path needs no such gate: reaching it at all means no declaration
+        // existed, which an `extern fn` would have provided.
+        if (from_linker && !is_builtin_module(ns)) continue;
+        if (!reported) {
+            fprintf(stderr,
+                "Error: unknown method '%s.%s' on namespace '%s'\n",
+                ns, method, ns);
+            fprintf(stderr,
+                "  \033[34mHelp:\033[0m '%s' is not a function Wyn knows about. Check the spelling"
+                " against the '%s' stdlib docs - namespace methods are not"
+                " verified until the generated C is compiled, so a typo surfaces"
+                " here rather than at the call site.\n", method, ns);
+            reported = 1;
+        }
+    }
+    fclose(f);
+    return reported;
+}
+
 // Detect available C backend: WYN_CC env > cc > gcc > clang
 static const char* detect_cc(void) {
     static char cc_path[256] = "";
@@ -642,6 +1086,17 @@ static char* get_version() {
                 }
                 fclose(f);
             }
+            // The VERSION file holds only the number ("1.20.0"), so reading it
+            // would DROP the -dev suffix that WYN_VERSION carries for a
+            // non-release build - i.e. the one case where it matters most, since
+            // reading VERSION only happens inside a source checkout. Re-apply it.
+            // Compare against the compiled-in string rather than hardcoding, so
+            // this stays correct if the suffix ever changes.
+            if (version[0] != 0 && strstr(WYN_VERSION, "-dev") != NULL
+                && strstr(version, "-dev") == NULL) {
+                size_t n = strlen(version);
+                if (n + 4 < sizeof(version)) memcpy(version + n, "-dev", 5);
+            }
         }
         if (version[0] == 0) strncpy(version, WYN_VERSION, sizeof(version) - 1);
     }
@@ -649,6 +1104,30 @@ static char* get_version() {
 }
 
 #include "wyn_interface.h"
+
+
+// Append one program argument to a shell command string, single-quoted so the
+// shell cannot split or interpret it.
+//
+// The arguments were appended as a bare " %s", which meant (a) an argument
+// containing a space became TWO arguments - `wyn run app.wyn "two words"` arrived
+// as `two` and `words` - and (b) anything shell-special was EXECUTED. An argument
+// of `; rm -rf x` would have run. Both paths (cached binary and fresh build)
+// build such a string, so both must use this.
+//
+// POSIX single-quote rule: everything is literal inside '...', and an embedded
+// single quote is written by closing, escaping, and reopening: '\''
+static int append_shell_arg(char* buf, size_t cap, int at, const char* arg) {
+    if (at < 0 || (size_t)at + 4 >= cap) return at;
+    int n = at;
+    n += snprintf(buf + n, cap - n, " '");
+    for (const char* c = arg; *c && (size_t)n + 5 < cap; c++) {
+        if (*c == '\'') n += snprintf(buf + n, cap - n, "'\\''");
+        else            n += snprintf(buf + n, cap - n, "%c", *c);
+    }
+    n += snprintf(buf + n, cap - n, "'");
+    return n;
+}
 
 int main(int argc, char** argv) {
     // Initialize platform-specific functionality
@@ -687,6 +1166,7 @@ int main(int argc, char** argv) {
         
         fprintf(stderr, "\n\033[1mTools:\033[0m\n");
         fprintf(stderr, "  \033[32mui\033[0m                      Interactive command browser\n");
+        fprintf(stderr, "  \033[32mdesign\033[0m [file.json]      Visual form designer (needs the gui package)\n");
         fprintf(stderr, "  \033[32mlsp\033[0m                     Start language server (for editors)\n");
         fprintf(stderr, "  \033[32minstall\033[0m                 Install wyn to system PATH\n");
         fprintf(stderr, "  \033[32muninstall\033[0m               Remove wyn from system PATH\n");
@@ -1255,6 +1735,7 @@ int main(int argc, char** argv) {
         
         fprintf(stderr, "\n\033[1mTools:\033[0m\n");
         fprintf(stderr, "  \033[32mui\033[0m                      Interactive command browser\n");
+        fprintf(stderr, "  \033[32mdesign\033[0m [file.json]      Visual form designer (needs the gui package)\n");
         fprintf(stderr, "  \033[32mlsp\033[0m                     Start language server (for editors)\n");
         fprintf(stderr, "  \033[32minstall\033[0m                 Install wyn to system PATH\n");
         fprintf(stderr, "  \033[32muninstall\033[0m               Remove wyn from system PATH\n");
@@ -1348,6 +1829,28 @@ int main(int argc, char** argv) {
         return cmd_ui(argc, argv, get_version());
     }
     
+    if (strcmp(command, "design") == 0) {
+        // wyn design [Form1.json] - launcher for the Visual Wyn form designer
+        // (src/cmd_other.c). The designer itself is a Wyn program in the `gui`
+        // package, deliberately NOT compiled in: it needs SDL3.
+        extern int cmd_design(const char* form_file, const char* wyn_root, const char* wyn_exe);
+        extern int cmd_design_help(void);
+        const char* form = NULL;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) return cmd_design_help();
+            if (argv[i][0] != '-' && !form) form = argv[i];
+        }
+        char design_root[1024];
+        resolve_wyn_root(argv[0], design_root, sizeof(design_root));
+        // The designer runs via `wyn run`, so it must be THIS wyn - not whatever
+        // an older install left on PATH, which would compile it with a different
+        // compiler than the one the user invoked.
+        char design_exe[1024];
+        if (!resolve_wyn_exe(argv[0], design_exe, sizeof(design_exe)))
+            snprintf(design_exe, sizeof(design_exe), "%s", argv[0]);
+        return cmd_design(form, design_root, design_exe);
+    }
+
     // ── Dependency commands (git-URL model; no central registry) ──
     // A dependency is a git repo. `wyn remove` drops it from the manifest+lock;
     // `wyn list` prints the declared deps; `wyn restore` reinstalls from the lock.
@@ -1412,18 +1915,59 @@ int main(int argc, char** argv) {
     }
     
     if (strcmp(command, "build") == 0) {
-        if (argc < 3) {
+        // `wyn build --python` (no file) has argc==3, so the "no arguments" branch below
+        // never ran and the FLAG was taken as the file/dir. Decide on whether a real
+        // non-flag argument was given, not on argc - `wyn init --lib python` prints
+        // exactly this flag-only spelling.
+        int _has_file_arg = 0;
+        for (int i = 2; i < argc; i++)
+            if (argv[i][0] != '-') { _has_file_arg = 1; break; }
+        if (!_has_file_arg) {
             // Try wyn.toml, then src/main.wyn
             struct stat _bs;
+            const char* _resolved_entry = NULL;
             if (stat("wyn.toml", &_bs) == 0) {
                 FILE* _tf = fopen("wyn.toml", "r");
                 char _tb[4096]; int _tl = fread(_tb, 1, sizeof(_tb)-1, _tf); _tb[_tl] = 0; fclose(_tf);
                 char* _ep = strstr(_tb, "entry = \"");
-                if (_ep) { char _e[256]; if (sscanf(_ep, "entry = \"%255[^\"]\"", _e) == 1 && stat(_e, &_bs) == 0) { argc = 3; argv[2] = strdup(_e); } }
+                // APPEND the entry rather than writing argv[2]: with a flag-only
+                // invocation (`wyn build --python`) argv[2] IS the flag, and
+                // overwriting it silently dropped the flag and built an executable.
+                if (_ep) { char _e[256]; if (sscanf(_ep, "entry = \"%255[^\"]\"", _e) == 1 && stat(_e, &_bs) == 0) {
+                    _resolved_entry = strdup(_e); } }
+                // In library mode the artifact is NAMED, and the name a caller imports
+                // comes from the PROJECT, not from the file that happens to be the
+                // entry point. `wyn init --lib python mylib` scaffolds
+                // entry = "src/main.wyn" and then tells you to
+                // `from mylib import add` - but naming from the file produced
+                // libmain.dylib + main.py, so the scaffold's own instructions still
+                // gave ModuleNotFoundError even once the library built correctly.
+                char* _np = strstr(_tb, "name = \"");
+                if (_np) { char _n[128]; if (sscanf(_np, "name = \"%127[^\"]\"", _n) == 1 && _n[0]) {
+                    extern void wyn_set_library_name(const char*);
+                    wyn_set_library_name(_n); } }
             }
-            if (argc < 3 && stat("src/main.wyn", &_bs) == 0) { argc = 3; argv[2] = "src/main.wyn"; }
-            if (argc < 3) {
-                fprintf(stderr, "Usage: wyn build <file|dir> [--shared|--python]\n");
+            if (!_resolved_entry && stat("src/main.wyn", &_bs) == 0) _resolved_entry = "src/main.wyn";
+            if (_resolved_entry) {
+                // Splice the resolved entry in as a new argv element so the flags the
+                // user actually typed all survive.
+                static char* _newargv[64];
+                int _n = 0;
+                _newargv[_n++] = argv[0];
+                _newargv[_n++] = argv[1];
+                _newargv[_n++] = (char*)_resolved_entry;
+                for (int i = 2; i < argc && _n < 63; i++) _newargv[_n++] = argv[i];
+                argv = _newargv; argc = _n;
+            }
+            if (!_resolved_entry) {
+                fprintf(stderr, "Usage: wyn build <file|dir> [--release] [--app] [--shared|--python]\n");
+                fprintf(stderr, "  --app         package a native, double-clickable GUI app instead of a\n");
+                fprintf(stderr, "                console binary: a .app bundle on macOS, a GUI-subsystem\n");
+                fprintf(stderr, "                .exe on Windows, a binary + .desktop entry on Linux.\n");
+                fprintf(stderr, "                Metadata (name, identifier, version, icon, category)\n");
+                fprintf(stderr, "                comes from the [app] section of wyn.toml.\n");
+                fprintf(stderr, "  --app-plan    show the packaging decision without compiling\n");
+                fprintf(stderr, "  --app-target  macos | windows | linux (metadata for another platform)\n");
                 return 1;
             }
         }
@@ -1434,17 +1978,37 @@ int main(int argc, char** argv) {
         int build_pgo = 0;
         const char* output_name = NULL;
         const char* build_target = NULL;
+        // --app: package a NATIVE, double-clickable GUI application instead of a
+        // console binary (macOS .app bundle / Windows GUI-subsystem .exe / Linux
+        // binary + .desktop). See the header comment in src/cmd_compile.c.
+        // --app-target picks the packaging for another platform's metadata, and
+        // --app-plan prints the decision without compiling.
+        int app_flag = 0, app_plan_only = 0;
+        const char* app_target = NULL;
+        // build_shared_mode: 0=executable, 1=--shared, 2=--python, 3=--node.
+        //
+        // These used to set only `build_flag`, a string used for the progress line and a
+        // TCC gate - so `wyn build x.wyn --python` printed "Building x.wyn --python..."
+        // and "✓ Built: x (51KB)" and produced an ORDINARY EXECUTABLE. No .dylib, no
+        // .py, exit 0. The real generator lived under `run` and `build` could not reach
+        // it, which made the documented quickstart (and `wyn init --lib python`, which
+        // tells you to run exactly this) impossible to follow.
+        int build_shared_mode = 0;
         for (int i = 2; i < argc; i++) {
-            if (strcmp(argv[i], "--shared") == 0) build_flag = " --shared";
-            else if (strcmp(argv[i], "--python") == 0) build_flag = " --python";
+            if (strcmp(argv[i], "--shared") == 0) { build_flag = " --shared"; build_shared_mode = 1; }
+            else if (strcmp(argv[i], "--python") == 0) { build_flag = " --python"; build_shared_mode = 2; }
+            else if (strcmp(argv[i], "--node") == 0) { build_flag = " --node"; build_shared_mode = 3; }
             else if (strcmp(argv[i], "--release") == 0) build_release = 1;
             else if (strcmp(argv[i], "--fast") == 0) { /* skip optimizations - default behavior */ }
             else if (strcmp(argv[i], "--pgo") == 0) build_pgo = 1;
+            else if (strcmp(argv[i], "--app") == 0) app_flag = 1;
+            else if (strcmp(argv[i], "--app-plan") == 0) { app_flag = 1; app_plan_only = 1; }
+            else if (strcmp(argv[i], "--app-target") == 0 && i + 1 < argc) { app_flag = 1; app_target = argv[++i]; }
             else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) { output_name = argv[++i]; }
             else if (strcmp(argv[i], "--target") == 0 && i + 1 < argc) { build_target = argv[++i]; }
             else if (!dir) dir = argv[i];
         }
-        
+
         // If --target is specified, delegate to cross-compile
         if (build_target) {
             // Rewrite as: wyn cross <target> <file> [flags]
@@ -1462,6 +2026,15 @@ int main(int argc, char** argv) {
                     char tb[4096]; int tl = fread(tb, 1, sizeof(tb)-1, toml); tb[tl] = 0; fclose(toml);
                     char* ep = strstr(tb, "entry = \"");
                     if (ep) { char e[256]; if (sscanf(ep, "entry = \"%255[^\"]\"", e) == 1) { snprintf(entry_resolve, sizeof(entry_resolve), "%s/%s", dir, e); found = 1; } }
+                    // Library artifacts are named from the PROJECT, not from the entry
+                    // file - see wyn_set_library_name. There are two wyn.toml readers on
+                    // the build path (this one runs when a directory is resolved, which
+                    // is what a bare `wyn build --python` does); both must capture it, or
+                    // the name silently falls back to the file's basename.
+                    char* np = strstr(tb, "name = \"");
+                    if (np) { char n[128]; if (sscanf(np, "name = \"%127[^\"]\"", n) == 1 && n[0]) {
+                        extern void wyn_set_library_name(const char*);
+                        wyn_set_library_name(n); } }
                 }
                 if (!found) {
                     snprintf(entry_resolve, sizeof(entry_resolve), "%s/main.wyn", dir);
@@ -1526,6 +2099,27 @@ int main(int argc, char** argv) {
             }
         }
         
+        // Resolve the native-app packaging plan BEFORE compiling: it decides the
+        // path the C compiler must link to (a macOS bundle is built around a
+        // space-free staging path, since the link line goes through system()).
+        extern int wyn_app_begin(int, const char*, const char*, const char*, char*, size_t, int);
+        extern const char* wyn_app_link_flags(void);
+        extern const char* wyn_app_artifact(void);
+        extern int wyn_app_emit_metadata(void);
+        extern int wyn_app_finalize(void);
+        extern void wyn_app_describe(void);
+        char app_link_path[512] = "";
+        int app_on = wyn_app_begin(app_flag, app_target, entry, output_name,
+                                   app_link_path, sizeof(app_link_path), app_plan_only);
+        if (app_on < 0) return 1;
+        if (app_plan_only) {
+            // Emit the metadata (Info.plist / .desktop) and describe the plan
+            // without invoking the C compiler. This is how the Windows and Linux
+            // packaging paths are asserted on from a macOS box.
+            wyn_app_describe();
+            return wyn_app_emit_metadata() == 0 ? 0 : 1;
+        }
+
         printf("\033[1mBuilding\033[0m %s%s...\n", entry, build_flag);
         struct timespec _build_t0;
         clock_gettime(CLOCK_MONOTONIC, &_build_t0);
@@ -1541,8 +2135,14 @@ int main(int argc, char** argv) {
         extern void preload_imports(const char* source);
         extern void check_all_modules(void);
         extern bool has_circular_import(void);
+        extern bool has_unresolved_import(void);
         preload_imports(source);
         if (has_circular_import()) { fprintf(stderr, "Compilation failed due to circular imports\n"); free(source); return 1; }
+        // An unresolved import is fatal for the same reason: load_module printed the
+        // precise error and returned NULL, so the module's symbols are absent and
+        // codegen would emit C with a hole in it. Without this the compiler printed
+        // "Error: Package 'gui' not installed", then "✓ no errors", then exited 0.
+        if (has_unresolved_import()) { fprintf(stderr, "Compilation failed: an import could not be resolved\n"); free(source); return 1; }
         
         init_lexer(source);
         init_parser();
@@ -1568,16 +2168,35 @@ int main(int argc, char** argv) {
         { extern void codegen_set_slim_runtime(bool);
           extern void codegen_set_source_file(const char*);
           extern void codegen_set_gpu_enabled(bool);
+          // ALWAYS false here, even for `wyn build --release`, which is NOT the
+          // same as `wyn run --release` (that path passes the flag through at
+          // :3124). So `--release` means "-O3 + strip" to `build` but "-O3 +
+          // slim runtime header" to `run`, and only `run` exercises the slim
+          // header at all. Worth knowing when testing a slim-runtime change: a
+          // green `wyn build --release` proves nothing about it. Verified that
+          // flipping this to build_release now works end to end - left alone
+          // because unifying the two modes changes what `build --release`
+          // emits, which is its own change with its own risk (the GPU shim is
+          // full-header-only and would have to be gated the same way).
           codegen_set_slim_runtime(false);
           codegen_set_source_file(entry);
-          codegen_set_gpu_enabled(wyn_gpu_flag_from_toml() != 0); }
+          codegen_set_gpu_enabled(wyn_gpu_flag_from_toml() != 0);
+          // Same as the `run` path: --shared/--python/--node must keep every user
+          // function externally linked so the FFI can find it.
+          extern void codegen_set_library_mode(bool);
+          codegen_set_library_mode(build_shared_mode > 0); }
         codegen_c_header();
         codegen_program(prog);
         fclose(out_f);
 
         // Determine output binary name
         char bin_path[512];
-        if (output_name) {
+        if (app_on) {
+            // --app owns the link destination: for a macOS bundle that is a
+            // space-free staging path (moved into Contents/MacOS afterwards),
+            // for Windows/Linux the final artifact itself.
+            snprintf(bin_path, sizeof(bin_path), "%s", app_link_path);
+        } else if (output_name) {
             snprintf(bin_path, sizeof(bin_path), "%s", output_name);
         } else {
             snprintf(bin_path, sizeof(bin_path), "%s", entry);
@@ -1588,10 +2207,46 @@ int main(int argc, char** argv) {
         char wyn_root[1024];
         resolve_wyn_root(argv[0], wyn_root, sizeof(wyn_root));
 
+        // LIBRARY MODE: --shared / --python / --node produce a .dylib/.so/.dll plus an
+        // FFI wrapper instead of an executable, via the same generator `run` uses.
+        // Before this, `build` fell through to the executable link below and reported
+        // success, so the documented `wyn build x.wyn --python` quickstart produced a
+        // plain binary and Python could not import anything.
+        if (build_shared_mode > 0) {
+            char _rt_lib_probe[512];
+            snprintf(_rt_lib_probe, sizeof(_rt_lib_probe), "%s/runtime/libwyn_rt.a", wyn_root);
+            const char* _lib_opt = build_release ? "-O3" : "-O0";
+            // Same per-platform link inputs the `run` path passes.
+#ifdef _WIN32
+            const char* _lib_platform_libs = "-Wl,--allow-multiple-definition -lws2_32 -lpthread -lm";
+#elif defined(__APPLE__)
+            const char* _lib_platform_libs = "-lpthread -lm";
+#else
+            const char* _lib_platform_libs = "-Wl,--allow-multiple-definition -lpthread -lm";
+#endif
+            int _lrc = wyn_emit_shared_library(entry, prog, build_shared_mode, wyn_root,
+                                               _lib_opt, _lib_platform_libs,
+                                               access(_rt_lib_probe, R_OK) == 0,
+                                               /*keep_artifacts=*/0, _build_t0);
+            free(source);
+            return _lrc;
+        }
+
         // Compile with TCC or system cc
         const char* cc = detect_cc();
         char tcc_bin[512]; snprintf(tcc_bin, sizeof(tcc_bin), "%s/vendor/tcc/bin/tcc", wyn_root);
         char rt_tcc[512]; snprintf(rt_tcc, sizeof(rt_tcc), "%s/vendor/tcc/lib/libwyn_rt_tcc.a", wyn_root);
+        // -DWYN_USE_GUI must be a COMPILE flag (it gates the Gui implementation in the
+        // runtime header), so it rides with sqlite_flags rather than with the link tail.
+        static char gui_def[512]; gui_def[0] = '\0';
+        // Both the DEFINE and SDL's -I/-l must be on the COMPILE line: gui.h does
+        // `#include <SDL2/SDL.h>`, so a link-time-only flag gives
+        // "fatal error: 'SDL2/SDL.h' file not found". pkg-config emits both cflags and
+        // libs; putting the whole thing here is what `wyn run` already does.
+        if (strstr(source, "Gui.")) {
+            snprintf(gui_def, sizeof(gui_def),
+                     " -DWYN_USE_GUI $(pkg-config --cflags --libs sdl2 2>/dev/null || echo '-lSDL2')");
+        }
         const char* sqlite_flags = "";
         const char* sqlite_src = "";
         if (strstr(source, "Db.")) {
@@ -1622,6 +2277,15 @@ int main(int argc, char** argv) {
         // (`wyn add`) carries the extern fns in its own file, so the user source
         // may only have `import sqlite3` yet still need the [ffi] link flags.
         static char ffi_tail[4096]; ffi_tail[0] = '\0';
+        // GUI: a program using the Gui module needs -DWYN_USE_GUI and SDL2 on the link
+        // line. `wyn run` did this (see the gui_flags in the run path) and `wyn build`
+        // did NOT, so a GUI app ran fine and its BUILT binary printed
+        //
+        //     Error: Gui module requires SDL2.
+        //
+        // and exited - i.e. you could develop a game but never ship one. Appended to
+        // ffi_tail because that is already spliced at the END of the link line, which is
+        // where GNU ld needs -l to sit.
         if (strstr(source, "extern fn") || strstr(source, "import ")) {
             WynConfig* _bc = wyn_config_parse("wyn.toml");
             if (_bc) { wyn_config_ffi_flags(_bc, ffi_tail, sizeof(ffi_tail)); wyn_config_free(_bc); }
@@ -1658,12 +2322,38 @@ int main(int argc, char** argv) {
               snprintf(ffi_tail + _fl, sizeof(ffi_tail) - _fl, "%s", gpu_link);
           } }
 
-        // Prefer precompiled runtime (fast) over TCC (recompiles all sources)
-        if (build_flag[0] == 0 && !build_release && access(rt_lib, R_OK) == 0) {
+        // --app link flags ride the same ffi_tail splice (end of the link line).
+        // Today that is only Windows' -mwindows, which selects PE subsystem
+        // WINDOWS: the difference between a console flashing up behind the
+        // window and not. It is a LINK flag, so end-of-line is where it belongs.
+        if (app_on && wyn_app_link_flags()[0]) {
+            size_t _al = strlen(ffi_tail);
+            snprintf(ffi_tail + _al, sizeof(ffi_tail) - _al, "%s", wyn_app_link_flags());
+        }
+
+        // Prefer precompiled runtime (fast) over TCC (recompiles all sources).
+        //
+        // EXCEPT for a Gui program. runtime/libwyn_rt.a is built WITHOUT -DWYN_USE_GUI, so
+        // it already contains the stub Gui implementation whose every function prints
+        //
+        //     Error: Gui module requires SDL2.
+        //
+        // Adding -DWYN_USE_GUI to this link changes nothing: the stubs are already
+        // compiled in, and the define only gates the header. So a built GUI binary exited
+        // after one frame with that message even with SDL2 installed - you could develop a
+        // game with `wyn run` and never ship one. gui_def[0] therefore forces the
+        // from-source path, which compiles the runtime WITH the define. Same shape as the
+        // -fPIC problem in library mode: a prebuilt artifact whose flags do not match what
+        // this build needs.
+        if (build_flag[0] == 0 && !build_release && gui_def[0] == 0 && access(rt_lib, R_OK) == 0) {
             // Skip TCC - use system cc + precompiled runtime
-        } else if (build_flag[0] == 0 && !build_release && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0 && !strstr(source, "App.")) {
+        } else if (build_flag[0] == 0 && !build_release && !app_on && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0 && !strstr(source, "App.")) {
+            // --app is excluded from the TCC path on purpose: TCC does not take
+            // -mwindows, and this branch does not splice ffi_tail at all, so a
+            // GUI app built through it would silently link as a console program
+            // with none of its [ffi] libraries.
             int _p = 0;
-            _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -I %s/vendor/minicoro -L %s/vendor/tcc/lib -w -DMCO_NO_MULTITHREAD -DMCO_USE_UCONTEXT -D_XOPEN_SOURCE=600 %s ", tcc_bin, bin_path, wyn_root, wyn_root, wyn_root, wyn_root, sqlite_flags);
+            _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -o %s -I %s/src -I %s/vendor/tcc/tcc_include -I %s/vendor/minicoro -L %s/vendor/tcc/lib -w -DMCO_NO_MULTITHREAD -DMCO_USE_UCONTEXT -D_XOPEN_SOURCE=600 %s%s ", tcc_bin, bin_path, wyn_root, wyn_root, wyn_root, wyn_root, sqlite_flags, gui_def);
             _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s.c ", entry);
             char _src_list[4096]; build_source_list(_src_list, sizeof(_src_list), wyn_root);
             _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s", _src_list);
@@ -1714,8 +2404,17 @@ int main(int argc, char** argv) {
 #else
             const char* plibs = "-lpthread -lm";
 #endif
-            // Check if precompiled runtime exists
-            FILE* _rt_check = fopen(rt_lib, "r");
+            // Check if precompiled runtime exists.
+            //
+            // gui_def[0] forces the from-source path even when it does: libwyn_rt.a is
+            // built WITHOUT -DWYN_USE_GUI, so it already contains the STUB Gui
+            // implementation whose every call prints "Gui module requires SDL2" and
+            // returns nothing. Adding the define to this link cannot help - the stubs are
+            // already compiled in. Every GUI program therefore built into a binary that
+            // died after one frame while `wyn run` worked, so you could develop a game and
+            // never ship one. (This is the second gate; the one further up had to change
+            // too.)
+            FILE* _rt_check = gui_def[0] ? NULL : fopen(rt_lib, "r");
             if (_rt_check) {
                 fclose(_rt_check);
                 const char* _opt = build_release ? "-O3" : "-O0";
@@ -1748,9 +2447,9 @@ int main(int argc, char** argv) {
                     // Windows captures the compiler's stderr too - it was the last
                     // branch still discarding it, so a failed build there printed
                     // "✗ Build failed" and nothing else.
-                    "%s -std=c11 %s -w -I %s/src -Wl,--allow-multiple-definition -o %s %s %s.c %s%s -lws2_32 -lpthread -lm 2>%s",
+                    "%s -std=c11 %s -fwrapv -w -I %s/src -Wl,--allow-multiple-definition -o %s %s%s %s.c %s%s -lws2_32 -lpthread -lm 2>%s",
 #elif defined(__APPLE__)
-                    "%s -std=c11 %s -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src %s-Wl,-dead_strip -o %s %s %s.c %s%s%s -lpthread -lm 2>%s",
+                    "%s -std=c11 %s -fwrapv -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src %s-Wl,-dead_strip -o %s %s%s %s.c %s%s%s -lpthread -lm 2>%s",
 #else
                     // Capture the C compiler's stderr, do NOT discard it. This
                     // branch used to end in `2>/dev/null`, while the __APPLE__
@@ -1759,12 +2458,12 @@ int main(int argc, char** argv) {
                     // the "Compiler output:" reader below found no file. That is
                     // exactly what a user (and a CI log) needs, and it was
                     // silently unavailable on the platform most CI runs on.
-                    "%s -std=c11 %s -w -ffunction-sections -fdata-sections -I %s/src -Wl,--allow-multiple-definition,--gc-sections -o %s %s %s.c %s%s -lpthread -lm 2>%s",
+                    "%s -std=c11 %s -fwrapv -w -ffunction-sections -fdata-sections -I %s/src -Wl,--allow-multiple-definition,--gc-sections -o %s %s%s %s.c %s%s -lpthread -lm 2>%s",
 #endif
 #ifdef __APPLE__
-                    cc, _opt, wyn_root, _pch_flag, bin_path, sqlite_flags, entry, rt_lib, sqlite_src, app_link, cc_err_redir
+                    cc, _opt, wyn_root, _pch_flag, bin_path, sqlite_flags, gui_def, entry, rt_lib, sqlite_src, app_link, cc_err_redir
 #else
-                    cc, _opt, wyn_root, bin_path, sqlite_flags, entry, rt_lib, sqlite_src, cc_err_redir
+                    cc, _opt, wyn_root, bin_path, sqlite_flags, gui_def, entry, rt_lib, sqlite_src, cc_err_redir
 #endif
                     );
                 // Splice FFI link flags in at the END of the link line (before any
@@ -1781,15 +2480,20 @@ int main(int argc, char** argv) {
             } else {
                 // No precompiled runtime - compile from source files
                 int _p = 0;
-                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -std=c11 -O2 -w -ffunction-sections -fdata-sections -D_GNU_SOURCE -I %s/src -I %s/vendor/minicoro -o %s %s %s.c ", cc, wyn_root, wyn_root, bin_path, sqlite_flags, entry);
+                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -std=c11 -O2 -w -ffunction-sections -fdata-sections -D_GNU_SOURCE -I %s/src -I %s/vendor/minicoro -o %s %s%s %s.c ", cc, wyn_root, wyn_root, bin_path, sqlite_flags, gui_def, entry);
                 char _src_list[4096]; build_source_list(_src_list, sizeof(_src_list), wyn_root);
                 _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s", _src_list);
+                // `app_tail` = the --app link flags (Windows' -mwindows). This
+                // no-precompiled-runtime branch does not splice ffi_tail, so the
+                // flag has to be threaded in explicitly or a GUI app built here
+                // would come out as a console program.
+                const char* app_tail = app_on ? wyn_app_link_flags() : "";
 #ifdef __APPLE__
-                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -Wl,-dead_strip -lpthread -lm 2>&1", sqlite_src);
+                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s%s -Wl,-dead_strip -lpthread -lm 2>&1", sqlite_src, app_tail);
 #elif defined(_WIN32)
-                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -Wl,--allow-multiple-definition -lws2_32 -lpthread -lm 2>&1", sqlite_src);
+                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s%s -Wl,--allow-multiple-definition -lws2_32 -lpthread -lm 2>&1", sqlite_src, app_tail);
 #else
-                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s -Wl,--allow-multiple-definition,--gc-sections -lpthread -lm 2>&1", sqlite_src);
+                _p += snprintf(cmd + _p, sizeof(cmd) - _p, "%s%s -Wl,--allow-multiple-definition,--gc-sections -lpthread -lm 2>&1", sqlite_src, app_tail);
 #endif
             }
             result = system(cmd);
@@ -1854,23 +2558,26 @@ int main(int argc, char** argv) {
             unlink(out_c);
             pgo_done:
             if (result == 0) {
-                printf("\033[32m✓\033[0m Built with PGO: %s\n", bin_path);
+                // Package AFTER PGO: phase 3 relinks to bin_path, which for a
+                // macOS bundle is the staging path finalize consumes.
+                if (app_on && wyn_app_finalize() != 0) { unlink(cc_err_path); return 1; }
+                printf("\033[32m✓\033[0m Built with PGO: %s\n", app_on ? wyn_app_artifact() : bin_path);
             }
         } else if (result == 0) {
             struct timespec _build_t1;
             clock_gettime(CLOCK_MONOTONIC, &_build_t1);
             long _build_ms = (_build_t1.tv_sec - _build_t0.tv_sec) * 1000 + (_build_t1.tv_nsec - _build_t0.tv_nsec) / 1000000;
-            // Show binary size
+            // Show binary size. Measured BEFORE packaging: finalize moves the
+            // staged binary into the bundle, after which bin_path is gone.
             struct stat _bs;
-            if (stat(bin_path, &_bs) == 0) {
-                long kb = _bs.st_size / 1024;
-                if (kb > 0)
-                    printf("\033[32m✓\033[0m Built: %s (%ldKB, %ldms)\n", bin_path, kb, _build_ms);
-                else
-                    printf("\033[32m✓\033[0m Built: %s (%ldms)\n", bin_path, _build_ms);
-            } else {
-                printf("\033[32m✓\033[0m Built: %s (%ldms)\n", bin_path, _build_ms);
-            }
+            long kb = (stat(bin_path, &_bs) == 0) ? _bs.st_size / 1024 : 0;
+            if (app_on && wyn_app_finalize() != 0) { unlink(cc_err_path); return 1; }
+            const char* shown = app_on ? wyn_app_artifact() : bin_path;
+            if (kb > 0)
+                printf("\033[32m✓\033[0m Built: %s (%ldKB, %ldms)\n", shown, kb, _build_ms);
+            else
+                printf("\033[32m✓\033[0m Built: %s (%ldms)\n", shown, _build_ms);
+            if (app_on) printf("  double-clickable native app - no terminal window\n");
         } else {
             fprintf(stderr, "\033[31m✗\033[0m Build failed\n");
             // Show compiler errors if available
@@ -2684,8 +3391,14 @@ int main(int argc, char** argv) {
         if (!source) { fprintf(stderr, "Error: Cannot read %s\n", file); return 1; }
         extern void preload_imports(const char* source);
         extern bool has_circular_import(void);
+        extern bool has_unresolved_import(void);
         preload_imports(source);
         if (has_circular_import()) { fprintf(stderr, "Compilation failed due to circular imports\n"); free(source); return 1; }
+        // An unresolved import is fatal for the same reason: load_module printed the
+        // precise error and returned NULL, so the module's symbols are absent and
+        // codegen would emit C with a hole in it. Without this the compiler printed
+        // "Error: Package 'gui' not installed", then "✓ no errors", then exited 0.
+        if (has_unresolved_import()) { fprintf(stderr, "Compilation failed: an import could not be resolved\n"); free(source); return 1; }
         init_lexer(source);
         init_parser();
         set_parser_filename(file);
@@ -2818,14 +3531,37 @@ int main(int argc, char** argv) {
         if (!ext || strcmp(ext, ".wyn") != 0) {
             fprintf(stderr, "\033[31mError:\033[0m Unknown command '%s'\n", command);
             fprintf(stderr, "  Run \033[1mwyn help\033[0m for available commands.\n");
-            // Suggest closest match
-            const char* cmds[] = {"run","build","test","fmt","fix","init","new","check","clean","repl","doc","bench","watch","deploy","version","help",NULL};
-            for (int i = 0; cmds[i]; i++) {
-                if (cmds[i][0] == command[0] || (strlen(command) > 2 && strstr(cmds[i], command))) {
-                    fprintf(stderr, "  Did you mean \033[1mwyn %s\033[0m?\n", cmds[i]);
-                    break;
+            // Suggest the closest match by EDIT DISTANCE first, and only then fall
+            // back to the old first-letter/substring rule.
+            //
+            // The old rule alone was first-letter-wins in list order, which gets
+            // the wrong answer as soon as two commands share an initial: `wyn
+            // desgin` hit "doc" (the first 'd' in the list) rather than "design",
+            // and any future d-command would too. Distance is what the checker
+            // already uses for identifier typos (levenshtein_distance in error.c),
+            // so this is the same suggestion quality the type errors give.
+            const char* cmds[] = {"run","build","test","fmt","fix","init","new","check","clean","repl","doc","bench","watch","design","deploy","version","help",NULL};
+            extern int levenshtein_distance(const char*, const char*);
+            const char* best = NULL; int best_d = 0;
+            size_t clen = strlen(command);
+            // levenshtein_distance builds a (len1+1)x(len2+1) VLA on the stack, so
+            // it must not be handed an unbounded argv - a megabyte-long "command"
+            // would ask for a megabyte-wide matrix. Nothing that long is a typo for
+            // a 7-letter verb anyway, so skip straight to the fallback rule.
+            if (clen <= 64) for (int i = 0; cmds[i]; i++) {
+                int d = levenshtein_distance(command, cmds[i]);
+                if (!best || d < best_d) { best = cmds[i]; best_d = d; }
+            }
+            // A typo is a near miss, not any word at all: cap at a third of the
+            // length (min 2) so an unrelated command still gets no suggestion.
+            int limit = (int)(clen / 3); if (limit < 2) limit = 2;
+            if (!(best && best_d <= limit)) {
+                best = NULL;
+                for (int i = 0; cmds[i]; i++) {
+                    if (cmds[i][0] == command[0] || (clen > 2 && strstr(cmds[i], command))) { best = cmds[i]; break; }
                 }
             }
+            if (best) fprintf(stderr, "  Did you mean \033[1mwyn %s\033[0m?\n", best);
             return 1;
         }
     }
@@ -2851,13 +3587,35 @@ int main(int argc, char** argv) {
         int keep_artifacts = 0;
         int mem_stats = 0;
         int user_args_start = -1;  // index in argv where user args begin (after --)
+        // ARGUMENT SPLIT: wyn's own flags come BEFORE the file; everything after the
+        // file belongs to the program.
+        //
+        // `wyn run app.wyn alpha beta` used to drop both arguments silently - the
+        // loop consumed them as candidate file names and nothing forwarded them, so
+        // System.args() had length 1. That made `wyn run` unusable for the one thing
+        // a CLI tool does, which is why so many sample CLIs hardcode their inputs
+        // (logwatch cannot open a log file; portscanner has 11 fixed ports).
+        //
+        // The rule has to be positional rather than "is it flag-shaped", because a
+        // program's own `--verbose` is indistinguishable from one of ours. Once the
+        // file is seen, we stop interpreting anything.
         for (int i = 2; i < argc; i++) {
-            if (strcmp(argv[i], "--") == 0) { user_args_start = i + 1; break; }
+            if (file) {
+                // Everything from here on is the program's, including flag-shaped
+                // arguments. An explicit `--` right here is OUR separator and is
+                // consumed; a `--` later is the program's and is forwarded.
+                user_args_start = (strcmp(argv[i], "--") == 0) ? i + 1 : i;
+                break;
+            }
+            if (strcmp(argv[i], "--") == 0) {
+                // `--` before any file: the next token is the file.
+                continue;
+            }
             if (strcmp(argv[i], "--debug") == 0) keep_artifacts = 1;
             else if (strcmp(argv[i], "--mem-stats") == 0) mem_stats = 1;
             else if (strcmp(argv[i], "--fast") == 0 || strcmp(argv[i], "--release") == 0 || strcmp(argv[i], "--shared") == 0 || strcmp(argv[i], "--python") == 0) {}
             else if (strcmp(argv[i], "-e") == 0 && i + 1 < argc) { eval_code = argv[++i]; }
-            else if (!file) file = argv[i];
+            else file = argv[i];
         }
         // Handle -e: write to temp file
         if (eval_code) {
@@ -2923,7 +3681,38 @@ int main(int argc, char** argv) {
                 // and the suite failed with the earlier program's output. st_mtime
                 // is whole-seconds, so equal timestamps must be treated as
                 // possibly-stale; recompiling is cheap, being wrong is not.
+                // …and on the IMPORTS. Comparing only against the entry file meant
+                // that editing an imported module and re-running silently executed the
+                // PREVIOUS binary: `wyn run main.wyn` printed the old module's answer
+                // with no indication anything was stale. That is a gate-integrity bug,
+                // not a nuisance - a test suite can report green on code it never
+                // compiled, and a mutation test can report "no failures" for a mutant
+                // that was never built. Found by an agent whose mutation test came back
+                // clean on a mutant that in fact breaks six assertions.
+                // The entry source is not read until after this decision, so read it
+                // here just to scan its import list. It is one small file read on the
+                // fast path, against silently running the wrong binary.
+                extern time_t scan_import_mtimes(const char*);
+                time_t imports_mtime = 0;
+                {
+                    FILE* _sf = fopen(file, "rb");
+                    if (_sf) {
+                        long _sz = 0;
+                        if (fseek(_sf, 0, SEEK_END) == 0) { _sz = ftell(_sf); rewind(_sf); }
+                        if (_sz > 0 && _sz < (1L << 24)) {
+                            char* _sb = (char*)malloc((size_t)_sz + 1);
+                            if (_sb) {
+                                size_t _rd = fread(_sb, 1, (size_t)_sz, _sf);
+                                _sb[_rd] = '\0';
+                                imports_mtime = scan_import_mtimes(_sb);
+                                free(_sb);
+                            }
+                        }
+                        fclose(_sf);
+                    }
+                }
                 if (out_st.st_mtime > src_st.st_mtime &&
+                    (imports_mtime == 0 || out_st.st_mtime > imports_mtime) &&
                     (!compiler_ok || out_st.st_mtime > wyn_st.st_mtime)) {
                     char run_cmd[2048];
                     if (out_path[0] == '/') {
@@ -2970,8 +3759,14 @@ int main(int argc, char** argv) {
         // Pre-load all imports before parsing
         extern void preload_imports(const char* source);
         extern bool has_circular_import(void);
+        extern bool has_unresolved_import(void);
         preload_imports(source);
         if (has_circular_import()) { fprintf(stderr, "Compilation failed due to circular imports\n"); free(source); return 1; }
+        // An unresolved import is fatal for the same reason: load_module printed the
+        // precise error and returned NULL, so the module's symbols are absent and
+        // codegen would emit C with a hole in it. Without this the compiler printed
+        // "Error: Package 'gui' not installed", then "✓ no errors", then exited 0.
+        if (has_unresolved_import()) { fprintf(stderr, "Compilation failed: an import could not be resolved\n"); free(source); return 1; }
         
         init_lexer(source);
         init_parser();
@@ -3007,12 +3802,27 @@ int main(int argc, char** argv) {
           extern void codegen_set_source_file(const char*);
           extern void codegen_set_gpu_enabled(bool);
           bool _slim = false;
-          for (int _i = 2; _i < argc; _i++) if (strcmp(argv[_i], "--release") == 0) _slim = true;
+          // Bounded by user_args_start: past that point the flags are the
+          // PROGRAM's, and `wyn run app.wyn -- --release` must not put the
+          // compiler into release mode (nor swallow the argument).
+          { int _lim = (user_args_start > 0) ? user_args_start : argc;
+            for (int _i = 2; _i < _lim; _i++) if (strcmp(argv[_i], "--release") == 0) _slim = true; }
           codegen_set_slim_runtime(_slim);
           codegen_set_source_file(file);
           // GPU dispatch spike: only with the full runtime header - the slim
           // (--release) header does not carry the wyn_gpu_try_map_float shim.
-          codegen_set_gpu_enabled(!_slim && wyn_gpu_flag_from_toml() != 0); }
+          codegen_set_gpu_enabled(!_slim && wyn_gpu_flag_from_toml() != 0);
+          // Library mode MUST be set before codegen_program(), or a small function
+          // comes out `static inline` and is missing from the library's symbol table.
+          // shared_mode itself is parsed further down, so recompute the predicate here
+          // over the whole argv (the same rule: these flags select an output artifact,
+          // and in library mode there is no program argv to collide with).
+          extern void codegen_set_library_mode(bool);
+          { bool _lib = false;
+            for (int _i = 2; _i < argc; _i++)
+              if (strcmp(argv[_i], "--shared") == 0 || strcmp(argv[_i], "--python") == 0 ||
+                  strcmp(argv[_i], "--node") == 0) { _lib = true; break; }
+            codegen_set_library_mode(_lib); } }
         codegen_c_header();
         codegen_program(prog);
         fclose(out);
@@ -3099,29 +3909,54 @@ int main(int argc, char** argv) {
         // Check for --fast flag (use -O0 for fastest compile)
         const char* opt_level = "-O0";  // Fast dev builds; --release uses -O3
         int shared_mode = 0;  // 0=normal, 1=--shared, 2=--python, 4=--node
-        for (int i = 3; i < argc; i++) {
+        // Bounded by user_args_start for the same reason as above: everything past
+        // it is the PROGRAM's argv, so a program flag named --release/--fast must
+        // not reconfigure our compile (and must still reach the program).
+        int _flag_lim = (user_args_start > 0) ? user_args_start : argc;
+        // The LIBRARY flags are scanned over the WHOLE argv, not the [3, _flag_lim)
+        // window the other flags use.
+        //
+        // The positional argument split stops interpreting at the file name, so in
+        // `wyn run mathlib.wyn --python` the flag lands in the PROGRAM's arguments and
+        // user_args_start points at it - making [3, _flag_lim) empty and the flag
+        // invisible. That is why --shared/--python/--node silently did nothing here as
+        // well as under `build`.
+        //
+        // Scanning all of argv is right for these three specifically because they
+        // select an OUTPUT ARTIFACT rather than pass data to a program: in library mode
+        // there is no program run, so there is no program argv to collide with.
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--shared") == 0) { shared_mode = 1; }
+            else if (strcmp(argv[i], "--python") == 0) { shared_mode = 2; }
+            else if (strcmp(argv[i], "--node") == 0) { shared_mode = 3; }
+        }
+        for (int i = 3; i < _flag_lim; i++) {
             if (strcmp(argv[i], "--fast") == 0) { opt_level = "-O0"; }
             if (strcmp(argv[i], "--release") == 0) { opt_level = "-O3"; }
-            if (strcmp(argv[i], "--shared") == 0) { shared_mode = 1; }
-            if (strcmp(argv[i], "--python") == 0) { shared_mode = 2; }
-            if (strcmp(argv[i], "--node") == 0) { shared_mode = 4; }
         }
         
-        // WASM target - early check
-        // Node.js - build shared lib + JS wrapper
-        if (shared_mode == 4) { shared_mode = 1; }
-        int generate_node = 0;
         int use_release = 0;
-        for (int i = 3; i < argc; i++) {
-            if (strcmp(argv[i], "--node") == 0) { generate_node = 1; }
+        for (int i = 3; i < _flag_lim; i++) {
             if (strcmp(argv[i], "--release") == 0) { use_release = 1; }
         }
+        // --release also has to be seen when it follows the file, for the same reason.
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--release") == 0 && shared_mode > 0) {
+                use_release = 1; opt_level = "-O3";
+            }
+        }
         
+        // Per-process, in the temp dir - NOT a bare relative path in the CWD, which two
+        // concurrent `wyn run` invocations in one directory would share. See
+        // wyn_cc_err_paths.
+        char _run_cc_err[512], _run_cc_redir[544];
+        wyn_cc_err_paths(_run_cc_err, sizeof(_run_cc_err), _run_cc_redir, sizeof(_run_cc_redir));
+
         // Use TCC only when precompiled runtime is not available
         // System cc + precompiled libwyn_rt.a is faster (~300ms vs ~1800ms TCC)
         char rt_lib[512];
         snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
-        int _use_tcc = (!use_release && !shared_mode && !generate_node && wyn_tcc_available() && access(rt_lib, R_OK) != 0);
+        int _use_tcc = (!use_release && !shared_mode && wyn_tcc_available() && access(rt_lib, R_OK) != 0);
         if (_use_tcc) {
             // Read the generated C source
             char* c_source = read_file(out_path);
@@ -3147,8 +3982,8 @@ int main(int argc, char** argv) {
                     else rc = snprintf(run_cmd, sizeof(run_cmd), "./%s.out", file);
 #endif
                     if (user_args_start > 0) {
-                        for (int i = user_args_start; i < argc && rc < (int)sizeof(run_cmd) - 2; i++) {
-                            rc += snprintf(run_cmd + rc, sizeof(run_cmd) - rc, " %s", argv[i]);
+                        for (int i = user_args_start; i < argc && rc < (int)sizeof(run_cmd) - 8; i++) {
+                            rc = append_shell_arg(run_cmd, sizeof(run_cmd), rc, argv[i]);
                         }
                     }
                     // Supervised: forwards signals, reaps, leaves no orphan.
@@ -3164,7 +3999,7 @@ int main(int argc, char** argv) {
                         char c_path[512]; snprintf(c_path, 512, "%s.c", file);
                         unlink(c_path);
                     }
-                    unlink("wyn_cc_err.txt");
+                    unlink(_run_cc_err);
                     return result;
                 }
                 // TCC failed - fall through to system cc
@@ -3179,19 +4014,22 @@ int main(int argc, char** argv) {
         if (rt_check) {
             fclose(rt_check);
             snprintf(compile_cmd, sizeof(compile_cmd),
-                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/runtime/libwyn_rt.a %s 2>wyn_cc_err.txt",
-                     cc, opt_level, wyn_root, file, file, wyn_root, platform_libs);
+                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/runtime/libwyn_rt.a %s 2>%s",
+                     cc, opt_level, wyn_root, file, file, wyn_root, platform_libs, _run_cc_redir);
         } else {
             // Fallback: compile from source using unified source list
             char src_list[4096];
             build_source_list(src_list, sizeof(src_list), wyn_root);
             snprintf(compile_cmd, sizeof(compile_cmd),
-                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -D_GNU_SOURCE -I %s/src -I %s/vendor/minicoro -o %s.out %s.c %s %s 2>wyn_cc_err.txt",
-                     cc, opt_level, wyn_root, wyn_root, file, file, src_list, platform_libs);
+                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -D_GNU_SOURCE -I %s/src -I %s/vendor/minicoro -o %s.out %s.c %s %s 2>%s",
+                     cc, opt_level, wyn_root, wyn_root, file, file, src_list, platform_libs, _run_cc_redir);
         }
-        // Append optional flags before the redirect
+        // Append optional flags before the redirect. Searched as " 2>\"" because the
+        // redirect target is now an absolute QUOTED temp path, not the literal
+        // "wyn_cc_err.txt" this used to look for - the compile command is built with
+        // _run_cc_redir above, and quoting keeps it one shell token so this still finds it.
         if (sqlite_flags[0] || gui_flags[0] || app_flags[0] || ffi_flags[0]) {
-            char* redirect = strstr(compile_cmd, " 2>wyn_cc_err");
+            char* redirect = strstr(compile_cmd, " 2>\"");
             if (redirect) {
                 char tail[256];
                 strncpy(tail, redirect, sizeof(tail)-1); tail[sizeof(tail)-1] = 0;
@@ -3200,209 +4038,13 @@ int main(int argc, char** argv) {
         }
         
         // Shared library mode: compile as .so/.dylib instead of executable
+        // Shared library mode (--shared / --python / --node): emit a .dylib/.so/.dll
+        // plus its FFI wrapper instead of an executable. Shared with `wyn build`.
         if (shared_mode > 0) {
-            char lib_name[256] = {0};
-            const char* base = strrchr(file, '/');
-            base = base ? base + 1 : file;
-            snprintf(lib_name, sizeof(lib_name), "%s", base);
-            char* ldot = strrchr(lib_name, '.'); if (ldot) *ldot = 0;
-#ifdef __APPLE__
-            const char* lib_ext = "dylib"; const char* shared_flags = "-dynamiclib";
-#elif _WIN32
-            const char* lib_ext = "dll"; const char* shared_flags = "-shared";
-#else
-            const char* lib_ext = "so"; const char* shared_flags = "-shared";
-#endif
-            char lib_path[512];
-            snprintf(lib_path, sizeof(lib_path), "lib%s.%s", lib_name, lib_ext);
-            char shared_cmd[8192];
-            if (rt_check) {
-                snprintf(shared_cmd, sizeof(shared_cmd),
-                         "gcc -std=c11 %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s %s.c %s/runtime/libwyn_rt.a %s 2>wyn_cc_err.txt",
-                         opt_level, shared_flags, wyn_root, lib_path, file, wyn_root, platform_libs);
-            } else {
-                char src_list[4096];
-                build_source_list(src_list, sizeof(src_list), wyn_root);
-                snprintf(shared_cmd, sizeof(shared_cmd),
-                         "gcc -std=c11 %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -I %s/vendor/minicoro -o %s %s.c %s %s 2>wyn_cc_err.txt",
-                         opt_level, shared_flags, wyn_root, wyn_root, lib_path, file, src_list, platform_libs);
-            }
-            int result = system(shared_cmd);
-            if (result == 0) {
-                clock_gettime(CLOCK_MONOTONIC, &_ts_end);
-                double _ms = (_ts_end.tv_sec - _ts_start.tv_sec) * 1000.0 + (_ts_end.tv_nsec - _ts_start.tv_nsec) / 1e6;
-                fprintf(stderr, "\033[32m✓\033[0m Built shared library: %s (%.0fms)\n", lib_path, _ms);
-            }
-            if (result == 0 && shared_mode == 2) {
-                char py_path[512]; snprintf(py_path, sizeof(py_path), "%s.py", lib_name);
-                FILE* py = fopen(py_path, "w");
-                if (py) {
-                    fprintf(py, "\"\"\"Auto-generated Python wrapper for %s.wyn - created by Wyn\"\"\"\n", lib_name);
-                    fprintf(py, "import ctypes, os, sys\n\n");
-                    fprintf(py, "_dir = os.path.dirname(os.path.abspath(__file__))\n");
-                    fprintf(py, "if sys.platform == 'darwin':\n    _ext = 'dylib'\nelif sys.platform == 'win32':\n    _ext = 'dll'\nelse:\n    _ext = 'so'\n");
-                    fprintf(py, "_lib = ctypes.CDLL(os.path.join(_dir, f'lib%s.{_ext}'))\n\n", lib_name);
-                    for (int fi = 0; fi < prog->count; fi++) {
-                        Stmt* s = prog->stmts[fi];
-                        if (s->type != STMT_FN) continue;
-                        if (s->fn.name.length == 4 && memcmp(s->fn.name.start, "main", 4) == 0) continue;
-                        if (s->fn.receiver_type.length > 0) continue;
-                        char fname[128]; snprintf(fname, sizeof(fname), "%.*s", s->fn.name.length, s->fn.name.start);
-                        // C keyword prefix
-                        const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
-                        const char* cpfx = "";
-                        for (int k = 0; _ckw[k]; k++) { if (strcmp(fname, _ckw[k]) == 0) { cpfx = "_"; break; } }
-                        // Return type
-                        const char* py_res = "ctypes.c_longlong";
-                        int ret_is_str = 0;
-                        if (s->fn.return_type && s->fn.return_type->type == EXPR_IDENT) {
-                            Token rt = s->fn.return_type->token;
-                            if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) { py_res = "ctypes.c_char_p"; ret_is_str = 1; }
-                            else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) py_res = "ctypes.c_double";
-                            else if (rt.length == 4 && memcmp(rt.start, "bool", 4) == 0) py_res = "ctypes.c_bool";
-                        } else if (!s->fn.return_type) { py_res = "None"; }
-                        // Wyn signature as comment
-                        fprintf(py, "# %s(", fname);
-                        for (int p = 0; p < s->fn.param_count; p++) {
-                            if (p > 0) fprintf(py, ", ");
-                            fprintf(py, "%.*s: %.*s", s->fn.params[p].length, s->fn.params[p].start,
-                                    s->fn.param_types[p] ? s->fn.param_types[p]->token.length : 3,
-                                    s->fn.param_types[p] ? s->fn.param_types[p]->token.start : "int");
-                        }
-                        fprintf(py, ")");
-                        if (s->fn.return_type && s->fn.return_type->type == EXPR_IDENT)
-                            fprintf(py, " -> %.*s", s->fn.return_type->token.length, s->fn.return_type->token.start);
-                        fprintf(py, "\n");
-                        // argtypes
-                        fprintf(py, "_lib.%s%s.argtypes = [", cpfx, fname);
-                        for (int p = 0; p < s->fn.param_count; p++) {
-                            if (p > 0) fprintf(py, ", ");
-                            if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
-                                Token pt = s->fn.param_types[p]->token;
-                                if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) fprintf(py, "ctypes.c_char_p");
-                                else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) fprintf(py, "ctypes.c_double");
-                                else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) fprintf(py, "ctypes.c_bool");
-                                else fprintf(py, "ctypes.c_longlong");
-                            } else fprintf(py, "ctypes.c_longlong");
-                        }
-                        fprintf(py, "]\n");
-                        fprintf(py, "_lib.%s%s.restype = %s\n\n", cpfx, fname, py_res);
-                        // Python wrapper function with type hints
-                        fprintf(py, "def %s(", fname);
-                        for (int p = 0; p < s->fn.param_count; p++) {
-                            if (p > 0) fprintf(py, ", ");
-                            fprintf(py, "%.*s", s->fn.params[p].length, s->fn.params[p].start);
-                            // Add type hint
-                            if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
-                                Token pt = s->fn.param_types[p]->token;
-                                if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) fprintf(py, ": str");
-                                else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) fprintf(py, ": float");
-                                else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) fprintf(py, ": bool");
-                                else if (pt.length == 3 && memcmp(pt.start, "int", 3) == 0) fprintf(py, ": int");
-                            }
-                        }
-                        // Return type hint
-                        if (ret_is_str) fprintf(py, ") -> str:\n");
-                        else if (strcmp(py_res, "ctypes.c_double") == 0) fprintf(py, ") -> float:\n");
-                        else if (strcmp(py_res, "ctypes.c_bool") == 0) fprintf(py, ") -> bool:\n");
-                        else if (strcmp(py_res, "None") == 0) fprintf(py, ") -> None:\n");
-                        else fprintf(py, ") -> int:\n");
-                        // Encode string params
-                        for (int p = 0; p < s->fn.param_count; p++) {
-                            if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
-                                Token pt = s->fn.param_types[p]->token;
-                                if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0)
-                                    fprintf(py, "    %.*s = %.*s.encode() if isinstance(%.*s, str) else %.*s\n",
-                                            s->fn.params[p].length, s->fn.params[p].start,
-                                            s->fn.params[p].length, s->fn.params[p].start,
-                                            s->fn.params[p].length, s->fn.params[p].start,
-                                            s->fn.params[p].length, s->fn.params[p].start);
-                            }
-                        }
-                        fprintf(py, "    _r = _lib.%s%s(", cpfx, fname);
-                        for (int p = 0; p < s->fn.param_count; p++) {
-                            if (p > 0) fprintf(py, ", ");
-                            fprintf(py, "%.*s", s->fn.params[p].length, s->fn.params[p].start);
-                        }
-                        fprintf(py, ")\n");
-                        if (ret_is_str) fprintf(py, "    return _r.decode() if _r else \"\"\n");
-                        else if (strcmp(py_res, "None") != 0) fprintf(py, "    return _r\n");
-                        fprintf(py, "\n");
-                    }
-                    fclose(py);
-                    fprintf(stderr, "\033[32m✓\033[0m Generated Python wrapper: %s\n", py_path);
-                }
-            }
-            // Generate Node.js wrapper if --node
-            if (result == 0 && generate_node) {
-                char js_path[512]; snprintf(js_path, sizeof(js_path), "%s.js", lib_name);
-                FILE* js = fopen(js_path, "w");
-                if (js) {
-                    fprintf(js, "// Auto-generated Node.js wrapper for %s.wyn - created by Wyn\n", lib_name);
-                    fprintf(js, "const ffi = require('ffi-napi');\n");
-                    fprintf(js, "const path = require('path');\n\n");
-                    fprintf(js, "const ext = process.platform === 'darwin' ? 'dylib' : process.platform === 'win32' ? 'dll' : 'so';\n");
-                    fprintf(js, "const lib = ffi.Library(path.join(__dirname, `lib%s.${ext}`), {\n", lib_name);
-                    
-                    int first_fn = 1;
-                    for (int fi = 0; fi < prog->count; fi++) {
-                        Stmt* s = prog->stmts[fi];
-                        if (s->type != STMT_FN) continue;
-                        if (s->fn.name.length == 4 && memcmp(s->fn.name.start, "main", 4) == 0) continue;
-                        if (s->fn.receiver_type.length > 0) continue;
-                        
-                        char fname[128]; snprintf(fname, sizeof(fname), "%.*s", s->fn.name.length, s->fn.name.start);
-                        // C keyword prefix
-                        const char* _ckw[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
-                        const char* cpfx = "";
-                        for (int k = 0; _ckw[k]; k++) { if (strcmp(fname, _ckw[k]) == 0) { cpfx = "_"; break; } }
-                        
-                        // Return type
-                        const char* js_ret = "'int64'";
-                        if (s->fn.return_type && s->fn.return_type->type == EXPR_IDENT) {
-                            Token rt = s->fn.return_type->token;
-                            if (rt.length == 6 && memcmp(rt.start, "string", 6) == 0) js_ret = "'string'";
-                            else if (rt.length == 5 && memcmp(rt.start, "float", 5) == 0) js_ret = "'double'";
-                            else if (rt.length == 4 && memcmp(rt.start, "bool", 4) == 0) js_ret = "'bool'";
-                        } else if (!s->fn.return_type) { js_ret = "'void'"; }
-                        
-                        if (!first_fn) fprintf(js, ",\n");
-                        fprintf(js, "  '%s%s': [%s, [", cpfx, fname, js_ret);
-                        for (int p = 0; p < s->fn.param_count; p++) {
-                            if (p > 0) fprintf(js, ", ");
-                            if (s->fn.param_types[p] && s->fn.param_types[p]->type == EXPR_IDENT) {
-                                Token pt = s->fn.param_types[p]->token;
-                                if (pt.length == 6 && memcmp(pt.start, "string", 6) == 0) fprintf(js, "'string'");
-                                else if (pt.length == 5 && memcmp(pt.start, "float", 5) == 0) fprintf(js, "'double'");
-                                else if (pt.length == 4 && memcmp(pt.start, "bool", 4) == 0) fprintf(js, "'bool'");
-                                else fprintf(js, "'int64'");
-                            } else fprintf(js, "'int64'");
-                        }
-                        fprintf(js, "]]");
-                        first_fn = 0;
-                    }
-                    fprintf(js, "\n});\n\n");
-                    
-                    // Export wrapper functions
-                    for (int fi = 0; fi < prog->count; fi++) {
-                        Stmt* s = prog->stmts[fi];
-                        if (s->type != STMT_FN) continue;
-                        if (s->fn.name.length == 4 && memcmp(s->fn.name.start, "main", 4) == 0) continue;
-                        if (s->fn.receiver_type.length > 0) continue;
-                        char fname[128]; snprintf(fname, sizeof(fname), "%.*s", s->fn.name.length, s->fn.name.start);
-                        const char* cpfx = "";
-                        const char* _ckw2[] = {"double","float","int","char","void","return","if","else","while","for","switch","case","break","continue","struct","union","enum","typedef","static","extern","register","volatile","const","signed","unsigned","short","long","auto","default","do","goto","sizeof",NULL};
-                        for (int k = 0; _ckw2[k]; k++) { if (strcmp(fname, _ckw2[k]) == 0) { cpfx = "_"; break; } }
-                        fprintf(js, "exports.%s = lib.%s%s;\n", fname, cpfx, fname);
-                    }
-                    fclose(js);
-                    fprintf(stderr, "\033[32m✓\033[0m Generated Node.js wrapper: %s\n", js_path);
-                    fprintf(stderr, "  Install ffi-napi: npm install ffi-napi\n");
-                }
-            }
-            if (!keep_artifacts) { char cp[512]; snprintf(cp, sizeof(cp), "%s.c", file); unlink(cp); }
-            unlink("wyn_cc_err.txt");
-            return result == 0 ? 0 : 1;
+            // rt_check is a FILE* here, already fclose()d above; pass its truthiness.
+            return wyn_emit_shared_library(file, prog, shared_mode, wyn_root, opt_level,
+                                           platform_libs, rt_check != NULL,
+                                           keep_artifacts, _ts_start);
         }
         
         int result = system(compile_cmd);
@@ -3412,11 +4054,21 @@ int main(int argc, char** argv) {
             fprintf(stderr, "\033[2mCompiled in %.0fms\033[0m\n", _ms);
         }
         if (result != 0) {
-            fprintf(stderr, "Error: compilation failed (internal codegen error)\n");
-            fprintf(stderr, "Run with WYN_DEBUG=1 for details\n");
+            // A misspelled namespace method (`Time.now_ms()`) is lowered to a
+            // bare C call (`Time_now_ms`) because the checker deliberately stays
+            // permissive about namespace methods - an allowlist there would
+            // reject ~100 real runtime functions it does not know about. So the
+            // failure only shows up here, as a C "undeclared function" that the
+            // user has no way to connect back to their source. Translate the
+            // Ns_method shape back into Wyn spelling before giving up; purely a
+            // diagnostic, it cannot change what compiles.
+            if (!wyn_report_undeclared_namespace_call(_run_cc_err)) {
+                fprintf(stderr, "Error: compilation failed (internal codegen error)\n");
+                fprintf(stderr, "Run with WYN_DEBUG=1 for details\n");
+            }
             wynter_encourage();
             if (getenv("WYN_DEBUG")) {
-                FILE* err_file = fopen("wyn_cc_err.txt", "r");
+                FILE* err_file = fopen(_run_cc_err, "r");
                 if (err_file) {
                     char line[1024];
                     while (fgets(line, sizeof(line), err_file)) {
@@ -3454,8 +4106,8 @@ int main(int argc, char** argv) {
             else
                 _rc = snprintf(run_cmd, sizeof(run_cmd), "./%s.out", file);
             if (user_args_start > 0) {
-                for (int i = user_args_start; i < argc && _rc < (int)sizeof(run_cmd) - 2; i++) {
-                    _rc += snprintf(run_cmd + _rc, sizeof(run_cmd) - _rc, " %s", argv[i]);
+                for (int i = user_args_start; i < argc && _rc < (int)sizeof(run_cmd) - 8; i++) {
+                    _rc = append_shell_arg(run_cmd, sizeof(run_cmd), _rc, argv[i]);
                 }
             }
         }
@@ -3516,9 +4168,17 @@ int main(int argc, char** argv) {
     // Pre-load all imports before parsing
     extern void preload_imports(const char* source);
     extern bool has_circular_import(void);
+    extern bool has_unresolved_import(void);
     preload_imports(source);
     if (has_circular_import()) {
         fprintf(stderr, "Compilation failed due to circular imports\n");
+        free(source);
+        return 1;
+    }
+    // See the note at the other gate sites: an unresolved import means missing
+    // symbols, so stopping here is what prevents emitting C with a hole in it.
+    if (has_unresolved_import()) {
+        fprintf(stderr, "Compilation failed: an import could not be resolved\n");
         free(source);
         return 1;
     }
