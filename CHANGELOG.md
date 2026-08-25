@@ -1,5 +1,128 @@
 # Changelog
 
+## v1.21.0 (2026-08-25) - "The Soundness Release"
+
+**If a program passes `wyn check`, it must build.** That was the theme, and it is what
+most of this release is: **87 fixes and 7 features**, the large majority closing cases
+where the compiler said "no errors" and then handed you an error in C you never wrote -
+or, worse, a wrong answer at exit 0.
+
+Four things here are worth upgrading promptly for.
+
+### A single empty TCP connection could kill any Wyn HTTP server
+
+```
+python3 -c "import socket; socket.create_connection(('127.0.0.1',8080)).close()"
+-> panic: to_int parse error: "" is not a valid integer
+```
+
+One packet, no authentication, server gone. A port scan, a TCP health check, an L4
+load-balancer probe or a browser preconnect all do exactly this - so a server exposed
+to a network could be taken down by its own monitoring. `Http.accept` returned the
+empty string for a connection that sent no request, and the documented server pattern
+feeds that to `.to_int()`, which panics. It now skips such a connection and keeps
+accepting, as any real server does. Normal load never triggered it, which is why the
+existing concurrent-load gate never saw it: load generators make *complete* requests.
+
+### HashMap's typed setters corrupted the heap
+
+`m.set_int("k", 7)` passed a `WynHashMap*` to a function that wrote through it as a
+`WynJson*` - a type confusion. On ordinary, `wyn check`-clean code, ASan reported a
+heap-buffer-overflow. All four typed setters were affected in both spellings: the
+namespace form (`HashMap.set_int(m, k, v)`) failed to build, and the method form
+silently wrote to the wrong representation and read back zeros.
+
+### Concurrent HashMap/HashSet mutation is now caught
+
+Wyn had three different answers to one hazard. Arrays panicked, shared scalar globals
+were a compile-time error, and **HashMap/HashSet had nothing** - two writers could
+splice the same bucket and lose updates or corrupt the deferred-free list. All three
+tiers now agree: concurrent collection mutation panics and names the remedy. This was
+the sharpest structural criticism of v1.20's safety posture.
+
+### A string built inside an `if` printed its memory address
+
+```wyn
+if n == 1 {
+  s = "v${n}"
+  println(s)      // -> 4345226036
+}
+```
+
+A variable whose first assignment was an *interpolated* string inside any block was
+declared with the wrong C type, so printing it showed the pointer as a decimal number.
+Building a message inside a conditional is everyday code, and this compiled without a
+warning.
+
+### Also fixed
+
+- **`input()` was broken six ways**: a non-numeric line returned `0` at exit 0, empty
+  stdin **hung forever**, `12abc` returned `12`, it left its newline behind so a
+  following `input_line()` returned `""`, and it truncated to 32 bits
+  (`4294967297` -> `1`). `input_float()` lost precision the same way. It now reads a
+  line and validates all of it, panicking like `to_int` does, with `WYN_LENIENT=1` to
+  restore the old behaviour.
+- **`"${struct}"` interpolation** type-checked and then failed to compile. Structs now
+  render exactly as `println` shows them, including nested structs, arrays and floats
+  at full precision.
+- **`Ok`, `Err`, `Some` and `None` are usable as your own enum variant names** again -
+  `enum Verdict { Ok, Over }` failed to build, and merely *declaring* such an enum
+  produced a bogus "non-exhaustive match" error on unrelated, correct code.
+- **`Json`'s writer methods did nothing** in method form: `j.set_int("i", 1)` was
+  silently discarded and `j.stringify()` returned `{}`.
+- **`spawn` broke handlers named after POSIX functions.** `fn send(...)` worked when
+  called directly and failed to build when spawned, because the wrapper called libc's
+  `send`. `read`, `write`, `connect` and `accept` were affected the same way - the
+  natural names for request handlers.
+- **Integer overflow is now defined**, not undefined. Wyn ints wrap (two's
+  complement), guaranteed - previously the optimiser was entitled to assume overflow
+  could not happen. No measurable cost: an arithmetic-heavy benchmark is unchanged.
+- A duplicated `struct`/`enum`/`fn` declaration, negating a non-number
+  (`-71.to_string()`), and assigning an `int` to a struct-typed variable are all clean
+  errors now instead of C-compiler noise.
+- The JSON cluster from earlier in the cycle: a **remote DoS** (malformed input hung
+  the parser), **key injection**, a second `Json.parse` destroying the first document,
+  and an invalid-JSON writer.
+- `mut` parameters were unusable for every type; the data-enum cluster
+  (`Enum::Variant(args)`, optionals of data enums, arrays of them, `match` on hoisted
+  ones); a user struct named after any of 42 builtin namespaces; `String.from_chars`
+  segfaulting; and much more - see the git log for the full 87.
+
+### New
+
+- **`wyn build --app`** produces a native, double-clickable application.
+- **`wyn design [file]`** launches the Visual Wyn form designer.
+- **Function-typed struct fields**, so a struct can hold a callback.
+- Any non-release build reports `-dev`, so you can tell what you are running.
+- Registry recipes for tiff, webp, freetype and lcms2.
+
+### What we test now, so you can judge the rest
+
+This release adds the gates that would have caught most of the above much earlier.
+
+- **An acceptance gate** - one realistic CLI tool that reads stdin, parses JSON,
+  formats numbers, propagates errors across *different* `Result` types, passes structs
+  across function boundaries and uses a HashMap from a spawned handler, all in one
+  program. Its first 200 lines found three of the defects above while every unit suite
+  was green. Composition is where things break.
+- **A fuzz ratchet with teeth**: the generator now emits structs, enums (including
+  variants named `Ok`/`Err`/`Some`/`None`), `match` in all three spellings, collections
+  in both spellings, and `Result`/`Option` with `?`. And a build failure after a
+  successful `check` is now *always* a reported violation - it used to be excused
+  unless the C error matched one of four known phrasings, which is how several of these
+  defects stayed invisible. It found three more immediately.
+
+Honest note on what these gates do **not** cover: only about 17% of generated fuzz
+programs currently pass `wyn check`, so the build oracle asserts on a handful per run.
+Raising that needs the generator to track scope and types properly, and is the next
+improvement to it.
+
+Four items in `docs/known-limitations` still reproduce and are documented rather than
+silently broken. One further issue is filed and not fixed: passing a string to a
+spawned task and then re-entering `Http.accept` can crash, because the accept path
+resets an arena the task still holds - which is why the REST-API example in the blog is
+single-threaded.
+
 ## v1.20.0 (2026-07-29) - "The Concurrency & Correctness Release"
 
 > **Re-released 2026-07-29.** The v1.20.0 artifacts were rebuilt and replaced in
