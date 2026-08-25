@@ -6659,9 +6659,53 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                 int enum_variant_count = 0;
                 (void)enum_variant_count;
                 
-                // Scan global scope for enum types and see if patterns match
-                for (int s = 0; s < global_scope->count; s++) {
+                // Scan global scope for enum types and see if patterns match.
+                //
+                // ONLY consider the enum the scrutinee actually IS. This loop used
+                // to try EVERY enum in global scope and accept the first whose
+                // variant list contained ANY arm name, without ever consulting the
+                // scrutinee. So a user enum that happens to declare a variant named
+                // Ok / Err / Some / None hijacked the exhaustiveness check of a
+                // GENUINE Result/Option match elsewhere in the same program:
+                //
+                //     enum Verdict { Ok, Over }
+                //     match real(true) { Ok(v) => .. Err(e) => .. }
+                //     -> Error: non-exhaustive match, missing case: Over
+                //
+                // demanding a Verdict variant be covered by a match on a Result.
+                // Ok/Err/Some/None are ordinary identifiers (the lexer dropped
+                // TOKEN_OK/TOKEN_ERR so they could be used as names), so those are
+                // legal variant names and this fired on correct code.
+                //
+                // When the scrutinee has no enum type at all - a bare int/string
+                // match, or a value the checker could not resolve - the old
+                // any-enum scan is kept, because that is the case the heuristic was
+                // written for and narrowing it there would lose real diagnostics.
+                Token _mv_enum = {0}; int _mv_is_enum = 0;
+                if (match_value_type && match_value_type->kind == TYPE_ENUM &&
+                    match_value_type->name.length > 0) {
+                    _mv_enum = match_value_type->name; _mv_is_enum = 1;
+                }
+                // A match on a builtin Option/Result family is never a user-enum
+                // match. The scrutinee there is a STRUCT (ResultInt, OptionString,
+                // OptionUser, ...), so the enum-name test above cannot exclude it,
+                // and it is the case that actually broke: `Ok(v)`/`Err(e)` arms are
+                // spelled exactly like the variants of a user enum that happens to
+                // declare an Ok. Option/Result exhaustiveness is a two-variant
+                // property handled by their own lowering, not by this scan.
+                int _mv_builtin_family = 0;
+                if (match_value_type && match_value_type->kind == TYPE_STRUCT &&
+                    match_value_type->struct_type.name.length >= 6) {
+                    const char* _n = match_value_type->struct_type.name.start;
+                    int _l = match_value_type->struct_type.name.length;
+                    if ((_l >= 6 && memcmp(_n, "Option", 6) == 0) ||
+                        (_l >= 6 && memcmp(_n, "Result", 6) == 0)) _mv_builtin_family = 1;
+                }
+                for (int s = 0; s < global_scope->count && !_mv_builtin_family; s++) {
                     Symbol* sym = &global_scope->symbols[s];
+                    if (_mv_is_enum && !(sym->name.length == _mv_enum.length &&
+                                         memcmp(sym->name.start, _mv_enum.start, _mv_enum.length) == 0))
+                        continue;
                     if (sym->type && sym->type->kind == TYPE_ENUM) {
                         // Check if any of our patterns match this enum's variants
                         for (int i = 0; i < stmt->match_stmt.case_count; i++) {
