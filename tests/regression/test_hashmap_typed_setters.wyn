@@ -1,0 +1,97 @@
+// HashMap's four TYPED setters were broken in BOTH spellings, and one of the two
+// was memory-unsafe rather than merely wrong. Found by writing the v1.21 §10
+// acceptance CLI tool, which reaches for `set_int` because `set` and `get_int`
+// both exist.
+//
+//   HashMap.set_T(m,k,v)  -> "call to undeclared function 'hashmap_set_T'".
+//                            The namespace dispatch mangled HashMap.X to
+//                            hashmap_X, but the runtime spells these
+//                            hashmap_insert_X. types.c registers map.set_int as a
+//                            real method, so the checker was right to accept it.
+//   m.set_T(k,v)          -> emitted json_set_T, handing a WynHashMap* to a
+//                            function that writes through it as a WynJson*. The
+//                            SAME type confusion as #291 (hashmap_free walking a
+//                            WynJson) in the other direction. Not just a wrong
+//                            answer: ASan reported a heap-buffer-overflow in
+//                            hashmap_len reading memory json_set_string had
+//                            allocated. set_float/set_bool had no arm at all.
+//
+// Both silently disagreed with the GETTERS, which always used hashmap_*, so a
+// set/get pair returned a zero value at exit 0 with `wyn check` clean.
+//
+// EXPECT: ns int=7
+// EXPECT: mt int=7
+// EXPECT: ns str=v
+// EXPECT: mt str=v
+// EXPECT: ns flt=1.5
+// EXPECT: mt flt=1.5
+// EXPECT: ns bool=1
+// EXPECT: mt bool=1
+// EXPECT: insert int=7
+// EXPECT: plain set=v
+// EXPECT: len=4
+// EXPECT: overwrite=9
+
+fn main() {
+    // --- the namespace spelling: used to fail the C compile outright ---
+    var a = HashMap.new()
+    HashMap.set_int(a, "k", 7)
+    println("ns int=${HashMap.get_int(a, "k")}")
+
+    // --- the method spelling: used to corrupt the heap ---
+    var b = HashMap.new()
+    b.set_int("k", 7)
+    println("mt int=${HashMap.get_int(b, "k")}")
+
+    var c = HashMap.new()
+    HashMap.set_string(c, "k", "v")
+    println("ns str=${HashMap.get_string(c, "k")}")
+
+    var d = HashMap.new()
+    d.set_string("k", "v")
+    println("mt str=${HashMap.get_string(d, "k")}")
+
+    var e = HashMap.new()
+    HashMap.set_float(e, "k", 1.5)
+    println("ns flt=${HashMap.get_float(e, "k")}")
+
+    var f = HashMap.new()
+    f.set_float("k", 1.5)
+    println("mt flt=${HashMap.get_float(f, "k")}")
+
+    // get_bool interpolates 1/0 rather than true/false - the SAME pre-existing
+    // inconsistency already logged for HashSet.contains, not part of this fix.
+    // Asserted as it actually behaves so this test does not quietly encode a wish.
+    var g = HashMap.new()
+    HashMap.set_bool(g, "k", true)
+    println("ns bool=${HashMap.get_bool(g, "k")}")
+
+    var h = HashMap.new()
+    h.set_bool("k", true)
+    println("mt bool=${HashMap.get_bool(h, "k")}")
+
+    // --- guards: the spellings that already worked must keep working ---
+    var i = HashMap.new()
+    HashMap.insert_int(i, "k", 7)
+    println("insert int=${HashMap.get_int(i, "k")}")
+
+    var j = HashMap.new()
+    HashMap.set(j, "k", "v")
+    println("plain set=${HashMap.get(j, "k")}")
+
+    // len over a map written entirely through typed setters. This is the exact
+    // read that overflowed: the json_set_* writes left the map's own structure
+    // inconsistent, so hashmap_len read 8 bytes before a 6-byte region.
+    var k = HashMap.new()
+    k.set_int("i", 1)
+    k.set_string("s", "x")
+    k.set_float("f", 2.5)
+    k.set_bool("b", false)
+    println("len=${HashMap.len(k)}")
+
+    // A typed setter must OVERWRITE, not append a second entry under one key.
+    var l = HashMap.new()
+    l.set_int("k", 1)
+    l.set_int("k", 9)
+    println("overwrite=${HashMap.get_int(l, "k")}")
+}
