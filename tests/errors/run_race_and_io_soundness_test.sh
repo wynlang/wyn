@@ -345,12 +345,34 @@ expect_runs "read_line on an empty file does not abort" "$TMP/readempty.wyn" "0"
 # (fire-and-forget = coroutine scheduler, awaited = thread pool) and a guard that
 # only caught one would read as working.
 
+# A MUTATION-FLAG RACE DETECTOR FIRES PROBABILISTICALLY, so asserting it on a single
+# run is a flaky gate - and this was one. The HashSet case failed on a macOS CI runner
+# (printing its result instead of panicking) because the two tasks happened to
+# serialise: the flag only trips when two mutations genuinely overlap, and nothing
+# forces them to. Go's map race detector has the same property.
+#
+# So the assertion is "it fires within N attempts", which is the honest shape for a
+# probabilistic detector, and it FAILS only if the barrier never fires across all of
+# them. Each attempt is a fresh process, so attempts are independent. The report names
+# which attempt fired, so a gate that starts needing 7 of 8 shows up as drift rather
+# than staying silently green.
+#
+# A wrong-but-quiet run is reported on failure, because that is the interesting case:
+# it means the tasks overlapped, corrupted nothing, and produced a value anyway -
+# precisely the "lucky, not safe" state this barrier exists to end.
+RACE_ATTEMPTS="${RACE_ATTEMPTS:-8}"
 race_panics() {
-    local name="$1" file="$2" what="$3" out
-    out=$(perl -e 'alarm(60); exec @ARGV' -- "$WYN" run "$file" 2>&1)
-    if echo "$out" | grep -q "concurrent $what mutation detected" &&
-       echo "$out" | grep -q "channel or Shared"; then ok "$name"
-    else bad "$name [$(echo "$out" | grep -v 'Compiled in' | tail -1)]"; fi
+    local name="$1" file="$2" what="$3" out i saw_quiet=""
+    for i in $(seq 1 "$RACE_ATTEMPTS"); do
+        out=$(perl -e 'alarm(60); exec @ARGV' -- "$WYN" run "$file" 2>&1)
+        if echo "$out" | grep -q "concurrent $what mutation detected" &&
+           echo "$out" | grep -q "channel or Shared"; then
+            ok "$name (fired on attempt $i/$RACE_ATTEMPTS)"
+            return
+        fi
+        saw_quiet=$(echo "$out" | grep -v 'Compiled in' | tail -1)
+    done
+    bad "$name - barrier never fired in $RACE_ATTEMPTS attempts [last: $saw_quiet]"
 }
 
 cat > "$TMP/hm_race_await.wyn" <<'EOF'
