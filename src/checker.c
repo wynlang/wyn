@@ -4375,7 +4375,21 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // Walk interpolation expressions to mark variables as used
             for (int i = 0; i < expr->string_interp.count; i++) {
                 if (expr->string_interp.expressions[i]) {
-                    check_expr(expr->string_interp.expressions[i], scope);
+                    Type* it = check_expr(expr->string_interp.expressions[i], scope);
+                    // A struct here needs a __wyn_str_<Name> helper in the
+                    // generated C: to_string is a _Generic whose default arm is
+                    // int_to_string, so a struct used to be passed by value to a
+                    // `long long` parameter and the C compile failed AFTER
+                    // `wyn check` reported no errors (PLAN_v1.21 S1). Recorded
+                    // here rather than in codegen because this pass is the one
+                    // that necessarily visits every expression with its type
+                    // resolved, so no interpolation site can be missed.
+                    if (it && it->kind == TYPE_STRUCT && it->struct_type.name.length > 0) {
+                        char sn[128];
+                        token_to_cstr(sn, sizeof(sn), it->struct_type.name);
+                        extern void register_interpolated_struct(const char*);
+                        register_interpolated_struct(sn);
+                    }
                 }
             }
             return builtin_string;

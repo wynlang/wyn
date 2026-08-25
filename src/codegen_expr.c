@@ -6001,8 +6001,27 @@ void codegen_expr(Expr* expr) {
                 if (expr->string_interp.expressions[i]) {
                     Expr* e = expr->string_interp.expressions[i];
                     emit("const char* __si%d = ", _ti);
+                    // A STRUCT value must not go through to_string: that macro's
+                    // `default:` arm is int_to_string, so the struct was passed by
+                    // value to a `long long` parameter and the generated C failed
+                    // to compile after `wyn check` reported no errors (PLAN_v1.21
+                    // S1). codegen_program emits a __wyn_str_<Name> for each struct
+                    // the CHECKER saw interpolated; call it instead. It returns a
+                    // fresh +1 RC string, which is what the release loop below
+                    // already assumes for a non-string expression, so ownership
+                    // needs no special case. The guard and the emission consult the
+                    // same registry, so a struct without a helper still falls
+                    // through to to_string rather than calling a missing function.
+                    extern int cg_struct_has_str_helper(Token name);
                     if (e->type == EXPR_STRING) {
                         codegen_expr(e);
+                    } else if (e->expr_type && e->expr_type->kind == TYPE_STRUCT &&
+                               e->expr_type->struct_type.name.length > 0 &&
+                               cg_struct_has_str_helper(e->expr_type->struct_type.name)) {
+                        Token _sn = e->expr_type->struct_type.name;
+                        emit("__wyn_str_%.*s(", _sn.length, _sn.start);
+                        codegen_expr(e);
+                        emit(")");
                     } else {
                         emit("to_string(");
                         codegen_expr(e);

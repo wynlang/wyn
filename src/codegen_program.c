@@ -254,6 +254,206 @@ static void emit_struct_eq_helpers(Program* prog) {
     }
 }
 
+// --- Per-struct stringifier (`"${p}"` on a struct value) ---
+// `to_string` is a _Generic macro whose `default:` arm is int_to_string, so a
+// struct argument was passed BY VALUE to a `long long` parameter: interpolation
+// type-checked clean and then died in the generated C with "passing 'P' to
+// parameter of incompatible type 'long long'" (PLAN_v1.21 S1). println(struct)
+// already renders `P { x: 1, y: 2 }`, but it does so by emitting inline printf
+// calls that print directly and yield no string, so interpolation - which needs
+// a char* - cannot reuse it.
+//
+// Emit one `static char* __wyn_str_<Name>(<Name>)` per non-generic struct,
+// alongside the existing __wyn_eq_<Name> / <Name>_cleanup helpers, returning a
+// FRESH +1 RC string. The output deliberately matches println's format so the
+// two spellings agree.
+//
+// Prototypes come first (pass 0) so a struct with a struct-typed field can call
+// its field's helper regardless of source order - the same reason
+// emit_struct_eq_helpers is two-pass.
+//
+// Field rendering, and the ownership rule for each:
+//   string  - printed directly with %s; NOT via to_string, because
+//             str_to_string returns its ARGUMENT unchanged, so releasing the
+//             result would free the struct's own field. Quoted, as println does.
+//   bool    - "true"/"false" inline; no allocation.
+//   float   - float_to_string (fresh, released) so it goes through
+//             wyn_format_float and keeps the v1.20.0 round-trip precision.
+//   array   - array_to_string (fresh, released).
+//   struct  - that struct's own __wyn_str_ helper (fresh, released).
+//   other   - a self-describing `<Type>` placeholder. Data enums, maps, sets,
+//             Json, optionals and fn fields have no string form yet; a
+//             placeholder that names the type states plainly that no value is
+//             being claimed, which is what keeps this from becoming the
+//             silent-wrong class. Rendering them properly is a ROADMAP item.
+// How one struct field is rendered by its __wyn_str_ helper. FK_OPAQUE is the
+// "no string form yet" bucket (data enums, maps, sets, Json, optionals, fn
+// fields) and prints a `<Type>` placeholder rather than inventing a value.
+enum { FK_OPAQUE = 0, FK_STR, FK_BOOL, FK_INT, FK_FLOAT, FK_STRUCT, FK_ENUM, FK_ARRAY };
+
+// A PAYLOAD-LESS enum stays a plain C enum, so it renders with %lld exactly as
+// println does. A DATA enum is a tagged-union struct and has no string form yet,
+// so it takes the placeholder path.
+static int cg_is_simple_enum(Program* prog, Token t) {
+    for (int j = 0; j < prog->count; j++) {
+        Stmt* es = prog->stmts[j];
+        if (es->type == STMT_EXPORT && es->export.stmt) es = es->export.stmt;
+        if (es->type == STMT_ENUM && es->enum_decl.name.length == t.length &&
+            memcmp(es->enum_decl.name.start, t.start, t.length) == 0) {
+            char nm[128]; token_to_cstr(nm, sizeof(nm), t);
+            extern int is_data_enum_type(const char*);
+            return !is_data_enum_type(nm);
+        }
+    }
+    return 0;
+}
+// Does a __wyn_str_<name> helper exist for this struct? The interpolation site
+// in codegen_expr.c asks before emitting a call, so the two stay in step: a
+// generic struct has no monomorphic C type and therefore no helper.
+int cg_struct_has_str_helper(Token name) {
+    if (!current_program) return 0;
+    StructStmt* sd = cg_find_struct(current_program, name);
+    if (!sd || sd->type_param_count > 0) return 0;   // generic: no monomorphic type
+    char nm[128]; token_to_cstr(nm, sizeof(nm), name);
+    extern int is_interpolated_struct(const char*);
+    return is_interpolated_struct(nm);
+}
+// A helper for an interpolated struct calls the helpers of its struct-typed
+// FIELDS, which are usually never interpolated themselves. Register that closure
+// before emitting, or `Outer { i: Inner }` would emit __wyn_str_Outer calling a
+// __wyn_str_Inner that does not exist.
+static void cg_close_interp_structs(Program* prog) {
+    extern void register_interpolated_struct(const char*);
+    for (int changed = 1, guard = 0; changed && guard < 64; guard++) {
+        changed = 0;
+        for (int i = 0; i < prog->count; i++) {
+            Stmt* s = prog->stmts[i];
+            if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+            if (s->type != STMT_STRUCT) continue;
+            StructStmt* sd = &s->struct_decl;
+            if (sd->type_param_count > 0) continue;
+            if (!cg_struct_has_str_helper(sd->name)) continue;
+            for (int fi = 0; fi < sd->field_count; fi++) {
+                Expr* ft = sd->field_types[fi];
+                if (!ft || ft->type != EXPR_IDENT) continue;
+                StructStmt* fsd = cg_find_struct(prog, ft->token);
+                if (!fsd || fsd->type_param_count > 0) continue;
+                if (cg_struct_has_str_helper(ft->token)) continue;
+                char fnm[128]; token_to_cstr(fnm, sizeof(fnm), ft->token);
+                register_interpolated_struct(fnm);
+                changed = 1;
+            }
+        }
+    }
+}
+static void emit_struct_str_helpers(Program* prog) {
+    cg_close_interp_structs(prog);
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < prog->count; i++) {
+            Stmt* s = prog->stmts[i];
+            if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+            if (s->type != STMT_STRUCT) continue;
+            StructStmt* sd = &s->struct_decl;
+            if (sd->type_param_count > 0) continue;  // generics: no monomorphic type
+            // Only structs actually interpolated (plus their struct-typed fields)
+            // get a helper - see cg_struct_has_str_helper.
+            if (!cg_struct_has_str_helper(sd->name)) continue;
+            Token n = sd->name;
+            if (pass == 0) {
+                emit("static char* __wyn_str_%.*s(%.*s __v);\n",
+                     n.length, n.start, n.length, n.start);
+                continue;
+            }
+            emit("static char* __wyn_str_%.*s(%.*s __v) {\n",
+                 n.length, n.start, n.length, n.start);
+            // Classify each field ONCE. Four loops below (temps, format, args,
+            // releases) must agree about every field, and an earlier revision
+            // repeated the type tests in each one - a field added to three of
+            // the four would emit a format spec with no argument, which is a
+            // wild read rather than a compile error.
+            int* kind = malloc(sizeof(int) * (sd->field_count > 0 ? sd->field_count : 1));
+            for (int fi = 0; fi < sd->field_count; fi++) {
+                Expr* ft = sd->field_types[fi];
+                kind[fi] = FK_OPAQUE;
+                if (!ft) continue;
+                if (ft->type == EXPR_ARRAY) { kind[fi] = FK_ARRAY; continue; }
+                if (ft->type != EXPR_IDENT) continue;
+                Token t = ft->token;
+                if      (t.length == 6 && memcmp(t.start, "string", 6) == 0) kind[fi] = FK_STR;
+                else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0)   kind[fi] = FK_BOOL;
+                else if (t.length == 3 && memcmp(t.start, "int", 3) == 0)    kind[fi] = FK_INT;
+                else if (t.length == 5 && memcmp(t.start, "float", 5) == 0)  kind[fi] = FK_FLOAT;
+                else if (cg_find_struct(prog, t))                            kind[fi] = FK_STRUCT;
+                else if (cg_is_simple_enum(prog, t))                         kind[fi] = FK_ENUM;
+            }
+            // Allocating fields are stringified first, so the format below is a
+            // flat list of %s / %lld and every temp has a name to release.
+            for (int fi = 0; fi < sd->field_count; fi++) {
+                Token fn = sd->fields[fi];
+                if (kind[fi] == FK_FLOAT)
+                    emit("    char* __f%d = float_to_string(__v.%.*s);\n", fi, fn.length, fn.start);
+                else if (kind[fi] == FK_ARRAY)
+                    emit("    char* __f%d = array_to_string(__v.%.*s);\n", fi, fn.length, fn.start);
+                else if (kind[fi] == FK_STRUCT) {
+                    Token t = sd->field_types[fi]->token;
+                    emit("    char* __f%d = __wyn_str_%.*s(__v.%.*s);\n",
+                         fi, t.length, t.start, fn.length, fn.start);
+                }
+            }
+            // Two passes over the format: size probe, then the real write.
+            for (int w = 0; w < 2; w++) {
+                // A field-less struct renders `Name {}`; with the usual "{ " / " }"
+                // pair it would come out as `Name {  }` with a doubled space.
+                const char* open = sd->field_count > 0 ? "{ " : "{";
+                if (w == 0) emit("    int __n = snprintf(NULL, 0, \"%.*s %s", n.length, n.start, open);
+                else        emit("    char* __b = wyn_str_alloc(__n + 1);\n"
+                                 "    snprintf(__b, __n + 1, \"%.*s %s", n.length, n.start, open);
+                for (int fi = 0; fi < sd->field_count; fi++) {
+                    Token fn = sd->fields[fi];
+                    if (fi > 0) emit(", ");
+                    emit("%.*s: ", fn.length, fn.start);
+                    switch (kind[fi]) {
+                        case FK_STR:    emit("\\\"%%s\\\""); break;
+                        case FK_BOOL:   emit("%%s");   break;
+                        case FK_INT: case FK_ENUM: emit("%%lld"); break;
+                        case FK_FLOAT: case FK_STRUCT: case FK_ARRAY: emit("%%s"); break;
+                        default: {
+                            Expr* ft = sd->field_types[fi];
+                            if (ft && ft->type == EXPR_IDENT)
+                                emit("<%.*s>", ft->token.length, ft->token.start);
+                            else emit("<?>");
+                            break;
+                        }
+                    }
+                }
+                emit(" }\"");
+                for (int fi = 0; fi < sd->field_count; fi++) {
+                    Token fn = sd->fields[fi];
+                    switch (kind[fi]) {
+                        case FK_STR:
+                            emit(", __v.%.*s ? __v.%.*s : \"\"",
+                                 fn.length, fn.start, fn.length, fn.start); break;
+                        case FK_BOOL:
+                            emit(", __v.%.*s ? \"true\" : \"false\"", fn.length, fn.start); break;
+                        case FK_INT: case FK_ENUM:
+                            emit(", (long long)__v.%.*s", fn.length, fn.start); break;
+                        case FK_FLOAT: case FK_STRUCT: case FK_ARRAY:
+                            emit(", __f%d", fi); break;
+                        default: break;   // placeholder: literal text, no argument
+                    }
+                }
+                emit(");\n");
+            }
+            for (int fi = 0; fi < sd->field_count; fi++)
+                if (kind[fi] == FK_FLOAT || kind[fi] == FK_STRUCT || kind[fi] == FK_ARRAY)
+                    emit("    wyn_rc_release(__f%d);\n", fi);
+            free(kind);
+            emit("    wyn_rc_set_length(__b, (unsigned int)__n);\n"
+                 "    return __b;\n}\n");
+        }
+    }
+}
+
 void codegen_program(Program* prog) {
     current_program = prog;
     bool has_main = false;
@@ -590,6 +790,9 @@ void codegen_program(Program* prog) {
     // helpers for user structs (after all typedefs exist).
     emit_enum_eq_helpers(prog);
     emit_struct_eq_helpers(prog);
+    // Per-struct stringifiers, so `"${p}"` has a char* path instead of falling
+    // through to_string's `default: int_to_string` arm (PLAN_v1.21 S1).
+    emit_struct_str_helpers(prog);
 
     // Generate module-level constants (only if has main - script mode puts them in wyn_main)
     if (has_main) {

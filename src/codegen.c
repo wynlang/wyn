@@ -2411,6 +2411,28 @@ int is_registered_option_struct(const char* struct_name) {
     return 0;
 }
 
+// Registry of user-struct names that appear inside a string interpolation, so
+// codegen emits a __wyn_str_<Name> stringifier for exactly those (PLAN_v1.21 S1).
+// Populated by the CHECKER, which is the only pass that necessarily visits every
+// expression AND has its type resolved - emitting a helper for every struct
+// instead put a dead static function in every program that declares one and
+// changed 4 golden-C snapshots for programs that never interpolate a struct.
+static char** interp_structs = NULL;
+static int interp_struct_count = 0;
+static int interp_struct_cap = 0;
+void register_interpolated_struct(const char* struct_name) {
+    if (!struct_name || !*struct_name) return;
+    for (int i = 0; i < interp_struct_count; i++)
+        if (strcmp(interp_structs[i], struct_name) == 0) return;
+    WYN_ENSURE_CAP(interp_structs, interp_struct_count, interp_struct_cap);
+    interp_structs[interp_struct_count++] = strdup(struct_name);
+}
+int is_interpolated_struct(const char* struct_name) {
+    for (int i = 0; i < interp_struct_count; i++)
+        if (strcmp(interp_structs[i], struct_name) == 0) return 1;
+    return 0;
+}
+
 // Registry for monomorphic Result<Ok, Err> families with a user-struct OK payload
 // (e.g. `ResultUser` for `Result<User, string>`, `ResultPoint_Fail` for
 // `Result<Point, Fail>`). Mirrors the Option<Struct> registry above: populated as
