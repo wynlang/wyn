@@ -798,6 +798,27 @@ static int compile_file_with_output(const char* filename, const char* output_nam
         free(source_content);
     }
 
+    // -fwrapv: INTEGER OVERFLOW IS DEFINED, NOT UNDEFINED.
+    //
+    // PLAN_v1.21 §3 asked for a POSTURE on overflow, noting that `maxint + 1`
+    // silently produced a negative number while `"abc".to_int()` panics, and that
+    // "signed overflow is UB in C". The second half was the real defect: generated
+    // programs were compiled at -O2 with no -fwrapv, so overflow was UNDEFINED and
+    // the optimiser was entitled to assume it could not happen - which is how
+    // wrapping code turns into deleted comparisons and infinite loops, not merely
+    // a surprising value.
+    //
+    // The posture chosen, and it is a choice: Wyn ints WRAP (two's complement),
+    // like Go and like Rust in release mode. Trapping on every add would tax the
+    // "C speed" claim on every arithmetic operation, and this language already
+    // panics where a value would otherwise be INVENTED (to_int, missing map key,
+    // array OOB) rather than where it is merely large. -fwrapv makes that wrap a
+    // GUARANTEE instead of a hope, at no measurable cost - it only withdraws an
+    // optimiser assumption.
+    //
+    // So the inconsistency §3 objected to is resolved by making the behaviour
+    // defined and documenting it, not by making arithmetic checked.
+
     // Try precompiled runtime first, fall back to source
     char rt_path[512];
     snprintf(rt_path, sizeof(rt_path), "%s/runtime/libwyn_rt.a", wyn_dir);
@@ -805,12 +826,12 @@ static int compile_file_with_output(const char* filename, const char* output_nam
     if (rt_test) {
         fclose(rt_test);
         snprintf(cmd, sizeof(cmd),
-                 "gcc -O2 -w -I %s/src -o %s %s %s/runtime/libwyn_rt.a "
+                 "gcc -O2 -fwrapv -w -I %s/src -o %s %s %s/runtime/libwyn_rt.a "
                  "-L%s/runtime/parser_lib -lwyn_c_parser -lpthread -lm%s 2>&1",
                  wyn_dir, output_bin, output_c, wyn_dir, wyn_dir, extra_flags);
     } else {
         snprintf(cmd, sizeof(cmd), 
-                 "gcc -O2 -w -I %s/src -o %s %s %s/src/wyn_wrapper.c %s/src/wyn_interface.c "
+                 "gcc -O2 -fwrapv -w -I %s/src -o %s %s %s/src/wyn_wrapper.c %s/src/wyn_interface.c "
                  "%s/src/io.c %s/src/optional.c %s/src/result.c %s/src/arc_runtime.c "
                  "%s/src/concurrency.c %s/src/async_runtime.c "
                  "%s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c "

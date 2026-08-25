@@ -203,7 +203,7 @@ int wyn_emit_shared_library(const char* file, Program* prog, int shared_mode,
         char _lib_cc_err[512], _lib_cc_redir[544];
         wyn_cc_err_paths(_lib_cc_err, sizeof(_lib_cc_err), _lib_cc_redir, sizeof(_lib_cc_redir));
         snprintf(shared_cmd, sizeof(shared_cmd),
-                 "gcc -std=c11 -D_GNU_SOURCE %s -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -I %s/vendor/minicoro -o %s %s.c %s %s 2>%s",
+                 "gcc -std=c11 -D_GNU_SOURCE %s -fwrapv -w -fPIC %s -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -I %s/vendor/minicoro -o %s %s.c %s %s 2>%s",
                  opt_level, shared_flags, wyn_root, wyn_root, lib_path, file, src_list, platform_libs, _lib_cc_redir);
         int result = system(shared_cmd);
         // A FAILED library build must say why. The error was being written to
@@ -2447,9 +2447,9 @@ int main(int argc, char** argv) {
                     // Windows captures the compiler's stderr too - it was the last
                     // branch still discarding it, so a failed build there printed
                     // "✗ Build failed" and nothing else.
-                    "%s -std=c11 %s -w -I %s/src -Wl,--allow-multiple-definition -o %s %s%s %s.c %s%s -lws2_32 -lpthread -lm 2>%s",
+                    "%s -std=c11 %s -fwrapv -w -I %s/src -Wl,--allow-multiple-definition -o %s %s%s %s.c %s%s -lws2_32 -lpthread -lm 2>%s",
 #elif defined(__APPLE__)
-                    "%s -std=c11 %s -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src %s-Wl,-dead_strip -o %s %s%s %s.c %s%s%s -lpthread -lm 2>%s",
+                    "%s -std=c11 %s -fwrapv -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src %s-Wl,-dead_strip -o %s %s%s %s.c %s%s%s -lpthread -lm 2>%s",
 #else
                     // Capture the C compiler's stderr, do NOT discard it. This
                     // branch used to end in `2>/dev/null`, while the __APPLE__
@@ -2458,7 +2458,7 @@ int main(int argc, char** argv) {
                     // the "Compiler output:" reader below found no file. That is
                     // exactly what a user (and a CI log) needs, and it was
                     // silently unavailable on the platform most CI runs on.
-                    "%s -std=c11 %s -w -ffunction-sections -fdata-sections -I %s/src -Wl,--allow-multiple-definition,--gc-sections -o %s %s%s %s.c %s%s -lpthread -lm 2>%s",
+                    "%s -std=c11 %s -fwrapv -w -ffunction-sections -fdata-sections -I %s/src -Wl,--allow-multiple-definition,--gc-sections -o %s %s%s %s.c %s%s -lpthread -lm 2>%s",
 #endif
 #ifdef __APPLE__
                     cc, _opt, wyn_root, _pch_flag, bin_path, sqlite_flags, gui_def, entry, rt_lib, sqlite_src, app_link, cc_err_redir
