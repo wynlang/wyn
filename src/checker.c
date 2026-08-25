@@ -7391,6 +7391,61 @@ void check_program(Program* prog) {
         }
     }
     
+    // Pass -0.5: reject a DUPLICATE top-level declaration.
+    //
+    // Declaring the same struct, enum or function twice type-checked clean and
+    // then failed the C compile with a wall of "redefinition of 'E0'" /
+    // "redefinition of enumerator 'E0_Some_TAG'" - the v1.21 soundness rule broken
+    // by a plain copy-paste, which is how it happens in real editing.
+    //
+    // Found by the fuzzer: a line-duplicating mutant produced two identical enum
+    // declarations, and the strict oracle (any post-check build failure is a
+    // violation) reported it. The old allowlist oracle would have called it a
+    // clean rejection, because "redefinition of" was not one of its four
+    // recognised phrasings.
+    //
+    // Only DIRECT declarations are compared. A module's public types are spliced
+    // into the program wrapped in STMT_EXPORT, and the same module reached by two
+    // import paths can legitimately appear more than once (that double-emission
+    // has its own history), so counting those would be a false rejection on
+    // correct code - much worse than the hole being closed.
+    {
+        typedef struct { const char* start; int len; const char* kind; int line; } DeclRef;
+        int cap = prog->count > 0 ? prog->count : 1;
+        DeclRef* seen = malloc(sizeof(DeclRef) * cap);
+        int seen_n = 0;
+        for (int i = 0; i < prog->count; i++) {
+            Stmt* s = prog->stmts[i];
+            if (s->type == STMT_EXPORT) continue;   // module-spliced: see above
+            Token nm; const char* kind;
+            if (s->type == STMT_STRUCT)      { nm = s->struct_decl.name; kind = "struct"; }
+            else if (s->type == STMT_ENUM)   { nm = s->enum_decl.name;   kind = "enum"; }
+            else if (s->type == STMT_FN)     { nm = s->fn.name;          kind = "function"; }
+            else continue;
+            if (nm.length <= 0) continue;
+            int dup = -1;
+            for (int j = 0; j < seen_n; j++) {
+                if (seen[j].len == nm.length && strcmp(seen[j].kind, kind) == 0 &&
+                    memcmp(seen[j].start, nm.start, nm.length) == 0) { dup = j; break; }
+            }
+            if (dup >= 0) {
+                fprintf(stderr, "Error at line %d: %s '%.*s' is already defined",
+                        nm.line, kind, nm.length, nm.start);
+                if (seen[dup].line > 0) fprintf(stderr, " (line %d)", seen[dup].line);
+                fprintf(stderr, "\n");
+                show_source_line(nm.line);
+                fprintf(stderr, "  \033[34mHelp:\033[0m remove the duplicate, or rename one of them. "
+                                "Two definitions of one %s cannot both be emitted.\n", kind);
+                had_error = true;
+            } else if (seen_n < cap) {
+                seen[seen_n].start = nm.start; seen[seen_n].len = nm.length;
+                seen[seen_n].kind = kind;      seen[seen_n].line = nm.line;
+                seen_n++;
+            }
+        }
+        free(seen);
+    }
+
     // Pass 0: Register all struct types, enums, and constants first (so functions can reference them)
     for (int i = 0; i < prog->count; i++) {
         Stmt* pass0_stmt = prog->stmts[i];

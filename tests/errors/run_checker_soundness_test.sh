@@ -161,4 +161,37 @@ expect_check_ok "negating a float still ok" "$TMP/ok_neg_float.wyn"
 printf 'fn main() {\n  println((-71).to_string())\n}\n' > "$TMP/ok_neg_paren.wyn"
 expect_check_ok "the suggested (-n).to_string() form is accepted" "$TMP/ok_neg_paren.wyn"
 
+# --- K13: a duplicate top-level declaration ----------------------------------
+# ALSO FOUND BY THE FUZZER - a line-duplicating mutant produced two identical
+# enum declarations. Declaring the same struct/enum/function twice checked clean
+# and then failed the C compile:
+#
+#     error: redefinition of 'E0'
+#     error: redefinition of enumerator 'E0_Some_TAG'
+#
+# i.e. the soundness rule broken by a plain copy-paste, which is exactly how it
+# happens while editing. The old allowlist oracle would have excused it too:
+# "redefinition of" was not one of its four recognised C-error phrasings.
+printf 'enum E { A, B }\nenum E { A, B }\nfn main() { println(1) }\n' > "$TMP/dup_enum.wyn"
+expect_check_error "duplicate enum is rejected" "$TMP/dup_enum.wyn" "enum 'E' is already defined"
+
+printf 'struct S { x: int }\nstruct S { x: int }\nfn main() { println(1) }\n' > "$TMP/dup_struct.wyn"
+expect_check_error "duplicate struct is rejected" "$TMP/dup_struct.wyn" "struct 'S' is already defined"
+
+printf 'fn f() -> int { return 1 }\nfn f() -> int { return 2 }\nfn main() { println(f()) }\n' > "$TMP/dup_fn.wyn"
+expect_check_error "duplicate function is rejected" "$TMP/dup_fn.wyn" "function 'f' is already defined"
+
+# The message must point at BOTH lines - "already defined" is only actionable if
+# you can find the other one.
+out=$(perl -e 'alarm(10); exec @ARGV' -- "$WYN" check "$TMP/dup_enum.wyn" 2>&1)
+if echo "$out" | grep -q "line 1"; then ok "duplicate diagnostic cites the first definition"
+else bad "duplicate diagnostic cites the first definition [$(echo "$out" | head -1)]"; fi
+
+# Over-rejection guards. Same-named things of DIFFERENT kinds are not duplicates,
+# and a struct plus its impl block is the ordinary shape.
+printf 'struct T { x: int }\nenum U { A, B }\nfn v() -> int { return 1 }\nfn main() { println(v()) }\n' > "$TMP/ok_distinct.wyn"
+expect_check_ok "distinct declarations still ok" "$TMP/ok_distinct.wyn"
+printf 'struct P { x: int }\nimpl P {\n  fn get(self) -> int { return self.x }\n}\nfn main() { var p = P { x: 3 }\n println(p.get()) }\n' > "$TMP/ok_impl.wyn"
+expect_check_ok "struct plus impl block still ok" "$TMP/ok_impl.wyn"
+
 echo ""; echo "checker-soundness: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]
