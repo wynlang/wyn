@@ -3318,7 +3318,32 @@ int Http_fd(const char* raw) {
     return fd;
 }
 
+// A CONNECTION THAT YIELDS NO REQUEST IS NOT AN EVENT THE CALLER ASKED ABOUT.
+//
+// This used to `return ""` when a client connected and then sent nothing (closed
+// early, or hit the 5s read timeout). Nothing anywhere handles that: no example,
+// no doc snippet and no stdlib test checks the result for emptiness - verified by
+// grep across the corpus. And the DOCUMENTED server pattern is
+//
+//     req = Http.accept(server)
+//     fd  = req.split_at("|", 3).to_int()
+//
+// so an empty result means `"".to_int()`, which PANICS since to_int was correctly
+// made loud about bad input. The two changes are individually right and lethal
+// together: every server built on the documented pattern dies on the first
+// aborted connection. Measured on the blog's flagship "REST API in 93 lines" -
+// `ab -n 40 -c 2` kills it with `panic: to_int parse error: ""`, and it dies at
+// concurrency as low as 2, because a load generator routinely opens connections
+// it does not complete. Health checkers and port scanners do the same.
+//
+// So: skip such a connection and keep accepting, which is what every real server
+// does. This cannot spin hot - the loop only continues after accept() returned a
+// real fd, so each iteration costs one accepted-and-closed connection, and the
+// next accept() blocks (or parks the coroutine) as before. A genuine SERVER
+// socket failure still returns "" and does not loop, because that one is not
+// transient and retrying it would spin.
 char* Http_accept(int server_fd) {
+  for (;;) {
     // Reset arena per request to prevent memory leak in long-running servers
     wyn_arena_reset();
     struct sockaddr_in client_addr;
@@ -3349,7 +3374,20 @@ char* Http_accept(int server_fd) {
 #endif
     {
         client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
-        if (client_fd < 0) return "";
+        if (client_fd < 0) {
+            // TRANSIENT failures are per-connection, not server failures, and are
+            // ROUTINE under load: a client that goes away between the SYN and the
+            // accept() gives ECONNABORTED (ab does this constantly), and a signal
+            // gives EINTR. Returning "" for those is what actually killed the
+            // documented server pattern - measured on the blog's REST API example,
+            // which died at `ab -c 2`. Retry them; only a real server-socket
+            // failure (EBADF, EINVAL, ...) returns, because retrying that spins.
+#ifndef _WIN32
+            if (errno == ECONNABORTED || errno == EINTR || errno == EAGAIN ||
+                errno == EWOULDBLOCK || errno == EPROTO) continue;
+#endif
+            return "";
+        }
     }
     // A client that connects but never sends (or died) must not wedge the
     // accept loop: bound the request read. 5s is generous for a request line.
@@ -3358,7 +3396,9 @@ char* Http_accept(int server_fd) {
 #endif
     char buf[8192] = {0};
     int n = recv(client_fd, buf, sizeof(buf) - 1, 0);
-    if (n <= 0) { close(client_fd); return ""; }
+    // The whole point of the loop: a connection with no request is skipped, not
+    // reported as an empty string the caller will feed to .to_int().
+    if (n <= 0) { close(client_fd); continue; }
     buf[n] = 0;
     
     // Save a copy for body parsing
@@ -3382,6 +3422,7 @@ char* Http_accept(int server_fd) {
     char* result = wyn_str_alloc(16384);
     snprintf(result, 16384, "%s|%s|%s|%d", method, path, body, client_fd);
     return result;
+  }
 }
 
 
