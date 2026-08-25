@@ -891,7 +891,14 @@ tsan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_tsan.a
 # dev compile in main.c exactly - clang refuses a pch whose flags differ.
 ifeq ($(shell uname),Darwin)
 runtime: runtime/wyn_runtime.pch
-runtime/wyn_runtime.pch: src/wyn_runtime.h
+# Depends on the MAKEFILE as well as the header: the pch must be rebuilt when the
+# FLAGS change, not only when the header does. clang hard-errors if the pch's
+# flags differ from the including file's ("signed integer overflow handling
+# differs in precompiled file"), so when -fwrapv was added to both the compile
+# line and this rule, every tree with an EXISTING pch kept using the old one and
+# every build broke until the pch was deleted by hand. Anyone pulling that change
+# would have hit it. Listing the Makefile makes the rebuild automatic.
+runtime/wyn_runtime.pch: src/wyn_runtime.h Makefile
 	@# -fwrapv must match the flags `wyn build` uses for the program that
 	@# INCLUDES this pch. clang hard-errors on a mismatch ("signed integer
 	@# overflow handling differs in precompiled file"), so adding -fwrapv to the
