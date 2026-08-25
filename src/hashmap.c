@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "hashmap.h"
+#include "wyn_write_guard.h"
 #include <stdlib.h>
 #include <string.h>
 extern char* wyn_str_alloc(size_t n);
@@ -26,6 +27,11 @@ typedef struct Grave {
 struct WynHashMap {
     Entry* buckets[HASHMAP_SIZE];
     Grave* graveyard;
+    // Concurrent-mutation flag (PLAN_v1.21 §3), mirroring WynArray.writing.
+    // The struct is opaque - defined here, not in the header - so adding a
+    // field needs no layout mirroring, unlike WynArray which is duplicated in
+    // wyn_runtime_slim.h and wyn_interface.c.
+    int writing;
 };
 
 static void hashmap_bury_string(WynHashMap* map, char* old) {
@@ -51,7 +57,7 @@ WynHashMap* hashmap_new(void) {
     return map;
 }
 
-void hashmap_insert_int(WynHashMap* map, const char* key, int value) {
+static void hashmap_insert_int_impl(WynHashMap* map, const char* key, int value) {
     if (!map || !key) return;  // Add null checks
     
     unsigned int idx = hash(key);
@@ -74,7 +80,7 @@ void hashmap_insert_int(WynHashMap* map, const char* key, int value) {
     map->buckets[idx] = new_entry;
 }
 
-void hashmap_insert_float(WynHashMap* map, const char* key, double value) {
+static void hashmap_insert_float_impl(WynHashMap* map, const char* key, double value) {
     if (!map || !key) return;  // Add null checks
     
     unsigned int idx = hash(key);
@@ -97,7 +103,7 @@ void hashmap_insert_float(WynHashMap* map, const char* key, double value) {
     map->buckets[idx] = new_entry;
 }
 
-void hashmap_insert_string(WynHashMap* map, const char* key, const char* value) {
+static void hashmap_insert_string_impl(WynHashMap* map, const char* key, const char* value) {
     if (!map || !key || !value) return;  // Add null checks
     
     unsigned int idx = hash(key);
@@ -130,7 +136,7 @@ void hashmap_insert_string(WynHashMap* map, const char* key, const char* value) 
     map->buckets[idx] = new_entry;
 }
 
-void hashmap_insert_bool(WynHashMap* map, const char* key, int value) {
+static void hashmap_insert_bool_impl(WynHashMap* map, const char* key, int value) {
     if (!map || !key) return;  // Add null checks
     
     unsigned int idx = hash(key);
@@ -153,7 +159,7 @@ void hashmap_insert_bool(WynHashMap* map, const char* key, int value) {
     map->buckets[idx] = new_entry;
 }
 
-void hashmap_insert_ptr(WynHashMap* map, const char* key, void* value) {
+static void hashmap_insert_ptr_impl(WynHashMap* map, const char* key, void* value) {
     if (!map || !key) return;
 
     unsigned int idx = hash(key);
@@ -257,7 +263,7 @@ bool hashmap_has(WynHashMap* map, const char* key) {
     return 0;
 }
 
-void hashmap_remove(WynHashMap* map, const char* key) {
+static void hashmap_remove_impl(WynHashMap* map, const char* key) {
     if (!map || !key) return;  // Add null checks
     
     unsigned int idx = hash(key);
@@ -364,7 +370,7 @@ int hashmap_count(WynHashMap* map) {
     return count;
 }
 
-void hashmap_clear(WynHashMap* map) {
+static void hashmap_clear_impl(WynHashMap* map) {
     if (!map) return;
     for (int i = 0; i < HASHMAP_SIZE; i++) {
         Entry* entry = map->buckets[i];
@@ -428,4 +434,53 @@ char* hashmap_index_string_impl(WynHashMap* map, const char* key, const char* fi
 int hashmap_index_bool_impl(WynHashMap* map, const char* key, const char* file, int line) {
     if (!hashmap_has(map, key)) wyn_map_missing_key_panic(key, file, line);
     return hashmap_get_bool(map, key);
+}
+
+void hashmap_insert_int(WynHashMap* map, const char* key, int value) {
+    if (!map) return;
+    WYN_COLL_WRITE_ENTER(&map->writing, "HashMap");
+    hashmap_insert_int_impl(map, key, value);
+    WYN_COLL_WRITE_EXIT(&map->writing);
+}
+
+void hashmap_insert_float(WynHashMap* map, const char* key, double value) {
+    if (!map) return;
+    WYN_COLL_WRITE_ENTER(&map->writing, "HashMap");
+    hashmap_insert_float_impl(map, key, value);
+    WYN_COLL_WRITE_EXIT(&map->writing);
+}
+
+void hashmap_insert_string(WynHashMap* map, const char* key, const char* value) {
+    if (!map) return;
+    WYN_COLL_WRITE_ENTER(&map->writing, "HashMap");
+    hashmap_insert_string_impl(map, key, value);
+    WYN_COLL_WRITE_EXIT(&map->writing);
+}
+
+void hashmap_insert_bool(WynHashMap* map, const char* key, int value) {
+    if (!map) return;
+    WYN_COLL_WRITE_ENTER(&map->writing, "HashMap");
+    hashmap_insert_bool_impl(map, key, value);
+    WYN_COLL_WRITE_EXIT(&map->writing);
+}
+
+void hashmap_insert_ptr(WynHashMap* map, const char* key, void* value) {
+    if (!map) return;
+    WYN_COLL_WRITE_ENTER(&map->writing, "HashMap");
+    hashmap_insert_ptr_impl(map, key, value);
+    WYN_COLL_WRITE_EXIT(&map->writing);
+}
+
+void hashmap_remove(WynHashMap* map, const char* key) {
+    if (!map) return;
+    WYN_COLL_WRITE_ENTER(&map->writing, "HashMap");
+    hashmap_remove_impl(map, key);
+    WYN_COLL_WRITE_EXIT(&map->writing);
+}
+
+void hashmap_clear(WynHashMap* map) {
+    if (!map) return;
+    WYN_COLL_WRITE_ENTER(&map->writing, "HashMap");
+    hashmap_clear_impl(map);
+    WYN_COLL_WRITE_EXIT(&map->writing);
 }
