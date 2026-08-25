@@ -1594,6 +1594,26 @@ void codegen_program(Program* prog) {
         emit("\n// Spawn wrapper functions\n");
         for (int i = 0; i < spawn_wrapper_count; i++) {
             int ac = spawn_wrappers[i].arg_count;
+            // A user function whose name collides with a C keyword or a libc/POSIX
+            // symbol is EMITTED under the "wynfn_" prefix (PR #53), so the spawn
+            // wrapper must CALL it by that prefixed name. It did not, so:
+            //
+            //   fn send(a: int, b: int, c: string) { ... }
+            //   send(1, 2, "x")        // fine - builds and runs
+            //   spawn send(1, 2, "x")  // wyn check: no errors
+            //   -> error: too few arguments to function call, expected 4, have 3
+            //
+            // because the wrapper called POSIX send(sockfd, buf, len, flags). The
+            // collision guard worked for every direct call and was bypassed by
+            // spawn alone. `send`, `read`, `write`, `connect`, `accept`, `close`
+            // are the natural names for request handlers, which is exactly the
+            // code most likely to be spawned - it was found while making the
+            // "REST API in 93 lines" post race-free, whose handler is named send.
+            //
+            // The WRAPPER's own name keeps the raw spelling: __spawn_wrapper_send
+            // cannot collide, and the call sites already reference it that way.
+            char _cbuf[WYN_UFN_PFX_LEN + 256];
+            const char* callee = emit_c_var_name(_cbuf, sizeof(_cbuf), spawn_wrappers[i].func_name);
             if (ac == 0) {
                 // Check if function has default parameters that need filling
                 extern int get_fn_param_count(const char*);
@@ -1604,7 +1624,7 @@ void codegen_program(Program* prog) {
                 if (total_params > 0) {
                     // Function has params with defaults - fill them in
                     if (spawn_wrappers[i].returns_void) {
-                        emit("    (void)arg; %s(", spawn_wrappers[i].func_name);
+                        emit("    (void)arg; %s(", callee);
                         for (int di = 0; di < total_params; di++) {
                             if (di > 0) emit(", ");
                             Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
@@ -1612,7 +1632,7 @@ void codegen_program(Program* prog) {
                         }
                         emit(");\n    return NULL;\n");
                     } else if (spawn_wrappers[i].return_type[0]) {
-                        emit("    (void)arg; %s* __r = malloc(sizeof(%s)); *__r = %s(", spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, spawn_wrappers[i].func_name);
+                        emit("    (void)arg; %s* __r = malloc(sizeof(%s)); *__r = %s(", spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, callee);
                         for (int di = 0; di < total_params; di++) {
                             if (di > 0) emit(", ");
                             Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
@@ -1620,7 +1640,7 @@ void codegen_program(Program* prog) {
                         }
                         emit(");\n    return __r;\n");
                     } else {
-                        emit("    (void)arg; return (void*)(intptr_t)%s(", spawn_wrappers[i].func_name);
+                        emit("    (void)arg; return (void*)(intptr_t)%s(", callee);
                         for (int di = 0; di < total_params; di++) {
                             if (di > 0) emit(", ");
                             Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
@@ -1630,12 +1650,12 @@ void codegen_program(Program* prog) {
                     }
                 } else {
                     if (spawn_wrappers[i].returns_void) {
-                        emit("    (void)arg; %s();\n    return NULL;\n", spawn_wrappers[i].func_name);
+                        emit("    (void)arg; %s();\n    return NULL;\n", callee);
                     } else if (spawn_wrappers[i].return_type[0]) {
                         emit("    (void)arg; %s* __r = malloc(sizeof(%s)); *__r = %s();\n    return __r;\n",
-                             spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, spawn_wrappers[i].func_name);
+                             spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, callee);
                     } else {
-                        emit("    (void)arg; return (void*)(intptr_t)%s();\n", spawn_wrappers[i].func_name);
+                        emit("    (void)arg; return (void*)(intptr_t)%s();\n", callee);
                     }
                 }
                 emit("}\n\n");
@@ -1648,13 +1668,13 @@ void codegen_program(Program* prog) {
                 emit("void* __spawn_wrapper_%s_1b(void* arg) {\n", spawn_wrappers[i].func_name);
                 emit("    struct { %s a0; } *args = arg;\n", _bpt);
                 if (spawn_wrappers[i].returns_void) {
-                    emit("    %s(args->a0);\n    free(args);\n    return NULL;\n", spawn_wrappers[i].func_name);
+                    emit("    %s(args->a0);\n    free(args);\n    return NULL;\n", callee);
                 } else if (spawn_wrappers[i].return_type[0]) {
                     emit("    %s* __r = malloc(sizeof(%s));\n    *__r = %s(args->a0);\n    free(args);\n    return __r;\n",
-                         spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, spawn_wrappers[i].func_name);
+                         spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, callee);
                 } else {
                     emit("    long long __r = (long long)%s(args->a0);\n    free(args);\n    return (void*)(intptr_t)__r;\n",
-                         spawn_wrappers[i].func_name);
+                         callee);
                 }
                 emit("}\n\n");
             } else if (ac == 1) {
@@ -1673,7 +1693,7 @@ void codegen_program(Program* prog) {
                 emit("void* __spawn_wrapper_%s_1(void* arg) {\n", spawn_wrappers[i].func_name);
                 if (_a1_str) emit("    const char* __a0 = (const char*)arg;\n");
                 if (spawn_wrappers[i].returns_void) {
-                    emit("    %s(%s", spawn_wrappers[i].func_name, _a1_decode);
+                    emit("    %s(%s", callee, _a1_decode);
                     for (int di = 1; di < total_params; di++) {
                         emit(", ");
                         Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
@@ -1683,7 +1703,7 @@ void codegen_program(Program* prog) {
                     if (_a1_str) emit("    wyn_rc_release(__a0);\n");
                     emit("    return NULL;\n");
                 } else if (spawn_wrappers[i].return_type[0]) {
-                    emit("    %s* __r = malloc(sizeof(%s)); *__r = %s(%s", spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, spawn_wrappers[i].func_name, _a1_decode);
+                    emit("    %s* __r = malloc(sizeof(%s)); *__r = %s(%s", spawn_wrappers[i].return_type, spawn_wrappers[i].return_type, callee, _a1_decode);
                     for (int di = 1; di < total_params; di++) {
                         emit(", ");
                         Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
@@ -1693,7 +1713,7 @@ void codegen_program(Program* prog) {
                     if (_a1_str) emit("    wyn_rc_release(__a0);\n");
                     emit("    return __r;\n");
                 } else {
-                    emit("    long long __r = (long long)%s(%s", spawn_wrappers[i].func_name, _a1_decode);
+                    emit("    long long __r = (long long)%s(%s", callee, _a1_decode);
                     for (int di = 1; di < total_params; di++) {
                         emit(", ");
                         Expr* def = get_fn_default(spawn_wrappers[i].func_name, di);
@@ -1725,7 +1745,7 @@ void codegen_program(Program* prog) {
                 }
                 emit("} *args = arg;\n");
                 if (spawn_wrappers[i].returns_void) {
-                    emit("    %s(", spawn_wrappers[i].func_name);
+                    emit("    %s(", callee);
                     for (int j = 0; j < ac; j++) { if (j > 0) emit(", "); emit("args->a%d", j); }
                     for (int di = ac; di < total_params; di++) {
                         emit(", ");
@@ -1740,7 +1760,7 @@ void codegen_program(Program* prog) {
                     if (spawn_wrappers[i].return_type[0]) {
                         // Struct return: heap-allocate and return pointer
                         emit("    %s* __r = malloc(sizeof(%s));\n", spawn_wrappers[i].return_type, spawn_wrappers[i].return_type);
-                        emit("    *__r = %s(", spawn_wrappers[i].func_name);
+                        emit("    *__r = %s(", callee);
                         for (int j = 0; j < ac; j++) { if (j > 0) emit(", "); emit("args->a%d", j); }
                         for (int di = ac; di < total_params; di++) {
                             emit(", ");
@@ -1752,7 +1772,7 @@ void codegen_program(Program* prog) {
                             if (_str_field[j]) emit("    wyn_rc_release(args->a%d);\n", j);
                         emit("    free(args);\n    return __r;\n");
                     } else {
-                        emit("    long long __r = (long long)%s(", spawn_wrappers[i].func_name);
+                        emit("    long long __r = (long long)%s(", callee);
                         for (int j = 0; j < ac; j++) { if (j > 0) emit(", "); emit("args->a%d", j); }
                         for (int di = ac; di < total_params; di++) {
                             emit(", ");

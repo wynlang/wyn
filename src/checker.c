@@ -4442,6 +4442,25 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     }
                 }
             }
+            // SET expr_type, do not merely return it. Bare-assignment hoisting
+            // (codegen_stmt.c) reads `init->expr_type` to pick the C declaration and
+            // falls back to `long long` when it is NULL - so a variable whose FIRST
+            // assignment was an interpolated string inside any if/else-if/else block
+            // was declared `long long`, and println printed its POINTER ADDRESS as a
+            // decimal number:
+            //
+            //   if n == 1 {
+            //     s = "v${n}"
+            //     println(s)     // -> 4345226036
+            //   }
+            //
+            // A wrong answer at exit 0, and it BUILT because `wyn build` passes -w,
+            // which suppresses the clang int-conversion diagnostic that would
+            // otherwise have named it. Same class as the input_line() defect that
+            // printed a line's address. A plain string literal was fine (its
+            // expr_type is set elsewhere), and top level was fine, which is why this
+            // only showed up in a conditional.
+            expr->expr_type = builtin_string;
             return builtin_string;
         case EXPR_AWAIT:
             if (expr->await.expr) {
