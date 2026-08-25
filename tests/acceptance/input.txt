@@ -1,0 +1,9 @@
+{"level":"INFO","service":"api","latency_ms":12}
+{"level":"ERROR","service":"api","latency_ms":40}
+{"level":"INFO","service":"db","latency_ms":8}
+
+{"level":"DEBUG","service":"db","latency_ms":5}
+{"level":"ERROR","service":"worker","latency_ms":99}
+{"service":"api","latency_ms":1}
+{"level":"INFO","service":"api","latency_ms":-3}
+{"level":"INFO","service":"api","latency_ms":8}

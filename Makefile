@@ -467,6 +467,13 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_task_select_diagnostic_test.sh
 	@echo "=== Running HTTP server concurrent-load gate ==="
 	@WYN=./wyn bash tests/errors/run_http_server_load_test.sh
+	@echo "=== Running v1.21 ACCEPTANCE gate (PLAN_v1.21 §10) ==="
+	@# The release's own exit criterion: ONE realistic CLI tool that reads stdin,
+	@# parses JSON, formats numbers, propagates errors across DIFFERENT Result
+	@# families, passes structs across boundaries and uses a HashMap from a
+	@# spawned handler - all at once. Every other suite here was green while the
+	@# three defects this tool found were live, which is exactly §10's argument.
+	@WYN=./wyn bash tests/acceptance/run_acceptance_test.sh
 	@echo "=== Running fuzz smoke (seed 1) ==="
 	@WYN=./wyn bash tests/fuzz/run_fuzz.sh 1 60
 	# tests/stdlib/ (68 files) used to be run by NOTHING - not run_bdd.sh (which
