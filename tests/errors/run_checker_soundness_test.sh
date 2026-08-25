@@ -35,6 +35,23 @@ expect_check_ok() {
     else bad "$name (rc=$rc) [$(echo "$out" | head -1)]"; fi
 }
 
+
+# check passes AND builds AND runs with the expected stdout. Needed because the
+# defects below are not rejections - they BUILD and print the wrong thing, so
+# asserting on the exit code alone would pass vacuously.
+expect_runs() {
+    local name="$1" file="$2" want="$3" out rc bin
+    out=$(perl -e 'alarm(20); exec @ARGV' -- "$WYN" check "$file" 2>&1); rc=$?
+    if [ $rc -ne 0 ]; then bad "$name (check rejected) [$(echo "$out" | head -1)]"; return; fi
+    out=$(perl -e 'alarm(90); exec @ARGV' -- "$WYN" build "$file" -o "${file%.wyn}.bin" 2>&1); rc=$?
+    if [ $rc -ne 0 ] || echo "$out" | grep -q "Build failed"; then
+        bad "$name (check passed but BUILD FAILED) [$(echo "$out" | grep -m1 'error:')]"; return; fi
+    out=$(perl -e 'alarm(30); exec @ARGV' -- "${file%.wyn}.bin" 2>&1); rc=$?
+    if [ $rc -ne 0 ]; then bad "$name (ran rc=$rc) [$out]"; return; fi
+    if [ "$out" = "$want" ]; then ok "$name"
+    else bad "$name (want [$want] got [$out])"; fi
+}
+
 # --- K6: `?` only applies to a Result value ---------------------------------
 # `?` on an Option unwrapped to a ResultInt temp in codegen -> C type mismatch.
 printf 'fn g() -> int? { return 5 }\nfn f() -> int { x = g()?\n return x }\nfn main(){ print(f()) }\n' > "$TMP/k6_opt.wyn"
@@ -229,5 +246,31 @@ printf 'struct A { n: int }\nfn mk() -> A { return A { n: 7 } }\nfn main() {\n  
 expect_check_ok "reassigning from a function returning that struct still ok" "$TMP/ok_fn_ret.wyn"
 printf 'fn g(y: bool) -> int? {\n  if y { return Some(3) }\n  return None\n}\nfn main() {\n  var o = g(true)\n  o = g(false)\n  match o { Some(v) => { println(v) } None => { println("n") } }\n}\n' > "$TMP/ok_opt_reassign.wyn"
 expect_check_ok "reassigning an Option (a TYPE_STRUCT family) still ok" "$TMP/ok_opt_reassign.wyn"
+
+# --- K15: a variable first assigned an INTERPOLATED string inside a block -----
+# A wrong answer at exit 0, and it BUILT: bare-assignment hoisting reads
+# init->expr_type to pick the C declaration, and the checker's EXPR_STRING_INTERP
+# case RETURNED builtin_string without ever SETTING expr_type. So the hoist fell
+# back to `long long` and println printed the string's POINTER ADDRESS:
+#
+#     if n == 1 {
+#       s = "v${n}"
+#       println(s)      # -> 4345226036
+#     }
+#
+# Same class as the input_line() defect that printed a line's address. It built
+# because `wyn build` passes -w, which suppresses the clang int-conversion
+# diagnostic that would have named it immediately. A plain string LITERAL was fine
+# (its expr_type is set elsewhere) and top level was fine, so it only appeared in a
+# conditional - which is where messages get built.
+printf 'fn main() {\n  var n = 1\n  if n == 1 {\n    s = "v${n}"\n    println(s)\n  }\n}\n' > "$TMP/ih_if.wyn"
+expect_runs "interpolation hoisted from an if keeps its string type" "$TMP/ih_if.wyn" "v1"
+printf 'fn main() {\n  var n = 1\n  if n == 0 { println(0) } else if n == 1 {\n    s = "v${n}"\n    println(s)\n  }\n}\n' > "$TMP/ih_elif.wyn"
+expect_runs "interpolation hoisted from an else-if keeps its string type" "$TMP/ih_elif.wyn" "v1"
+printf 'fn main() {\n  var n = 1\n  if n == 0 { println(0) } else {\n    s = "v${n}"\n    println(s)\n  }\n}\n' > "$TMP/ih_else.wyn"
+expect_runs "interpolation hoisted from an else keeps its string type" "$TMP/ih_else.wyn" "v1"
+# The interpolated value must still be usable AS a string, not just printable.
+printf 'fn main() {\n  var n = 2\n  if n == 2 {\n    s = "v${n}"\n    println(s.len())\n    println(s.upper())\n  }\n}\n' > "$TMP/ih_use.wyn"
+expect_runs "hoisted interpolation is a real string (len/upper)" "$TMP/ih_use.wyn" "$(printf '2\nV2')"
 
 echo ""; echo "checker-soundness: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]
