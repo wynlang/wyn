@@ -118,4 +118,40 @@ expect_check_ok "exhaustive bool match still ok" "$TMP/ok_bool_match.wyn"
 printf 'fn g() -> int? { return 5 }\nfn main(){ y = match g() { Some(v) => v, None => -1 }\n print(y) }\n' > "$TMP/ok_opt_match.wyn"
 expect_check_ok "exhaustive Some+None match still ok" "$TMP/ok_opt_match.wyn"
 
+# --- K14: assigning to a STRUCT-typed variable -------------------------------
+# FOUND BY THE FUZZER at three separate seeds. The assignment type check carried
+# an explicit `sym_inner->kind != TYPE_STRUCT` clause, so once a variable held a
+# struct it accepted ANY later assignment and only the C compiler objected:
+#
+#     m = A { n: 1 }
+#     m = 860           # wyn check: no errors
+#     -> error: assigning to 'A' from incompatible type 'int'
+#
+# Verified for int, string AND a different struct - three check-passes/build-fails
+# cases. The reverse direction (int target, struct value) was ALREADY rejected and
+# same-struct assignment is fine, so the hole was exactly this one direction.
+printf 'struct A { n: int }\nfn main() {\n  m = A { n: 1 }\n  m = 860\n  println(1)\n}\n' > "$TMP/sa_int.wyn"
+expect_check_error "struct variable reassigned to int is rejected" "$TMP/sa_int.wyn" "Type mismatch in assignment"
+
+printf 'struct A { n: int }\nfn main() {\n  m = A { n: 1 }\n  m = "x"\n  println(1)\n}\n' > "$TMP/sa_str.wyn"
+expect_check_error "struct variable reassigned to string is rejected" "$TMP/sa_str.wyn" "Type mismatch in assignment"
+
+printf 'struct A { n: int }\nstruct B { s: string }\nfn main() {\n  m = A { n: 1 }\n  m = B { s: "x" }\n  println(1)\n}\n' > "$TMP/sa_other.wyn"
+expect_check_error "struct variable reassigned to a DIFFERENT struct is rejected" "$TMP/sa_other.wyn" "Type mismatch in assignment"
+
+# The fuzzer's actual shape: first assignment inside a block, conflicting one after.
+# Wyn hoists bare assignments to function scope, so these are ONE variable - which
+# is why it built a struct and then stored an int into it.
+printf 'struct S0 { flag: float }\nfn main() {\n  if 1 == 1 {\n    m = S0 { flag: 2.5 }\n    println(m.flag)\n  }\n  m = 860\n  println(m)\n}\n' > "$TMP/sa_block.wyn"
+expect_check_error "conflict across a block is rejected (hoisted variable)" "$TMP/sa_block.wyn" "Type mismatch in assignment"
+
+# Over-rejection guards. This check sits on EVERY assignment, so the accepted cases
+# matter more than the rejected ones.
+printf 'struct A { n: int }\nfn main() {\n  m = A { n: 1 }\n  m = A { n: 2 }\n  println(m.n)\n}\n' > "$TMP/ok_same_struct.wyn"
+expect_check_ok "reassigning the SAME struct type still ok" "$TMP/ok_same_struct.wyn"
+printf 'struct A { n: int }\nfn mk() -> A { return A { n: 7 } }\nfn main() {\n  m = A { n: 1 }\n  m = mk()\n  println(m.n)\n}\n' > "$TMP/ok_fn_ret.wyn"
+expect_check_ok "reassigning from a function returning that struct still ok" "$TMP/ok_fn_ret.wyn"
+printf 'fn g(y: bool) -> int? {\n  if y { return Some(3) }\n  return None\n}\nfn main() {\n  var o = g(true)\n  o = g(false)\n  match o { Some(v) => { println(v) } None => { println("n") } }\n}\n' > "$TMP/ok_opt_reassign.wyn"
+expect_check_ok "reassigning an Option (a TYPE_STRUCT family) still ok" "$TMP/ok_opt_reassign.wyn"
+
 echo ""; echo "checker-soundness: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]
