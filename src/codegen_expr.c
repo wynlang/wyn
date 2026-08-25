@@ -2716,6 +2716,18 @@ void codegen_expr(Expr* expr) {
                             emit("hashmap_set(");
                         } else if (method.length == 3 && memcmp(method.start, "has", 3) == 0) {
                             emit("hashmap_has(");
+                        // set_int / set_string / set_float / set_bool: the runtime
+                        // spells these hashmap_insert_*, so the blanket
+                        // `hashmap_<method>` mangling below emitted hashmap_set_int
+                        // and friends - undeclared, so a program using the obvious
+                        // name (`set` and `get_int` both exist) passed `wyn check`
+                        // and failed the C compile. types.c registers map.set_int
+                        // as a real method, so the checker was right to accept it.
+                        } else if ((method.length == 7 && memcmp(method.start, "set_int", 7) == 0) ||
+                                   (method.length == 10 && memcmp(method.start, "set_string", 10) == 0) ||
+                                   (method.length == 9 && memcmp(method.start, "set_float", 9) == 0) ||
+                                   (method.length == 8 && memcmp(method.start, "set_bool", 8) == 0)) {
+                            emit("hashmap_insert_%.*s(", method.length - 4, method.start + 4);
                         } else {
                             emit("hashmap_%.*s(", method.length, method.start);
                         }
@@ -3840,16 +3852,20 @@ void codegen_expr(Expr* expr) {
                     emit(")");
                     break;
                 }
-                // Json-style methods on map-typed objects
-                if (strcmp(method_name, "set_string") == 0 && expr->method_call.arg_count == 2) {
-                    emit("json_set_string(");
-                    codegen_expr(expr->method_call.object);
-                    emit(", "); codegen_expr(expr->method_call.args[0]);
-                    emit(", "); codegen_expr(expr->method_call.args[1]);
-                    emit(")"); break;
-                }
-                if (strcmp(method_name, "set_int") == 0 && expr->method_call.arg_count == 2) {
-                    emit("json_set_int(");
+                // TYPED SETTERS ON A MAP: hashmap_insert_*, NOT json_set_*.
+                // These four used to emit json_set_string / json_set_int, handing a
+                // WynHashMap* to a function that writes through it as a WynJson*.
+                // That is the SAME type confusion as #291 (where hashmap_free walked
+                // a WynJson), in the other direction, and it is not merely a wrong
+                // answer: ASan reports a heap-buffer-overflow in hashmap_len reading
+                // memory json_set_string had allocated. `m.set_int("k",7)` then
+                // HashMap.get_int -> 0, all at exit 0 and with `wyn check` clean.
+                // The GETTERS a few lines below always used hashmap_*, which is why
+                // the pair silently disagreed. set_float/set_bool had no arm at all.
+                if ((strcmp(method_name, "set_int") == 0 || strcmp(method_name, "set_string") == 0 ||
+                     strcmp(method_name, "set_float") == 0 || strcmp(method_name, "set_bool") == 0) &&
+                    expr->method_call.arg_count == 2) {
+                    emit("hashmap_insert_%s(", method_name + 4);   // set_X -> insert_X
                     codegen_expr(expr->method_call.object);
                     emit(", "); codegen_expr(expr->method_call.args[0]);
                     emit(", "); codegen_expr(expr->method_call.args[1]);
