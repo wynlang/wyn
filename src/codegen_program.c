@@ -1899,12 +1899,68 @@ void codegen_match_statement(Stmt* stmt) {
             }
         }
         
-        // Check if this is a Result match (Ok/Err patterns). A user data enum
-        // (is_data_enum_match) is NEVER an Option/Result - the parser marks any
-        // prefixed data-carrying variant with option.is_some, which otherwise
-        // misroutes `match e { A(n) => ... }` into the hardcoded OptionInt shape.
+        // A USER ENUM IS NEVER AN Option/Result, whether or not it carries
+        // payloads. `Ok`, `Err`, `Some` and `None` are ordinary identifiers (the
+        // lexer dropped TOKEN_OK/TOKEN_ERR precisely so they could be used as
+        // names), so all four are legal - and natural - variant names:
+        //
+        //     enum Verdict { Ok, Over }
+        //     match v { Verdict::Ok => ... }   // wyn check: no errors
+        //     -> error: initializing 'ResultInt' with an expression of
+        //        incompatible type 'Verdict'
+        //
+        // because the two flags below were decided from the arm's variant NAME
+        // alone, never consulting the scrutinee, so the temp was declared
+        // ResultInt and the arms tested `.tag`. The existing !is_data_enum_match
+        // guard was this same bug found for PAYLOAD-CARRYING enums and fixed only
+        // for them; a dataless enum still fell through. The bare-arm spelling
+        // (`match v { Ok => .. }`) always worked, because a bare variant is a
+        // PATTERN_IDENT rather than a PATTERN_OPTION with a variant_name - which
+        // is why one spelling of the same match built and the other did not.
+        //
+        // Anything the scrutinee or the arms identify as a user enum is therefore
+        // excluded here, not just the data-carrying subset.
+        // The test is deliberately strict: the prefix must name an enum DECLARED IN
+        // THIS PROGRAM, and that enum must actually declare the arm's variant.
+        // `is_enum_type(prefix)` alone was not enough - a bare `Ok(v)` pattern
+        // carries a prefix that satisfies it, so every genuine Result match took
+        // the user-enum path and failed ("invalid operands to binary expression
+        // ('ResultInt' and 'ResultInt (int)')"). Requiring the variant to belong to
+        // a user-declared enum cannot be satisfied by the builtin families.
+        bool arms_name_user_enum = false;
+        for (int i = 0; i < stmt->match_stmt.case_count && !arms_name_user_enum; i++) {
+            MatchCase* mc = &stmt->match_stmt.cases[i];
+            if (!mc->pattern || mc->pattern->type != PATTERN_OPTION) continue;
+            if (mc->pattern->option.enum_name.length == 0) continue;
+            if (mc->pattern->option.variant_name.length == 0) continue;
+            Token en = mc->pattern->option.enum_name;
+            Token vn = mc->pattern->option.variant_name;
+            for (int si = 0; si < current_program->count; si++) {
+                Stmt* s = current_program->stmts[si];
+                if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+                if (s->type != STMT_ENUM) continue;
+                if (s->enum_decl.name.length != en.length ||
+                    memcmp(s->enum_decl.name.start, en.start, en.length) != 0) continue;
+                for (int vi = 0; vi < s->enum_decl.variant_count; vi++) {
+                    if (s->enum_decl.variants[vi].length == vn.length &&
+                        memcmp(s->enum_decl.variants[vi].start, vn.start, vn.length) == 0) {
+                        arms_name_user_enum = true; break;
+                    }
+                }
+                break;
+            }
+        }
+        // NOTE: is_enum_match is deliberately NOT part of this. It is also set by
+        // an arm-name fallback that resolves a bare `Ok(v)` to the builtin Result
+        // enum, so including it made every GENUINE `match r { Ok(v) => .. }` take
+        // the user-enum path and fail with "use of undeclared identifier 'Ok'".
+        // Only an explicit `E::Ok` / `E.Ok` prefix naming a real enum is decisive,
+        // and that is exactly the spelling that was broken.
+        bool not_builtin_family = is_data_enum_match || arms_name_user_enum;
+
+        // Check if this is a Result match (Ok/Err patterns).
         bool is_result_match = false;
-        if (!is_data_enum_match)
+        if (!not_builtin_family)
         for (int i = 0; i < stmt->match_stmt.case_count; i++) {
             MatchCase* mc = &stmt->match_stmt.cases[i];
             if (mc->pattern->type == PATTERN_OPTION && mc->pattern->option.variant_name.length > 0) {
@@ -1917,9 +1973,10 @@ void codegen_match_statement(Stmt* stmt) {
         }
         
         // Check if this is an Option match (Some/None patterns). Same guard as
-        // above: a user data enum is not an Option.
+        // above, and for the same reason: `enum Cache { None, Warm }` is a user
+        // enum, not an Option.
         bool is_option_match = false;
-        if (!is_data_enum_match)
+        if (!not_builtin_family)
         for (int i = 0; i < stmt->match_stmt.case_count; i++) {
             MatchCase* mc = &stmt->match_stmt.cases[i];
             if (mc->pattern->type == PATTERN_OPTION) {

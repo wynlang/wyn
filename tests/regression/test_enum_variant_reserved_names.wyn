@@ -1,0 +1,124 @@
+// A user enum may name a variant Ok, Err, Some or None. The lexer deliberately
+// dropped TOKEN_OK/TOKEN_ERR ("let ok be a regular identifier") so these are
+// ordinary identifiers, and they are natural variant names - `enum Verdict { Ok,
+// Over }`, `enum Cache { None, Warm }`. All four failed to BUILD after `wyn check`
+// reported no errors:
+//
+//     enum Verdict { Ok, Over }
+//     match v { Verdict::Ok => .. Verdict::Over => .. }
+//     -> error: initializing 'ResultInt' with an expression of incompatible
+//        type 'Verdict'
+//
+// codegen_match_statement decided `is_result_match` / `is_option_match` from the
+// arm's variant NAME alone, never consulting the scrutinee, so the temp was
+// declared ResultInt and the arms tested `.tag`. Its `!is_data_enum_match` guard
+// was this same bug found for PAYLOAD-CARRYING enums and fixed only for them.
+//
+// Note which spelling broke: the QUALIFIED arm (`Verdict::Ok`, `Verdict.Ok`)
+// failed while the BARE arm (`Ok =>`) always worked, because a bare variant is a
+// PATTERN_IDENT rather than a PATTERN_OPTION carrying a variant_name. Two
+// spellings of one match, one building and one not.
+//
+// The guard now requires the arm's prefix to name an enum DECLARED IN THIS PROGRAM
+// that actually declares that variant. A looser test (`is_enum_type(prefix)`)
+// regressed every genuine `match r { Ok(v) => .. }`, because a bare Ok pattern
+// carries a prefix that satisfies it - hence the genuine-Result arms below, which
+// are the guard against over-reach and matter as much as the new cases.
+//
+// EXPECT: verdict=OK
+// EXPECT: verdict=OVER
+// EXPECT: err-variant=E1
+// EXPECT: cache=None
+// EXPECT: cache=Warm
+// EXPECT: some-variant=S
+// EXPECT: dot=OK
+// EXPECT: bare=OK
+// EXPECT: real ok 7
+// EXPECT: real err boom
+// EXPECT: real some 5
+// EXPECT: real none
+// EXPECT: payload Circle 2
+
+enum Verdict { Ok, Over }
+enum Fail { E1, E2 }
+enum Cache { None, Warm }
+enum Pick { Some, Other }
+enum Shape { Circle(int), Square(int) }
+
+fn verdict_text(v: Verdict) -> string {
+    match v {
+        Verdict::Ok => { return "OK" }
+        Verdict::Over => { return "OVER" }
+    }
+}
+
+// Genuine Result / Option, which must keep working: these are the over-reach guard.
+fn real(ok: bool) -> Result<int, string> {
+    if ok { return Ok(7) }
+    return Err("boom")
+}
+
+fn maybe(y: bool) -> int? {
+    if y { return Some(5) }
+    return None
+}
+
+fn main() {
+    // `Ok` as a user variant, through a function boundary and a match.
+    println("verdict=${verdict_text(Verdict::Ok)}")
+    println("verdict=${verdict_text(Verdict::Over)}")
+
+    // `Err` as a user variant.
+    var f = Fail::E1
+    match f {
+        Fail::E1 => { println("err-variant=E1") }
+        Fail::E2 => { println("err-variant=E2") }
+    }
+
+    // `None` as a user variant - the Option side of the same defect.
+    var c = Cache::None
+    match c {
+        Cache::None => { println("cache=None") }
+        Cache::Warm => { println("cache=Warm") }
+    }
+    c = Cache::Warm
+    match c {
+        Cache::None => { println("cache=None") }
+        Cache::Warm => { println("cache=Warm") }
+    }
+
+    // `Some` as a user variant.
+    var p = Pick::Some
+    match p {
+        Pick::Some => { println("some-variant=S") }
+        Pick::Other => { println("some-variant=O") }
+    }
+
+    // The DOT spelling of a qualified arm failed identically.
+    var v2 = Verdict.Ok
+    match v2 {
+        Verdict.Ok => { println("dot=OK") }
+        Verdict.Over => { println("dot=OVER") }
+    }
+
+    // The BARE spelling always worked - keep it that way.
+    var v3 = Verdict::Ok
+    match v3 {
+        Ok => { println("bare=OK") }
+        Over => { println("bare=OVER") }
+    }
+
+    // Genuine Result and Option matches: the guard against over-reach.
+    match real(true)  { Ok(v) => { println("real ok ${v}") }  Err(e) => { println("real err ${e}") } }
+    match real(false) { Ok(v) => { println("real ok ${v}") }  Err(e) => { println("real err ${e}") } }
+    match maybe(true)  { Some(v) => { println("real some ${v}") } None => { println("real none") } }
+    match maybe(false) { Some(v) => { println("real some ${v}") } None => { println("real none") } }
+
+    // A payload-carrying user enum still lowers through the data-enum path, which
+    // the pre-existing !is_data_enum_match guard covered.
+    var s = Shape::Circle(2)
+    match s {
+        Shape::Circle(n) => { println("payload Circle ${n}") }
+        Shape::Square(n) => { println("payload Square ${n}") }
+    }
+}
