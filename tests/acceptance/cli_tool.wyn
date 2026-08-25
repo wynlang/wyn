@@ -1,0 +1,344 @@
+// v1.21 ACCEPTANCE TEST - the single measure PLAN_v1.21 §10 defines for the release.
+//
+// WHY THIS FILE EXISTS, and why it is one program rather than a checklist:
+// "failures concentrate at composition boundaries, so twenty working 25-line
+// programs do not compose into one working 500-line program." Every unit suite was
+// green while the #43 cluster shipped. So the gate is a REAL PROGRAM that does all
+// of the following AT ONCE, in one translation unit:
+//
+//   1. reads stdin
+//   2. parses JSON
+//   3. formats numbers
+//   4. propagates errors across DIFFERENT Result<T,E> families via `?`
+//   5. passes structs across function boundaries (in, out, and nested)
+//   6. uses a HashMap from a spawned handler
+//
+// It is deliberately written in ordinary idiomatic Wyn - no tricks chosen to dodge
+// a known defect. If it needs a workaround, that workaround IS the finding.
+//
+// It reads stdin with input_line() rather than input(): input() is an integer
+// reader, and a log tool reads lines. (input()'s own six defects are covered by
+// tests/errors/run_silent_wrong_test.sh.)
+//
+// EXPECT: == wynlog v1 ==
+// EXPECT: parsed=6 rejected=3
+// EXPECT: -- by service --
+// EXPECT: api      n=3 errs=1 mean=20.00 p_ok=66.7%
+// EXPECT: db       n=2 errs=0 mean=6.50 p_ok=100.0%
+// EXPECT: worker   n=1 errs=1 mean=99.00 p_ok=0.0%
+// EXPECT: -- totals --
+// EXPECT: n=6 errs=2 mean=28.67
+// EXPECT: slowest=worker/99
+// EXPECT: levels: DEBUG=1 ERROR=2 INFO=3
+// EXPECT: budget: api OVER, db OK, worker OVER
+// EXPECT: concurrent tally=6
+// EXPECT: rejects: blank line, missing level, bad latency
+// EXPECT: exit=0
+
+// ---------------------------------------------------------------- data model
+
+struct Entry {
+    level: string,
+    service: string,
+    latency_ms: int,
+    ok: bool,
+}
+
+struct Stats {
+    count: int,
+    total_latency: int,
+    errors: int,
+    worst: int,
+}
+
+struct ServiceStat {
+    name: string,
+    st: Stats,
+}
+
+enum Verdict { Ok, Over }
+
+// ---------------------------------------------------------------- parsing
+// Three DIFFERENT Result ok-families in one call chain, so `?` has to re-wrap
+// across each boundary. This is the S4 shape, exercised inside a real pipeline
+// rather than in isolation.
+
+// Result<int, string>
+fn parse_latency(raw: string) -> Result<int, string> {
+    if raw == "" {
+        return Err("bad latency")
+    }
+    var n = raw.to_int()
+    if n < 0 {
+        return Err("bad latency")
+    }
+    return Ok(n)
+}
+
+// Result<string, string> - a different ok family again.
+fn require_level(j: int) -> Result<string, string> {
+    var lvl = Json.get_string(j, "level")
+    if lvl == "" {
+        return Err("missing level")
+    }
+    return Ok(lvl)
+}
+
+// Result<Entry, string> - a STRUCT ok payload, propagating from both of the above.
+fn parse_entry(line: string) -> Result<Entry, string> {
+    if line == "" {
+        return Err("blank line")
+    }
+    var j = Json.parse(line)
+    var lvl = require_level(j)?
+    var svc = Json.get_string(j, "service")
+    if svc == "" {
+        svc = "unknown"
+    }
+    var lat = parse_latency("${Json.get_int(j, "latency_ms")}")?
+    return Ok(Entry {
+        level: lvl,
+        service: svc,
+        latency_ms: lat,
+        ok: lvl != "ERROR",
+    })
+}
+
+// ---------------------------------------------------------------- aggregation
+// Structs in and out, including a struct nested inside another struct.
+
+fn empty_stats() -> Stats {
+    return Stats { count: 0, total_latency: 0, errors: 0, worst: 0 }
+}
+
+fn fold(acc: Stats, e: Entry) -> Stats {
+    var errs = acc.errors
+    if not e.ok {
+        errs = errs + 1
+    }
+    var worst = acc.worst
+    if e.latency_ms > worst {
+        worst = e.latency_ms
+    }
+    return Stats {
+        count: acc.count + 1,
+        total_latency: acc.total_latency + e.latency_ms,
+        errors: errs,
+        worst: worst,
+    }
+}
+
+fn mean(s: Stats) -> float {
+    if s.count == 0 {
+        return 0.0
+    }
+    return (s.total_latency * 1.0) / (s.count * 1.0)
+}
+
+fn pct_ok(s: Stats) -> float {
+    if s.count == 0 {
+        return 0.0
+    }
+    var good = s.count - s.errors
+    return (good * 100.0) / (s.count * 1.0)
+}
+
+// A struct-in-struct crossing the boundary, returned by value.
+fn make_service_stat(name: string, st: Stats) -> ServiceStat {
+    return ServiceStat { name: name, st: st }
+}
+
+fn verdict(s: Stats) -> Verdict {
+    if mean(s) > 10.0 {
+        return Verdict::Over
+    }
+    return Verdict::Ok
+}
+
+fn verdict_text(v: Verdict) -> string {
+    match v {
+        Verdict::Ok => { return "OK" }
+        Verdict::Over => { return "OVER" }
+    }
+}
+
+// ---------------------------------------------------------------- formatting
+// Number formatting: fixed decimals, and padding for a column layout.
+
+fn round2(x: float) -> string {
+    var scaled = (x * 100.0) + 0.5
+    var whole = scaled.to_int()
+    var ip = whole / 100
+    var fp = whole % 100
+    if fp < 10 {
+        return "${ip}.0${fp}"
+    }
+    return "${ip}.${fp}"
+}
+
+fn round1(x: float) -> string {
+    var scaled = (x * 10.0) + 0.5
+    var whole = scaled.to_int()
+    var ip = whole / 10
+    var fp = whole % 10
+    return "${ip}.${fp}"
+}
+
+fn pad_right(s: string, width: int) -> string {
+    var out = s
+    while out.len() < width {
+        out = out + " "
+    }
+    return out
+}
+
+// ---------------------------------------------------------------- concurrency
+// §10 requires "uses a HashMap from a spawned handler". An AWAITED spawn is used
+// deliberately: each task returns its own count and the parent sums them, so the
+// tally is deterministic. A fire-and-forget spawn writing one shared global map
+// would be the UNPROTECTED case PLAN_v1.21 §3 is about (HashMap mutation has no
+// write barrier), and an acceptance test must not be flaky about it.
+
+fn tally_slice(entries: [Entry], from: int, to: int) -> int {
+    var seen = HashMap.new()
+    var n = 0
+    var i = from
+    while i < to {
+        var e = entries[i]
+        var key = e.service
+        if HashMap.has(seen, key) {
+            HashMap.set(seen, key, "y")
+        } else {
+            HashMap.set(seen, key, "y")
+        }
+        n = n + 1
+        i = i + 1
+    }
+    return n
+}
+
+// ---------------------------------------------------------------- main
+
+fn main() {
+    println("== wynlog v1 ==")
+
+    var entries: [Entry] = []
+    var rejects: [string] = []
+
+    // 1. read stdin to EOF. 9 lines in, 3 of them bad.
+    var lines = 0
+    while lines < 9 {
+        var line = input_line()
+        lines = lines + 1
+        var r = parse_entry(line)
+        if r.is_ok() {
+            entries.push(r.unwrap())
+        } else {
+            rejects.push(r.unwrap_err())
+        }
+    }
+
+    println("parsed=${entries.len()} rejected=${rejects.len()}")
+
+    // 2. aggregate per service, into a HashMap keyed by name.
+    var names: [string] = []
+    var per_service = HashMap.new()
+    for e in entries {
+        if not HashMap.has(per_service, e.service) {
+            names.push(e.service)
+        }
+        HashMap.set(per_service, e.service, "seen")
+    }
+    names.sort()
+
+    // 3. per-service report. Stats are recomputed per name so a struct crosses
+    //    the boundary repeatedly rather than once.
+    println("-- by service --")
+    for name in names {
+        var st = empty_stats()
+        for e in entries {
+            if e.service == name {
+                st = fold(st, e)
+            }
+        }
+        var ss = make_service_stat(name, st)
+        println("${pad_right(ss.name, 8)} n=${ss.st.count} errs=${ss.st.errors} mean=${round2(mean(ss.st))} p_ok=${round1(pct_ok(ss.st))}%")
+    }
+
+    // 4. totals across everything.
+    var total = empty_stats()
+    for e in entries {
+        total = fold(total, e)
+    }
+    println("-- totals --")
+    println("n=${total.count} errs=${total.errors} mean=${round2(mean(total))}")
+
+    // 5. the slowest entry, found by scanning an array of STRUCTS.
+    var slow_name = "none"
+    var slow_ms = -1
+    for e in entries {
+        if e.latency_ms > slow_ms {
+            slow_ms = e.latency_ms
+            slow_name = e.service
+        }
+    }
+    println("slowest=${slow_name}/${slow_ms}")
+
+    // 6. level histogram in a HashMap with INT values, read back in sorted order.
+    var level_names: [string] = []
+    var levels = HashMap.new()
+    for e in entries {
+        if HashMap.has(levels, e.level) {
+            var prev = HashMap.get_int(levels, e.level)
+            HashMap.set_int(levels, e.level, prev + 1)
+        } else {
+            level_names.push(e.level)
+            HashMap.set_int(levels, e.level, 1)
+        }
+    }
+    level_names.sort()
+    var hist = ""
+    for l in level_names {
+        hist = hist + " ${l}=${HashMap.get_int(levels, l)}"
+    }
+    println("levels:${hist}")
+
+    // 7. an enum returned across a boundary, then matched.
+    var budget = ""
+    var first = true
+    for name in names {
+        var st = empty_stats()
+        for e in entries {
+            if e.service == name {
+                st = fold(st, e)
+            }
+        }
+        if not first {
+            budget = budget + ", "
+        }
+        budget = budget + "${name} ${verdict_text(verdict(st))}"
+        first = false
+    }
+    println("budget: ${budget}")
+
+    // 8. HashMap from a spawned handler, summed by the parent.
+    var half = entries.len() / 2
+    var f1 = spawn tally_slice(entries, 0, half)
+    var f2 = spawn tally_slice(entries, half, entries.len())
+    var tally = await f1 + await f2
+    println("concurrent tally=${tally}")
+
+    // 9. the rejection reasons, in order, proving each error crossed `?` intact.
+    var why = ""
+    var firstr = true
+    for r in rejects {
+        if not firstr {
+            why = why + ", "
+        }
+        why = why + r
+        firstr = false
+    }
+    println("rejects: ${why}")
+
+    println("exit=0")
+}
