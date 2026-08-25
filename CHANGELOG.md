@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.21.0 (2026-08-25) - "The Soundness Release"
+## v1.21.0 (2026-08-26) - "The Soundness Release"
 
 **If a program passes `wyn check`, it must build.** That was the theme, and it is what
 most of this release is: **87 fixes and 7 features**, the large majority closing cases
