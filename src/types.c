@@ -58,6 +58,17 @@ static const MethodSignature method_signatures[] = {
     {"json", "get_float", "float", 1},       // Get float value by key
     {"json", "get_bool", "bool", 1},         // Get bool value by key
     {"json", "free", "void", 0},             // Free JSON object
+    // The WRITERS were missing from this table and from dispatch_method below,
+    // and a json method absent from BOTH emits nothing at all - so
+    // `j.set_int("i", 1)` lowered to an empty statement and `j.stringify()` came
+    // back `{}` with the writes silently gone, at exit 0. In expression position
+    // the same gap produced `long long v = ;` -> "expected expression". The
+    // readers were present, which is why half the surface worked. See the
+    // matching entries in dispatch_method for the C functions.
+    {"json", "set_string", "void", 2},       // Set string value by key
+    {"json", "set_int", "void", 2},          // Set int value by key
+    {"json", "set_bool", "void", 2},         // Set bool value by key
+    {"json", "stringify", "string", 0},      // Serialize to JSON text
     
     // HTTP methods (URL is a string)
     {"string", "http_get", "string", 0},     // GET request, returns response body
@@ -539,9 +550,30 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "free") == 0 && arg_count == 0) {
             out->c_function = "json_free"; return true;
         }
+        // The writers. Capital-J `Json_set_*` / `Json_stringify` are the wrappers
+        // that take a `WynJson*`, which is what TYPE_JSON lowers to - the same
+        // functions the WORKING namespace spelling (`Json.set_int(j, ..)`) already
+        // used, so the two spellings now agree by construction.
+        //
+        // has/keys are deliberately NOT here: `Json_has` and `Json_keys` take a
+        // `long long` index into json_nodes[], the OTHER half of Json's documented
+        // two-representation split, so wiring them to a WynJson* receiver would
+        // trade a missing call for a type confusion. They stay namespace-only.
+        if (strcmp(method_name, "set_string") == 0 && arg_count == 2) {
+            out->c_function = "Json_set_string"; return true;
+        }
+        if (strcmp(method_name, "set_int") == 0 && arg_count == 2) {
+            out->c_function = "Json_set_int"; return true;
+        }
+        if (strcmp(method_name, "set_bool") == 0 && arg_count == 2) {
+            out->c_function = "Json_set_bool"; return true;
+        }
+        if (strcmp(method_name, "stringify") == 0 && arg_count == 0) {
+            out->c_function = "Json_stringify"; return true;
+        }
         return false;
     }
-    
+
     if (strcmp(receiver_type, "int") == 0) {
         // Integer methods
         if (strcmp(method_name, "to_string") == 0 && arg_count == 0) {
