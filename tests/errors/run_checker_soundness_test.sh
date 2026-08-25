@@ -46,7 +46,10 @@ expect_runs() {
     out=$(perl -e 'alarm(90); exec @ARGV' -- "$WYN" build "$file" -o "${file%.wyn}.bin" 2>&1); rc=$?
     if [ $rc -ne 0 ] || echo "$out" | grep -q "Build failed"; then
         bad "$name (check passed but BUILD FAILED) [$(echo "$out" | grep -m1 'error:')]"; return; fi
-    out=$(perl -e 'alarm(30); exec @ARGV' -- "${file%.wyn}.bin" 2>&1); rc=$?
+    # Strip CR: on Windows the program's stdout is CRLF, so a multi-line `want`
+    # compared byte-for-byte fails with output that looks IDENTICAL in the log
+    # ("want [2\nV2] got [2\nV2]"), which is a genuinely confusing way to fail.
+    out=$(perl -e 'alarm(30); exec @ARGV' -- "${file%.wyn}.bin" 2>&1 | tr -d '\r'); rc=${PIPESTATUS[0]}
     if [ $rc -ne 0 ]; then bad "$name (ran rc=$rc) [$out]"; return; fi
     if [ "$out" = "$want" ]; then ok "$name"
     else bad "$name (want [$want] got [$out])"; fi
