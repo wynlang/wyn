@@ -4337,6 +4337,56 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 // Check type compatibility (considering optionality)
                 Type* sym_inner = get_inner_type(sym->type);
                 Type* val_inner = get_inner_type(val_type);
+                // The `!= TYPE_STRUCT` clause below exempted a STRUCT-typed target
+                // from ALL assignment checking, so once a variable held a struct you
+                // could assign anything to it and only the C compiler objected:
+                //
+                //   m = A { n: 1 }
+                //   m = 860          // wyn check: no errors
+                //   -> error: assigning to 'A' from incompatible type 'int'
+                //
+                // Verified for int, string AND a different struct - three
+                // check-passes/build-fails cases. The reverse (int target, struct
+                // value) was already rejected and same-struct assignment is fine, so
+                // the hole was exactly this direction. Found by the fuzzer at three
+                // separate seeds once its generator emitted structs.
+                //
+                // Deliberately narrow, because this sits on every assignment in the
+                // language: it fires only when the VALUE is a plain scalar, or when
+                // both sides are named user structs with DIFFERENT names. The
+                // monomorphic Option*/Result* families are TYPE_STRUCT too and are
+                // reassigned across family names legitimately, so they are excluded
+                // by name rather than risk rejecting correct code.
+                if (sym_inner->kind == TYPE_STRUCT && sym_inner->struct_type.name.length > 0 &&
+                    val_inner && val_inner->kind != TYPE_STRUCT) {
+                    int val_is_scalar = val_inner->kind == TYPE_INT || val_inner->kind == TYPE_FLOAT ||
+                                        val_inner->kind == TYPE_BOOL || val_inner->kind == TYPE_STRING;
+                    if (val_is_scalar) {
+                        fprintf(stderr, "\033[31m\033[1mError:\033[0m Type mismatch in assignment to '%.*s' (line %d)\n",
+                                expr->assign.name.length, expr->assign.name.start, expr->assign.name.line);
+                        fprintf(stderr, "  \033[1mExpected:\033[0m %.*s (struct)\n",
+                                sym_inner->struct_type.name.length, sym_inner->struct_type.name.start);
+                        fprintf(stderr, "  \033[1mGot:\033[0m      %s\n", type_to_string(val_inner));
+                        had_error = true;
+                        return NULL;
+                    }
+                }
+                if (sym_inner->kind == TYPE_STRUCT && val_inner && val_inner->kind == TYPE_STRUCT &&
+                    sym_inner->struct_type.name.length > 0 && val_inner->struct_type.name.length > 0) {
+                    Token sn = sym_inner->struct_type.name, vn = val_inner->struct_type.name;
+                    int same = sn.length == vn.length && memcmp(sn.start, vn.start, sn.length) == 0;
+                    int builtin_family =
+                        (sn.length >= 6 && (memcmp(sn.start, "Option", 6) == 0 || memcmp(sn.start, "Result", 6) == 0)) ||
+                        (vn.length >= 6 && (memcmp(vn.start, "Option", 6) == 0 || memcmp(vn.start, "Result", 6) == 0));
+                    if (!same && !builtin_family) {
+                        fprintf(stderr, "\033[31m\033[1mError:\033[0m Type mismatch in assignment to '%.*s' (line %d)\n",
+                                expr->assign.name.length, expr->assign.name.start, expr->assign.name.line);
+                        fprintf(stderr, "  \033[1mExpected:\033[0m %.*s (struct)\n", sn.length, sn.start);
+                        fprintf(stderr, "  \033[1mGot:\033[0m      %.*s (struct)\n", vn.length, vn.start);
+                        had_error = true;
+                        return NULL;
+                    }
+                }
                 if (sym_inner->kind != val_inner->kind &&
                     sym_inner->kind != TYPE_STRUCT) {
                     fprintf(stderr, "\033[31m\033[1mError:\033[0m Type mismatch in assignment to '%.*s' (line %d)\n",
