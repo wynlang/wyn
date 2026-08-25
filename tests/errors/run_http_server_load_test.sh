@@ -350,6 +350,77 @@ fi
 cleanup_ka
 KA_PID=""
 
+# --- A connection that sends NOTHING must not kill the server ---------------
+# ONE PACKET, UNAUTHENTICATED, AND THE SERVER IS GONE. Http_accept returned the
+# empty string when a client connected and then sent nothing, and the DOCUMENTED
+# server pattern is
+#
+#     req = Http.accept(server)
+#     fd  = req.split_at("|", 3).to_int()
+#
+# so "" reached `.to_int()`, which panics since to_int was correctly made loud
+# about bad input. Two individually-correct changes, lethal in combination: any
+# Wyn HTTP server died on the first empty connection. A port scan, a TCP health
+# check, an L4 load-balancer probe or a browser preconnect all do exactly this.
+# Nothing in the corpus checked accept for emptiness - not one example, doc
+# snippet or stdlib test - so every server shipped with it.
+#
+# Verified against the blog's flagship "REST API in 93 lines": 30 concurrent real
+# POSTs were fine, and a SINGLE connect-then-close killed it. Normal load was
+# never the trigger, which is why this survived the load gate above.
+#
+# Http_accept now skips a connection that yields no request and keeps accepting,
+# which is what every real server does.
+DOS_SRC="$TMP/dos.wyn"
+DOS_BIN="$TMP/dos.out"
+DOS_PORT=18131
+cat > "$DOS_SRC" <<EOF
+fn main() -> int {
+    server = Http.serve($DOS_PORT)
+    print("ready")
+    var n = 0
+    while n < 3 {
+        req = Http.accept(server)
+        fd = req.split_at("|", 3).to_int()
+        Http.respond(fd, 200, "text/plain", "ok")
+        n = n + 1
+    }
+    return 0
+}
+EOF
+if ! perl -e 'alarm(90); exec @ARGV' -- "$WYN" build "$DOS_SRC" -o "$DOS_BIN" >/dev/null 2>&1; then
+    bad "empty-connection: server built"
+else
+    "$DOS_BIN" > "$TMP/dos.log" 2>&1 &
+    DOS_PID=$!
+    sleep 2
+    # Three clients that connect and close without sending a byte. Before the fix
+    # the FIRST one killed the server.
+    python3 - "$DOS_PORT" <<'PY' >/dev/null 2>&1
+import socket, sys
+for _ in range(3):
+    try:
+        s = socket.create_connection(('127.0.0.1', int(sys.argv[1])), timeout=3); s.close()
+    except Exception:
+        pass
+PY
+    sleep 1
+    if grep -qi "panic" "$TMP/dos.log"; then
+        bad "empty connection must not panic the server [$(grep -i panic "$TMP/dos.log" | head -1)]"
+    elif ! kill -0 "$DOS_PID" 2>/dev/null; then
+        bad "server died on an empty connection (no panic logged)"
+    else
+        ok "a connection that sends nothing does not kill the server"
+        # And it must still serve a REAL request afterwards - skipping the dead
+        # connection is only correct if the accept loop carries on.
+        body=$(perl -e 'alarm(10); exec @ARGV' -- curl -s -m 5 "http://127.0.0.1:$DOS_PORT/" 2>/dev/null)
+        if [ "$body" = "ok" ]; then ok "server still answers a real request afterwards"
+        else bad "server still answers a real request afterwards (got [$body])"; fi
+    fi
+    kill -9 "$DOS_PID" 2>/dev/null
+    pkill -9 -f "^$DOS_BIN" 2>/dev/null
+fi
+
 echo ""
 echo "http-server-load: $PASS pass, $FAIL fail"
 [ "$FAIL" -eq 0 ] || exit 1
