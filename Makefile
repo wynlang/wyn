@@ -885,7 +885,11 @@ tsan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_tsan.a
 ifeq ($(shell uname),Darwin)
 runtime: runtime/wyn_runtime.pch
 runtime/wyn_runtime.pch: src/wyn_runtime.h
-	@$(CC) -x c-header -std=c11 -O0 -w -Wno-int-conversion -ffunction-sections -fdata-sections -I src \
+	@# -fwrapv must match the flags `wyn build` uses for the program that
+	@# INCLUDES this pch. clang hard-errors on a mismatch ("signed integer
+	@# overflow handling differs in precompiled file"), so adding -fwrapv to the
+	@# build without adding it here breaks every macOS dev-loop build.
+	@$(CC) -x c-header -std=c11 -O0 -fwrapv -w -Wno-int-conversion -ffunction-sections -fdata-sections -I src \
 		src/wyn_runtime.h -o runtime/wyn_runtime.pch 2>/dev/null && \
 		echo "Built runtime/wyn_runtime.pch ($$(du -h runtime/wyn_runtime.pch | cut -f1))" || true
 endif

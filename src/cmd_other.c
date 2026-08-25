@@ -738,9 +738,9 @@ int cmd_debug(const char* program, int argc, char** argv) {
     if (access(c_path, R_OK) == 0) {
         char rt[512]; snprintf(rt, sizeof(rt), "%s/runtime/libwyn_rt.a", wyn_root);
         if (access(rt, R_OK) == 0) {
-            snprintf(cmd, sizeof(cmd), "cc -std=c11 -g -O0 -w -I %s/src -o %s %s %s -lpthread -lm 2>/dev/null", wyn_root, bin_path, c_path, rt);
+            snprintf(cmd, sizeof(cmd), "cc -std=c11 -g -O0 -fwrapv -w -I %s/src -o %s %s %s -lpthread -lm 2>/dev/null", wyn_root, bin_path, c_path, rt);
         } else {
-            int p = snprintf(cmd, sizeof(cmd), "cc -std=c11 -g -O0 -w -I %s/src -I %s/vendor/minicoro -o %s %s ", wyn_root, wyn_root, bin_path, c_path);
+            int p = snprintf(cmd, sizeof(cmd), "cc -std=c11 -g -O0 -fwrapv -w -I %s/src -I %s/vendor/minicoro -o %s %s ", wyn_root, wyn_root, bin_path, c_path);
             extern void build_source_list(char* buf, int bufsize, const char* prefix);
             char src_list[4096]; build_source_list(src_list, sizeof(src_list), wyn_root);
             p += snprintf(cmd + p, sizeof(cmd) - p, "%s", src_list);
