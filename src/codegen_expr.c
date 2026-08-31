@@ -1558,6 +1558,18 @@ void codegen_expr(Expr* expr) {
                     codegen_skip_strdup = prev_skip;
                     break;
                 }
+                // A map has no to_string, so it used to fall through to the
+                // integer path and print the map POINTER as a decimal number -
+                // check-clean, exit 0, meaningless. One printf keeps the line
+                // atomic like the other println_* paths.
+                if (!arg_is_string && parg->expr_type &&
+                    parg->expr_type->kind == TYPE_MAP) {
+                    emit("({ const char* __pms = map_to_string(");
+                    codegen_expr(parg);
+                    emit("); printf(\"%%s\\n\", __pms); wyn_rc_release(__pms); })");
+                    codegen_skip_strdup = prev_skip;
+                    break;
+                }
                 // println(struct): print "Name { field: value, ... }" by
                 // looking up the struct declaration from current_program.
                 // Falling through to to_string(struct) passed a struct by
@@ -6075,6 +6087,12 @@ void codegen_expr(Expr* expr) {
                     extern int cg_struct_has_str_helper(Token name);
                     if (e->type == EXPR_STRING) {
                         codegen_expr(e);
+                    } else if (e->expr_type && e->expr_type->kind == TYPE_MAP) {
+                        // Same defect as println(map): to_string(map) lowered to
+                        // the integer path, so "${m}" rendered the map pointer.
+                        emit("map_to_string(");
+                        codegen_expr(e);
+                        emit(")");
                     } else if (e->expr_type && e->expr_type->kind == TYPE_STRUCT &&
                                e->expr_type->struct_type.name.length > 0 &&
                                cg_struct_has_str_helper(e->expr_type->struct_type.name)) {
