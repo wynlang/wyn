@@ -523,6 +523,7 @@ uint64_t wyn_crypto_hash64(const char* data, size_t len);
 void wyn_crypto_md5(const char* data, size_t len, char* output);
 void wyn_crypto_sha256(const char* data, size_t len, char* output);
 void wyn_sha256_raw(const unsigned char* data, size_t len, unsigned char* out32);
+void wyn_md5_raw(const unsigned char* data, size_t len, unsigned char* out16);
 void wyn_hmac_sha256_raw(const unsigned char* key, size_t keylen,
                          const unsigned char* data, size_t datalen,
                          unsigned char* out32);
@@ -5746,16 +5747,17 @@ char* Crypto_sha256(const char* data) {
     return result;
 }
 
+// Native in-process MD5 (was: popen("printf '%s' '<data>' | openssl dgst -md5 ...")
+// which snprintf'd caller data into a shell command and was reachable from
+// wyn-check-clean code - RCE via a single-quote in the input). Real MD5 lives
+// in stdlib_crypto.c and is exposed as wyn_md5_raw(). The pattern here mirrors
+// Crypto_sha256 above.
 char* Crypto_md5(const char* data) {
-    char cmd[4096];
-    snprintf(cmd, sizeof(cmd), "printf '%%s' '%s' | openssl dgst -md5 -hex 2>/dev/null | awk '{print $NF}'", data);
-    FILE* fp = popen(cmd, "r");
-    if (!fp) return "";
-    char* result = wyn_malloc(33); result[0] = 0;
-    fgets(result, 33, fp);
-    pclose(fp);
-    int len = strlen(result);
-    if (len > 0 && result[len-1] == '\n') result[len-1] = 0;
+    unsigned char digest[16];
+    wyn_md5_raw((const unsigned char*)data, strlen(data), digest);
+    char* result = wyn_str_alloc(32);
+    for (int i = 0; i < 16; i++) snprintf(result + i*2, 3, "%02x", digest[i]);
+    wyn_rc_set_length(result, 32);
     return result;
 }
 
