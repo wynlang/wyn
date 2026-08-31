@@ -55,7 +55,15 @@ static inline void* wyn_realloc(void* p, size_t n) { void* q = realloc(p, n); if
 // known up front (e.g. DB query result rows, JSON key lists). Replaces
 // fixed-capacity buffers + unbounded strcat, which overflow on large inputs.
 // Placed after <string.h> so memcpy/strlen are declared.
+#ifndef WYN_STRBUF_DEFINED
+#define WYN_STRBUF_DEFINED
 typedef struct { char* buf; size_t len; size_t cap; } WynStrBuf;
+#endif
+// Mirrored in wyn_runtime_slim.h (which --release includes instead). Both carry
+// this assertion so a layout change in either fails the build rather than
+// corrupting a stack frame across the archive boundary.
+_Static_assert(sizeof(WynStrBuf) == sizeof(char*) + 2 * sizeof(size_t),
+               "WynStrBuf layout diverged from wyn_runtime_slim.h");
 static inline void wyn_sb_init(WynStrBuf* sb) {
     sb->cap = 256; sb->len = 0; sb->buf = wyn_malloc(sb->cap); sb->buf[0] = 0;
 }
@@ -2443,6 +2451,89 @@ void print_str_no_nl(const char* s) { printf("%s", s); }
 void print_bool_no_nl(bool b) { printf("%s", b ? "true" : "false"); }
 // Print one array element by its actual stored type (was always %lld, so string
 // arrays printed as [0, 0, 0]). Strings are quoted like Python's repr in a list.
+// === print(): buffer everything, emit in ONE write ===
+//
+// Multi-argument print() used to emit one libc call per argument plus another
+// for the terminator. libc locks a single printf per-FILE but NOT a sequence of
+// them, so concurrent spawns interleaved mid-line. Measured on v1.21.0, 8 spawns
+// x 200 lines of 40 chars: print() produced 362-690 malformed lines out of 1600
+// on every run, while single-argument println() produced 0 in 5 of 5 runs -
+// because println_* already emits value+newline in one call (see the comment
+// above println_int).
+//
+// This is the same fix generalised to the variadic case. It deliberately does
+// NOT use flockfile(stdout): a print argument may contain an `await`
+// (`print("v=", await f)` compiles and runs), so holding stdout's lock across a
+// coroutine yield could deadlock against another task's print. Buffering holds
+// no lock at all - the buffer is local to the task.
+typedef struct { WynStrBuf sb; } WynOut;
+
+void wyn_out_begin(WynOut* o) { wyn_sb_init(&o->sb); }
+void wyn_out_str(WynOut* o, const char* s) { wyn_sb_append(&o->sb, s ? s : ""); }
+void wyn_out_int(WynOut* o, long long v) {
+    char b[24]; int n = snprintf(b, sizeof(b), "%lld", v); wyn_sb_append_n(&o->sb, b, (size_t)n);
+}
+void wyn_out_float(WynOut* o, double v) {
+    char b[40]; wyn_format_float(b, sizeof(b), v); wyn_sb_append(&o->sb, b);
+}
+void wyn_out_bool(WynOut* o, bool v) { wyn_sb_append(&o->sb, v ? "true" : "false"); }
+// Buffered twin of print_array_elem below. The two switches must stay in step:
+// the first version of THIS function omitted WYN_TYPE_BOOL and fell through to
+// the integer case, so print([true, false]) printed [1, 0] while
+// print_array_elem printed [true, false] (caught by
+// tests/regression/test_float_bool_arrays.wyn). Their agreement is pinned by
+// tests/regression/test_print_array_parity.wyn - collapsing them into one
+// function is NOT the answer, see the comment on print_array_elem.
+void wyn_out_elem(WynOut* o, WynValue v) {
+    switch (v.type) {
+        case WYN_TYPE_STRING: wyn_sb_append_n(&o->sb, "\"", 1);
+                              wyn_sb_append(&o->sb, v.data.string_val ? v.data.string_val : "");
+                              wyn_sb_append_n(&o->sb, "\"", 1); break;
+        case WYN_TYPE_FLOAT:  wyn_out_float(o, v.data.float_val); break;
+        case WYN_TYPE_BOOL:   wyn_out_bool(o, v.data.int_val ? true : false); break;
+        case WYN_TYPE_INT:    wyn_out_int(o, v.data.int_val); break;
+        default:              wyn_out_int(o, v.data.int_val); break;
+    }
+}
+void wyn_out_array(WynOut* o, WynArray arr) {
+    wyn_sb_append_n(&o->sb, "[", 1);
+    for (int i = 0; i < arr.count; i++) {
+        if (i > 0) wyn_sb_append_n(&o->sb, ", ", 2);
+        wyn_out_elem(o, arr.data[i]);
+    }
+    wyn_sb_append_n(&o->sb, "]", 1);
+}
+// One write. fwrite on a byte buffer is atomic per-call against other threads
+// for the purposes that matter here: a whole line lands intact.
+void wyn_out_flush(WynOut* o) {
+    char* s = wyn_sb_finish(&o->sb);
+    if (s) {
+        size_t n = strlen(s);
+        if (n) fwrite(s, 1, n, stdout);
+        fflush(stdout);
+        wyn_rc_release(s);
+    }
+}
+#define wyn_out_append(o, x) _Generic((x), \
+    int: wyn_out_int, \
+    long: wyn_out_int, \
+    long long: wyn_out_int, \
+    float: wyn_out_float, \
+    double: wyn_out_float, \
+    char*: wyn_out_str, \
+    const char*: wyn_out_str, \
+    bool: wyn_out_bool, \
+    WynArray: wyn_out_array, \
+    default: wyn_out_int)(o, x)
+
+// Writes straight to stdout, allocation-free. wyn_out_elem() above is the
+// buffered twin used by print(); the two switches must agree, which
+// tests/regression/test_print_array_parity.wyn pins for int/float/bool/string.
+//
+// An earlier attempt routed THIS function through wyn_out_elem to have a single
+// formatter. Do not do that: it adds an RC allocation per array element on the
+// direct-print path, and it segfaulted the stdlib suite on macos-15 while
+// passing locally. Sharing the switch is not worth allocating in a printf path.
 static void print_array_elem(WynValue v) {
     switch (v.type) {
         case WYN_TYPE_STRING: printf("\"%s\"", v.data.string_val ? v.data.string_val : ""); break;
@@ -2471,6 +2562,7 @@ void print_value(WynValue v) {
     bool: print_bool_no_nl, \
     WynArray: print_array_no_nl, \
     default: print_int_no_nl)(x)
+
 
 void print_hex(int x) { printf("0x%x\n", x); }
 void print_bin(int x) { for(int i = 31; i >= 0; i--) printf("%d", (x >> i) & 1); printf("\n"); }
