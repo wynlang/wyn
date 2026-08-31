@@ -153,6 +153,21 @@ jobs:
           cd /tmp && echo 'fn main() { println("install-ok") }' > hello.wyn
           /tmp/verify/bin/wyn run hello.wyn | grep -q "install-ok"
           /tmp/verify/bin/wyn version | grep -vq "1.10.0"
+          # App.* (desktop GUI) links this prebuilt Objective-C object on macOS.
+          # Nothing in the tree built it before, so it shipped in NO release: every
+          # App program failed at the link step with
+          #   clang: error: no such file or directory: '.../src/wyn_webview.o'
+          # for every installed user, while working fine from a source checkout.
+          # The layout check alone is not enough - assert it actually LINKS, since
+          # a present-but-wrong-architecture object would pass `test -f`.
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            test -f /tmp/verify/src/wyn_webview.o
+            printf 'fn main() {\n  App.create("t", 320, 240)\n  App.html("<p>x</p>")\n}\n' > appsmoke.wyn
+            # Build only - App.run() would open a window and block a headless runner.
+            /tmp/verify/bin/wyn build appsmoke.wyn -o appsmoke.bin
+            test -x appsmoke.bin
+            echo "✅ App.* links from the packaged artifact"
+          fi
           echo "✅ artifact layout + installed-binary smoke verified"
 
       # Windows must ship the SAME layout as Unix (install.ps1 depends on it):

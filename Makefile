@@ -73,7 +73,24 @@ endif
 CFLAGS=-Wall -Wextra -std=c11 -D_GNU_SOURCE $(OPT) $(PLATFORM_CFLAGS) -DWYN_VERSION=\"$(shell cat VERSION 2>/dev/null || echo 0.0.0)$(VERSION_SUFFIX)\"
 OPTFLAGS=-O2
 
-all: wyn$(EXE_EXT) runtime
+# App module (desktop GUI) - macOS links a prebuilt Objective-C object because
+# `wyn build` shells out to clang for C, not ObjC, and cannot compile a .m itself.
+# Nothing built this before, so `src/wyn_webview.o` existed only on machines where
+# someone had run clang by hand: every release tarball shipped without it and
+# every App.* program failed at the link step with
+#   clang: error: no such file or directory: '.../src/wyn_webview.o'
+# for 100% of installed users, while working fine from a source checkout.
+# Windows compiles src/wyn_webview_win.c at link time and needs no object here.
+# Must be defined BEFORE `all:` - make expands a rule's prerequisites when the
+# rule is read, so a later assignment would silently expand to nothing.
+ifeq ($(UNAME_S),Darwin)
+WEBVIEW_OBJ := src/wyn_webview.o
+endif
+
+all: wyn$(EXE_EXT) runtime $(WEBVIEW_OBJ)
+
+src/wyn_webview.o: src/wyn_webview.m src/wyn_webview.h
+	$(CC) -ObjC -fobjc-arc -O2 -I src -c $< -o $@
 
 # Platform information
 platform-info:
