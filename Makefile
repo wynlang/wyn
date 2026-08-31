@@ -312,6 +312,8 @@ test: wyn
 	@WYN=./wyn bash tests/module_tests/run_pkg_multimodule_test.sh
 	@echo "=== Running argv-forwarding test ==="
 	@WYN=./wyn bash tests/errors/run_argv_forward_test.sh
+	@echo "=== Running print() atomicity test ==="
+	@WYN=./wyn bash tests/errors/run_print_atomicity_test.sh
 	@echo "=== Running cc-error isolation test (parallel wyn run) ==="
 	@WYN=./wyn bash tests/errors/run_cc_err_isolation_test.sh
 	@echo "=== Running unresolved-import abort test ==="

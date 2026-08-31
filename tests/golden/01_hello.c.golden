@@ -9,7 +9,7 @@ long long wyn_main();
 /* 01_hello.wyn:2 */ 
 #line 2 "01_hello.wyn"
 long long wyn_main() {
-    ({ print_no_nl("hello, world"); printf("\n"); });
+    ({ WynOut __wo; wyn_out_begin(&__wo); wyn_out_append(&__wo, "hello, world"); wyn_out_str(&__wo, "\n"); wyn_out_flush(&__wo); });
     return 0;
 }
 

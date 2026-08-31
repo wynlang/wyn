@@ -1,0 +1,54 @@
+// Regression: there are two array-element formatters in the runtime -
+// print_array_elem (writes straight to stdout, allocation-free, used by the
+// single-argument println fast path) and wyn_out_elem (buffered, used by print,
+// which must emit one fwrite so concurrent spawns cannot interleave).
+//
+// They drifted immediately: the first wyn_out_elem omitted WYN_TYPE_BOOL and fell
+// through to the integer case, so print([true, false]) gave [1, 0] while
+// println([true, false]) gave [true, false].
+//
+// Collapsing them into one function is NOT the fix - routing print_array_elem
+// through the buffer adds an RC allocation per element on a printf path and
+// segfaulted the stdlib suite on macos-15 while passing locally. So the two stay
+// separate and this test pins their agreement: for every element type, print and
+// println must render identically.
+//
+// EXPECT: [1, 2, 3]
+// EXPECT: [1, 2, 3]
+// EXPECT: [1.5, 2.5]
+// EXPECT: [1.5, 2.5]
+// EXPECT: [true, false, true]
+// EXPECT: [true, false, true]
+// EXPECT: ["a", "b"]
+// EXPECT: ["a", "b"]
+// EXPECT: []
+// EXPECT: []
+// EXPECT: [0, -1, 9223372036854775807]
+// EXPECT: [0, -1, 9223372036854775807]
+
+fn main() {
+    ints = [1, 2, 3]
+    print(ints)
+    println(ints)
+
+    floats = [1.5, 2.5]
+    print(floats)
+    println(floats)
+
+    bools = [true, false, true]
+    print(bools)
+    println(bools)
+
+    strs = ["a", "b"]
+    print(strs)
+    println(strs)
+
+    empty: [int] = []
+    print(empty)
+    println(empty)
+
+    // Edge values: zero, negative, and INT64_MAX must render the same both ways.
+    edges = [0, -1, 9223372036854775807]
+    print(edges)
+    println(edges)
+}

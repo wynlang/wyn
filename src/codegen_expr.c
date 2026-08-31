@@ -1452,13 +1452,19 @@ void codegen_expr(Expr* expr) {
                         pos[npos++] = expr->call.args[i];
                     }
 
+                    // Buffer the whole line and emit it with ONE fwrite. Emitting
+                    // per-argument interleaves across the M:N scheduler: measured
+                    // 362-690 malformed lines out of 1600 under 8 spawns, where
+                    // single-arg println (which already emits one call) gave 0.
+                    // NOT flockfile(stdout) - an argument may contain an `await`,
+                    // and holding stdout's lock across a yield can deadlock.
                     bool prev_skip = codegen_skip_strdup;
-                    emit("({ ");
+                    emit("({ WynOut __wo; wyn_out_begin(&__wo); ");
                     for (int i = 0; i < npos; i++) {
                         Expr* parg = pos[i];
                         if (i > 0) {
-                            if (sep_arg) { emit("print_no_nl("); codegen_expr(sep_arg); emit("); "); }
-                            else emit("printf(\" \"); ");
+                            if (sep_arg) { emit("wyn_out_append(&__wo, "); codegen_expr(sep_arg); emit("); "); }
+                            else emit("wyn_out_str(&__wo, \" \"); ");
                         }
                         // Per-arg escape analysis + string-temp handling, mirroring
                         // the old single-arg path: a fresh string temp (interp /
@@ -1485,16 +1491,16 @@ void codegen_expr(Expr* expr) {
                         }
                         if (_print_temp && parg->_codegen_temp_id < 0) {
                             emit("{ const char* __ps = "); codegen_expr(parg);
-                            emit("; print_no_nl(__ps); wyn_rc_release(__ps); } ");
+                            emit("; wyn_out_str(&__wo, __ps); wyn_rc_release(__ps); } ");
                         } else {
-                            emit("print_no_nl("); codegen_expr(parg); emit("); ");
+                            emit("wyn_out_append(&__wo, "); codegen_expr(parg); emit("); ");
                         }
                         codegen_skip_strdup = prev_skip;
                     }
                     // Terminator: default newline, or the given end= string.
-                    if (end_arg) { emit("print_no_nl("); codegen_expr(end_arg); emit("); "); }
-                    else emit("printf(\"\\n\"); ");
-                    emit("})");
+                    if (end_arg) { emit("wyn_out_append(&__wo, "); codegen_expr(end_arg); emit("); "); }
+                    else emit("wyn_out_str(&__wo, \"\\n\"); ");
+                    emit("wyn_out_flush(&__wo); })");
                     codegen_skip_strdup = prev_skip;
                 }
             } else if (expr->call.callee->type == EXPR_IDENT && 

@@ -556,6 +556,30 @@ void print_str_no_nl(const char* s);
 void print_bool_no_nl(bool b);
 void print_array(WynArray arr);
 void print_array_no_nl(WynArray arr);
+// print() buffers the whole line and emits ONE fwrite, so concurrent spawns
+// cannot interleave mid-line. Defined in wyn_runtime.h, exported through
+// libwyn_rt.a; declared here because --release includes this header instead.
+// WynStrBuf's layout is duplicated from wyn_runtime.h, which is the definition
+// site. C11 permits an identical typedef redeclaration, so including both headers
+// in one translation unit is safe. The _Static_assert below fails the build if
+// the two ever diverge - a silent layout mismatch would corrupt the caller's
+// stack frame, because the functions are compiled against the fat header and
+// called from code compiled against this one.
+#ifndef WYN_STRBUF_DEFINED
+#define WYN_STRBUF_DEFINED
+typedef struct { char* buf; size_t len; size_t cap; } WynStrBuf;
+#endif
+typedef struct { WynStrBuf sb; } WynOut;
+_Static_assert(sizeof(WynStrBuf) == sizeof(char*) + 2 * sizeof(size_t),
+               "WynStrBuf layout diverged from wyn_runtime.h");
+void wyn_out_begin(WynOut* o);
+void wyn_out_str(WynOut* o, const char* s);
+void wyn_out_int(WynOut* o, long long v);
+void wyn_out_float(WynOut* o, double v);
+void wyn_out_bool(WynOut* o, bool v);
+void wyn_out_elem(WynOut* o, WynValue v);
+void wyn_out_array(WynOut* o, WynArray arr);
+void wyn_out_flush(WynOut* o);
 void print_value(WynValue v);
 void print_hex(int x);
 void print_bin(int x);
@@ -1047,7 +1071,24 @@ char* array_to_string(WynArray arr);
     WynArray: print_array, \
     default: print_int_no_nl)(x)
 
-#define println(x) do { print(x); printf("\n"); } while(0)
+#define wyn_out_append(o, x) _Generic((x), \
+    int: wyn_out_int, \
+    long: wyn_out_int, \
+    long long: wyn_out_int, \
+    float: wyn_out_float, \
+    double: wyn_out_float, \
+    char*: wyn_out_str, \
+    const char*: wyn_out_str, \
+    bool: wyn_out_bool, \
+    WynArray: wyn_out_array, \
+    default: wyn_out_int)(o, x)
+
+// Was: do { print(x); printf("\n"); } while(0) - TWO libc calls, so under
+// --release println had exactly the interleaving bug the fat header fixed for
+// the default path (libc locks one printf per-FILE, not a sequence). Measured
+// on the default path: 8 spawns x 200 lines gave 362-690 malformed lines of
+// 1600 with the two-call shape, 0 with one call. Buffer, then emit once.
+#define println(x) do { WynOut __wl; wyn_out_begin(&__wl); wyn_out_append(&__wl, x); wyn_out_str(&__wl, "\n"); wyn_out_flush(&__wl); } while(0)
 
 #define to_string(x) _Generic((x), \
     int: int_to_string, \

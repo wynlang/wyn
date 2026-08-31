@@ -1,0 +1,67 @@
+// Regression: print() emitted one libc call per argument plus one for the
+// terminator. libc locks a single printf per-FILE but NOT a sequence of them, so
+// concurrent spawns interleaved mid-line. Measured on v1.21.0 with 8 spawns x 200
+// lines of 40 chars: 362-690 of 1600 lines malformed on every run, while
+// single-argument println() gave 0 in 5 of 5 (println_* already emits value plus
+// newline in one call). print() now buffers into a WynOut and emits one fwrite.
+//
+// This test pins the SEMANTICS, which the buffering must not change. The
+// interleaving itself is asserted by tests/errors/run_print_atomicity_test.sh,
+// which counts malformed lines - it cannot live here, because run_bdd.sh
+// compares output line N against EXPECT line N and hundreds of writer lines
+// would shift every position.
+//
+// Deliberately not flockfile(stdout): a print argument may contain an `await`
+// (`print("v=", await f)` compiles), and holding stdout's lock across a coroutine
+// yield can deadlock against another task's print.
+//
+// EXPECT: plain
+// EXPECT: a b c
+// EXPECT: xy
+// EXPECT: p-q
+// EXPECT: 42
+// EXPECT: 1.5
+// EXPECT: true
+// EXPECT: [1, 2, 3]
+// EXPECT: ["a", "b"]
+// EXPECT: [true, false]
+// EXPECT: [1.5, 2.5]
+// EXPECT: concat-ed
+// EXPECT: interp=7
+// EXPECT: awaited= 10
+// EXPECT: multi 1 true 2.5
+
+fn double(n: int) -> int { return n * 2 }
+
+fn main() {
+    // Single argument, the common case.
+    print("plain")
+    // Multiple positionals join with a space.
+    print("a", "b", "c")
+    // end: suppresses the newline, so the next print continues the line.
+    print("x", end: "")
+    print("y")
+    // sep: overrides the separator.
+    print("p", "q", sep: "-")
+    // Every scalar type routes through the buffered _Generic.
+    print(42)
+    print(1.5)
+    print(true)
+    // Arrays render elements by their real type; strings are quoted.
+    print([1, 2, 3])
+    print(["a", "b"])
+    // Bool and float elements: the buffered renderer omitted WYN_TYPE_BOOL in
+    // its first version and printed [1, 0]. There is now one shared
+    // wyn_out_elem, but pin both types here anyway.
+    print([true, false])
+    print([1.5, 2.5])
+    // A fresh string temp must still be released after buffering, not leaked.
+    print("concat" + "-ed")
+    n = 7
+    print("interp=${n}")
+    // An argument containing `await` must work - this is why the fix cannot be
+    // a flockfile() around the emission.
+    f = spawn double(5)
+    print("awaited=", await f)
+    print("multi", 1, true, 2.5)
+}
