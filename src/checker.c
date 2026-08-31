@@ -2532,7 +2532,24 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 } else if (strcmp(name_buf, "print") == 0 || strcmp(name_buf, "println") == 0) {
                     // print(value) or println(value) - accepts any number of arguments
                     for (int i = 0; i < expr->call.arg_count; i++) {
-                        check_expr(expr->call.args[i], scope);
+                        Type* at = check_expr(expr->call.args[i], scope);
+                        // A struct passed to print/println needs the same
+                        // __wyn_str_<Name> helper that interpolation uses, so
+                        // register it here too. Without this, codegen fell back to
+                        // an inline field-by-field printf that casts every
+                        // non-scalar field to (long long): `print(flat_struct)`
+                        // failed to build outright, and a struct with a nested
+                        // struct or array field failed for BOTH print and println,
+                        // while `"${v}"` on the same value rendered correctly.
+                        // Registered in this pass because it is the one that
+                        // necessarily visits every expression with its type
+                        // resolved, so no print site can be missed.
+                        if (at && at->kind == TYPE_STRUCT && at->struct_type.name.length > 0) {
+                            char sn[128];
+                            token_to_cstr(sn, sizeof(sn), at->struct_type.name);
+                            extern void register_interpolated_struct(const char*);
+                            register_interpolated_struct(sn);
+                        }
                     }
                     expr->expr_type = builtin_void;
                     return builtin_void;
