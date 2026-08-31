@@ -119,3 +119,4 @@ examples/*.wyn.c
 
 # Agent worktrees and session scratch - never part of the repo.
 .claude/
+fuzz_out/
