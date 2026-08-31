@@ -1489,7 +1489,27 @@ void codegen_expr(Expr* expr) {
                             !(parg->method_call.object->expr_type && parg->method_call.object->expr_type->kind == TYPE_STRING)) {
                             _print_temp = true;
                         }
-                        if (_print_temp && parg->_codegen_temp_id < 0) {
+                        // A struct argument goes through the same
+                        // __wyn_str_<Name> helper interpolation uses. Without this
+                        // the _Generic below picks `default: wyn_out_int` and casts
+                        // the struct to long long - print(struct) failed to build,
+                        // and a nested-struct or array field broke println too,
+                        // while "${v}" rendered the same value correctly. The
+                        // helper returns a fresh +1 RC string, so release it after
+                        // buffering. Guard and emission consult the same registry
+                        // (registered by the checker's print/println branch), so a
+                        // struct without a helper falls through unchanged.
+                        extern int cg_struct_has_str_helper(Token name);
+                        bool _print_struct = (!_print_temp && parg->expr_type &&
+                            parg->expr_type->kind == TYPE_STRUCT &&
+                            parg->expr_type->struct_type.name.length > 0 &&
+                            cg_struct_has_str_helper(parg->expr_type->struct_type.name));
+                        if (_print_struct) {
+                            Token _sn = parg->expr_type->struct_type.name;
+                            emit("{ const char* __pst = __wyn_str_%.*s(", _sn.length, _sn.start);
+                            codegen_expr(parg);
+                            emit("); wyn_out_str(&__wo, __pst); wyn_rc_release(__pst); } ");
+                        } else if (_print_temp && parg->_codegen_temp_id < 0) {
                             emit("{ const char* __ps = "); codegen_expr(parg);
                             emit("; wyn_out_str(&__wo, __ps); wyn_rc_release(__ps); } ");
                         } else {
@@ -1585,6 +1605,24 @@ void codegen_expr(Expr* expr) {
                     }
                     if (_psn) {
                     Token _sn = {TOKEN_IDENT, _psn, (int)strlen(_psn), 0};
+                    // Prefer the __wyn_str_<Name> helper that codegen_program
+                    // emits and interpolation already uses: it renders nested
+                    // structs, arrays and floats correctly. The inline
+                    // field-by-field printf below casts every non-scalar field to
+                    // (long long), so a struct with a nested-struct or array field
+                    // did not compile - while "${v}" on the same value worked.
+                    // One printf, so the line stays atomic like the other
+                    // println_* paths. Falls through to the inline renderer for a
+                    // struct with no helper (e.g. generic instantiations, which
+                    // cg_struct_has_str_helper excludes).
+                    extern int cg_struct_has_str_helper(Token name);
+                    if (cg_struct_has_str_helper(_sn)) {
+                        emit("({ const char* __pst = __wyn_str_%.*s(", _sn.length, _sn.start);
+                        codegen_expr(parg);
+                        emit("); printf(\"%%s\\n\", __pst); wyn_rc_release(__pst); })");
+                        codegen_skip_strdup = prev_skip;
+                        break;
+                    }
                     // Find the struct declaration to get field names and types.
                     extern Program* current_program;
                     StructStmt* _sd = NULL;
