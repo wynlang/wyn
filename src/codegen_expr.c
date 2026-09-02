@@ -243,10 +243,12 @@ static const char* wyn_option_ctor_kind(Expr* e, const char* kind) {
     return wyn_ctor_family(e->option.value ? e->option.value->expr_type : NULL, kind);
 }
 
-// Do we have a <fam>_to_string renderer for this Option/Result family? The eight
-// builtin payload families do (wyn_runtime.h, "Option / Result rendering"); a
-// monomorphic Option<Struct>/Result<Struct> family emitted per-program does NOT
-// yet, so it must keep its old path rather than call a function nobody defines.
+// Do we have a <fam>_to_string renderer for this Option/Result family? Two
+// sources: the eight builtin payload families in wyn_runtime.h, and the
+// monomorphic Option<Struct> / Option<Option…> families codegen_program emits a
+// renderer for per program (it must, because they name user types a shared
+// runtime cannot see). A Result<Struct> family still has none, so it keeps its
+// old path rather than calling a function nobody defines.
 static int cg_optlike_has_renderer(const char* fam) {
     static const char* known[] = {
         "OptionInt", "OptionString", "OptionFloat", "OptionBool",
@@ -255,6 +257,8 @@ static int cg_optlike_has_renderer(const char* fam) {
     if (!fam) return 0;
     for (size_t i = 0; i < sizeof(known) / sizeof(known[0]); i++)
         if (strcmp(fam, known[i]) == 0) return 1;
+    extern int is_registered_option_struct(const char*);
+    if (strncmp(fam, "Option", 6) == 0 && is_registered_option_struct(fam + 6)) return 1;
     return 0;
 }
 

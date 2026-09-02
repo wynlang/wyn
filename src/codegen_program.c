@@ -287,9 +287,11 @@ static void emit_struct_eq_helpers(Program* prog) {
 //             being claimed, which is what keeps this from becoming the
 //             silent-wrong class. Rendering them properly is a ROADMAP item.
 // How one struct field is rendered by its __wyn_str_ helper. FK_OPAQUE is the
-// "no string form yet" bucket (data enums, maps, sets, Json, optionals, fn
-// fields) and prints a `<Type>` placeholder rather than inventing a value.
-enum { FK_OPAQUE = 0, FK_STR, FK_BOOL, FK_INT, FK_FLOAT, FK_STRUCT, FK_ENUM, FK_ARRAY };
+// "no string form yet" bucket (data enums, maps, sets, Json, fn fields) and
+// prints a `<Type>` placeholder rather than inventing a value. FK_OPTION left
+// that bucket once the Option families got renderers: `S { a: 1, b: <?> }` for
+// a `b: int?` field now reads `S { a: 1, b: Some(2) }`.
+enum { FK_OPAQUE = 0, FK_STR, FK_BOOL, FK_INT, FK_FLOAT, FK_STRUCT, FK_ENUM, FK_ARRAY, FK_OPTION };
 
 // A PAYLOAD-LESS enum stays a plain C enum, so it renders with %lld exactly as
 // println does. A DATA enum is a tagged-union struct and has no string form yet,
@@ -371,12 +373,29 @@ static void emit_struct_str_helpers(Program* prog) {
             // repeated the type tests in each one - a field added to three of
             // the four would emit a format spec with no argument, which is a
             // wild read rather than a compile error.
-            int* kind = malloc(sizeof(int) * (sd->field_count > 0 ? sd->field_count : 1));
+            int nf = sd->field_count > 0 ? sd->field_count : 1;
+            int* kind = malloc(sizeof(int) * nf);
+            // FK_OPTION needs the field's concrete family name, so it is resolved
+            // once here alongside the kind rather than re-derived in each loop.
+            char (*ofam)[96] = malloc(sizeof(char[96]) * nf);
+            char _sdn[96]; token_to_cstr(_sdn, sizeof(_sdn), sd->name);
             for (int fi = 0; fi < sd->field_count; fi++) {
                 Expr* ft = sd->field_types[fi];
                 kind[fi] = FK_OPAQUE;
+                ofam[fi][0] = '\0';
                 if (!ft) continue;
                 if (ft->type == EXPR_ARRAY) { kind[fi] = FK_ARRAY; continue; }
+                // An `f: T?` field (or the `Option<T>` spelling) - ask the same
+                // authority the field's own lowering used, so the renderer call
+                // and the field's C type cannot disagree.
+                {
+                    char _fdn[96]; token_to_cstr(_fdn, sizeof(_fdn), sd->fields[fi]);
+                    extern int get_struct_field_option_family(const char*, const char*, char*, size_t);
+                    if (get_struct_field_option_family(_sdn, _fdn, ofam[fi], sizeof(ofam[fi]))) {
+                        kind[fi] = FK_OPTION;
+                        continue;
+                    }
+                }
                 if (ft->type != EXPR_IDENT) continue;
                 Token t = ft->token;
                 if      (t.length == 6 && memcmp(t.start, "string", 6) == 0) kind[fi] = FK_STR;
@@ -399,6 +418,9 @@ static void emit_struct_str_helpers(Program* prog) {
                     emit("    char* __f%d = __wyn_str_%.*s(__v.%.*s);\n",
                          fi, t.length, t.start, fn.length, fn.start);
                 }
+                else if (kind[fi] == FK_OPTION)
+                    emit("    char* __f%d = %s_to_string(__v.%.*s);\n",
+                         fi, ofam[fi], fn.length, fn.start);
             }
             // Two passes over the format: size probe, then the real write.
             for (int w = 0; w < 2; w++) {
@@ -416,7 +438,8 @@ static void emit_struct_str_helpers(Program* prog) {
                         case FK_STR:    emit("\\\"%%s\\\""); break;
                         case FK_BOOL:   emit("%%s");   break;
                         case FK_INT: case FK_ENUM: emit("%%lld"); break;
-                        case FK_FLOAT: case FK_STRUCT: case FK_ARRAY: emit("%%s"); break;
+                        case FK_FLOAT: case FK_STRUCT: case FK_ARRAY:
+                        case FK_OPTION: emit("%%s"); break;
                         default: {
                             Expr* ft = sd->field_types[fi];
                             if (ft && ft->type == EXPR_IDENT)
@@ -438,6 +461,7 @@ static void emit_struct_str_helpers(Program* prog) {
                         case FK_INT: case FK_ENUM:
                             emit(", (long long)__v.%.*s", fn.length, fn.start); break;
                         case FK_FLOAT: case FK_STRUCT: case FK_ARRAY:
+                        case FK_OPTION:
                             emit(", __f%d", fi); break;
                         default: break;   // placeholder: literal text, no argument
                     }
@@ -445,12 +469,122 @@ static void emit_struct_str_helpers(Program* prog) {
                 emit(");\n");
             }
             for (int fi = 0; fi < sd->field_count; fi++)
-                if (kind[fi] == FK_FLOAT || kind[fi] == FK_STRUCT || kind[fi] == FK_ARRAY)
+                if (kind[fi] == FK_FLOAT || kind[fi] == FK_STRUCT ||
+                    kind[fi] == FK_ARRAY || kind[fi] == FK_OPTION)
                     emit("    wyn_rc_release(__f%d);\n", fi);
             free(kind);
+            free(ofam);
             emit("    wyn_rc_set_length(__b, (unsigned int)__n);\n"
                  "    return __b;\n}\n");
         }
+    }
+}
+
+// --- Monomorphic Option<Struct> stringifiers -------------------------------
+//
+// The eight builtin payload families render in wyn_runtime.h, but a family with
+// a struct, data-enum or Option payload is emitted PER PROGRAM (it names a user
+// type), so its renderer has to be emitted per program too. Without one,
+// `print(Some(P { x: 1 }))` and `print(Some(Some(1)))` passed OptionP /
+// OptionOptionInt by value to a `long long` parameter - the same defect the
+// builtin families had, surviving in the one place a shared runtime cannot
+// reach.
+//
+// Two passes, for the same reason the struct helpers use two: a struct with an
+// `S?` FIELD calls OptionS_to_string from inside __wyn_str_<Struct>, and that
+// helper is emitted before these definitions.
+
+// Write the C expression that renders this family's PAYLOAD as a fresh char*,
+// or return 0 if the payload has no string form. `payload` is the payload's own
+// type name, which is also the key the family was registered under.
+static int cg_optlike_payload_expr(Program* prog, const char* payload,
+                                   char* out, size_t outsz) {
+    static const char* builtin[] = {
+        "OptionInt", "OptionString", "OptionFloat", "OptionBool",
+        "ResultInt", "ResultString", "ResultFloat", "ResultBool",
+    };
+    // A nested Option: Some(Some(x)) registers the INNER family name as the
+    // outer family's payload, so the recursion is just "does the payload have a
+    // renderer" - true for a builtin, and true for another monomorphic family
+    // because this same loop emits one for it.
+    for (size_t i = 0; i < sizeof(builtin) / sizeof(builtin[0]); i++) {
+        if (strcmp(payload, builtin[i]) == 0) {
+            snprintf(out, outsz, "%s_to_string(__v.value)", payload);
+            return 1;
+        }
+    }
+    extern int is_registered_option_struct(const char*);
+    if (strncmp(payload, "Option", 6) == 0 && is_registered_option_struct(payload + 6)) {
+        snprintf(out, outsz, "%s_to_string(__v.value)", payload);
+        return 1;
+    }
+    // A user struct renders through the helper interpolation already uses.
+    Token pt = {TOKEN_IDENT, payload, (int)strlen(payload), 0};
+    if (cg_find_struct(prog, pt) && cg_struct_has_str_helper(pt)) {
+        snprintf(out, outsz, "__wyn_str_%s(__v.value)", payload);
+        return 1;
+    }
+    return 0;
+}
+
+// Register every user-struct Option payload as interpolated, so
+// emit_struct_str_helpers gives it a __wyn_str_ helper for the renderer to call.
+// Must run BEFORE that function decides which structs get helpers.
+static void cg_register_optlike_payloads(Program* prog) {
+    extern int option_struct_count(void);
+    extern const char* option_struct_name(int);
+    extern void register_interpolated_struct(const char*);
+    for (int i = 0; i < option_struct_count(); i++) {
+        const char* p = option_struct_name(i);
+        Token pt = {TOKEN_IDENT, p, (int)strlen(p), 0};
+        StructStmt* sd = cg_find_struct(prog, pt);
+        if (sd && sd->type_param_count == 0) register_interpolated_struct(p);
+    }
+}
+
+// pass 0 = forward declarations, pass 1 = definitions.
+static void emit_optlike_str_helpers(Program* prog, int pass) {
+    extern int option_struct_count(void);
+    extern const char* option_struct_name(int);
+    for (int i = 0; i < option_struct_count(); i++) {
+        const char* p = option_struct_name(i);
+        char fam[160];
+        snprintf(fam, sizeof(fam), "Option%s", p);
+        if (pass == 0) {
+            emit("static char* %s_to_string(%s __v);\n", fam, fam);
+            continue;
+        }
+        char pexpr[192];
+        int have = cg_optlike_payload_expr(prog, p, pexpr, sizeof(pexpr));
+        emit("static char* %s_to_string(%s __v) {\n", fam, fam);
+        // Sized by a probe, then written - the same no-truncation contract the
+        // __wyn_str_ helpers and the runtime renderers use.
+        emit("    if (__v.tag != 1) {\n"
+             "        int __n = snprintf(NULL, 0, \"none\");\n"
+             "        char* __b = wyn_str_alloc(__n + 1);\n"
+             "        snprintf(__b, __n + 1, \"none\");\n"
+             "        wyn_rc_set_length(__b, (unsigned int)__n);\n"
+             "        return __b;\n"
+             "    }\n");
+        if (have) {
+            emit("    char* __p = %s;\n", pexpr);
+            emit("    int __n = snprintf(NULL, 0, \"Some(%%s)\", __p);\n"
+                 "    char* __b = wyn_str_alloc(__n + 1);\n"
+                 "    snprintf(__b, __n + 1, \"Some(%%s)\", __p);\n"
+                 "    wyn_rc_set_length(__b, (unsigned int)__n);\n"
+                 "    wyn_rc_release(__p);\n"
+                 "    return __b;\n");
+        } else {
+            // No string form for this payload (a data enum, a generic
+            // instantiation). Name the type rather than invent a value - the same
+            // rule the struct helpers' <Type> placeholder follows.
+            emit("    int __n = snprintf(NULL, 0, \"Some(<%s>)\");\n", p);
+            emit("    char* __b = wyn_str_alloc(__n + 1);\n");
+            emit("    snprintf(__b, __n + 1, \"Some(<%s>)\");\n", p);
+            emit("    wyn_rc_set_length(__b, (unsigned int)__n);\n"
+                 "    return __b;\n");
+        }
+        emit("}\n");
     }
 }
 
@@ -792,7 +926,15 @@ void codegen_program(Program* prog) {
     emit_struct_eq_helpers(prog);
     // Per-struct stringifiers, so `"${p}"` has a char* path instead of falling
     // through to_string's `default: int_to_string` arm (PLAN_v1.21 S1).
+    //
+    // Three steps, and the order is load-bearing. A struct with an `S?` field
+    // calls OptionS_to_string, and OptionS_to_string calls __wyn_str_S, so each
+    // needs the other declared: register the payload structs first (or they get
+    // no helper), forward-declare the family renderers, then emit both bodies.
+    cg_register_optlike_payloads(prog);
+    emit_optlike_str_helpers(prog, 0);
     emit_struct_str_helpers(prog);
+    emit_optlike_str_helpers(prog, 1);
 
     // Generate module-level constants (only if has main - script mode puts them in wyn_main)
     if (has_main) {

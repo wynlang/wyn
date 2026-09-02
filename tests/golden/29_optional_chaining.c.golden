@@ -43,6 +43,58 @@ static int __wyn_eq_User(User __l, User __r) {
     if (!__wyn_eq_Addr(__l.addr, __r.addr)) return 0;
     return 1;
 }
+static char* OptionUser_to_string(OptionUser __v);
+static char* OptionAddr_to_string(OptionAddr __v);
+static char* __wyn_str_Addr(Addr __v);
+static char* __wyn_str_User(User __v);
+static char* __wyn_str_Addr(Addr __v) {
+    int __n = snprintf(NULL, 0, "Addr { city: \"%s\" }", __v.city ? __v.city : "");
+    char* __b = wyn_str_alloc(__n + 1);
+    snprintf(__b, __n + 1, "Addr { city: \"%s\" }", __v.city ? __v.city : "");
+    wyn_rc_set_length(__b, (unsigned int)__n);
+    return __b;
+}
+static char* __wyn_str_User(User __v) {
+    char* __f1 = __wyn_str_Addr(__v.addr);
+    int __n = snprintf(NULL, 0, "User { name: \"%s\", addr: %s }", __v.name ? __v.name : "", __f1);
+    char* __b = wyn_str_alloc(__n + 1);
+    snprintf(__b, __n + 1, "User { name: \"%s\", addr: %s }", __v.name ? __v.name : "", __f1);
+    wyn_rc_release(__f1);
+    wyn_rc_set_length(__b, (unsigned int)__n);
+    return __b;
+}
+static char* OptionUser_to_string(OptionUser __v) {
+    if (__v.tag != 1) {
+        int __n = snprintf(NULL, 0, "none");
+        char* __b = wyn_str_alloc(__n + 1);
+        snprintf(__b, __n + 1, "none");
+        wyn_rc_set_length(__b, (unsigned int)__n);
+        return __b;
+    }
+    char* __p = __wyn_str_User(__v.value);
+    int __n = snprintf(NULL, 0, "Some(%s)", __p);
+    char* __b = wyn_str_alloc(__n + 1);
+    snprintf(__b, __n + 1, "Some(%s)", __p);
+    wyn_rc_set_length(__b, (unsigned int)__n);
+    wyn_rc_release(__p);
+    return __b;
+}
+static char* OptionAddr_to_string(OptionAddr __v) {
+    if (__v.tag != 1) {
+        int __n = snprintf(NULL, 0, "none");
+        char* __b = wyn_str_alloc(__n + 1);
+        snprintf(__b, __n + 1, "none");
+        wyn_rc_set_length(__b, (unsigned int)__n);
+        return __b;
+    }
+    char* __p = __wyn_str_Addr(__v.value);
+    int __n = snprintf(NULL, 0, "Some(%s)", __p);
+    char* __b = wyn_str_alloc(__n + 1);
+    snprintf(__b, __n + 1, "Some(%s)", __p);
+    wyn_rc_set_length(__b, (unsigned int)__n);
+    wyn_rc_release(__p);
+    return __b;
+}
 
 __attribute__((hot)) static inline OptionUser find(long long id);
 long long wyn_main();
