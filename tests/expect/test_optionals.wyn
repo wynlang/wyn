@@ -1,6 +1,6 @@
 // EXPECT: 42
-// EXPECT: 1
-// EXPECT: 0
+// EXPECT: true
+// EXPECT: false
 // EXPECT: 99
 
 fn main() -> int {

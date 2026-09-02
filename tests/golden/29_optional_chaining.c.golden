@@ -13,8 +13,8 @@ void Addr_cleanup(Addr* obj) {
 typedef struct { int tag; Addr value; } OptionAddr;
 static inline OptionAddr OptionAddr_Some(Addr value){ OptionAddr o; o.tag=1; o.value=value; return o; }
 static inline OptionAddr OptionAddr_None(void){ OptionAddr o; o.tag=0; return o; }
-static inline int OptionAddr_is_some(OptionAddr o){ return o.tag==1; }
-static inline int OptionAddr_is_none(OptionAddr o){ return o.tag==0; }
+static inline bool OptionAddr_is_some(OptionAddr o){ return o.tag==1; }
+static inline bool OptionAddr_is_none(OptionAddr o){ return o.tag==0; }
 static inline Addr OptionAddr_unwrap(OptionAddr o){ if(o.tag==0){ fprintf(stderr, "Error: unwrap() called on None\n"); exit(1); } return o.value; }
 static inline Addr OptionAddr_unwrap_or(OptionAddr o, Addr def){ return o.tag==1 ? o.value : def; }
 typedef struct {
@@ -28,8 +28,8 @@ void User_cleanup(User* obj) {
 typedef struct { int tag; User value; } OptionUser;
 static inline OptionUser OptionUser_Some(User value){ OptionUser o; o.tag=1; o.value=value; return o; }
 static inline OptionUser OptionUser_None(void){ OptionUser o; o.tag=0; return o; }
-static inline int OptionUser_is_some(OptionUser o){ return o.tag==1; }
-static inline int OptionUser_is_none(OptionUser o){ return o.tag==0; }
+static inline bool OptionUser_is_some(OptionUser o){ return o.tag==1; }
+static inline bool OptionUser_is_none(OptionUser o){ return o.tag==0; }
 static inline User OptionUser_unwrap(OptionUser o){ if(o.tag==0){ fprintf(stderr, "Error: unwrap() called on None\n"); exit(1); } return o.value; }
 static inline User OptionUser_unwrap_or(OptionUser o, User def){ return o.tag==1 ? o.value : def; }
 static int __wyn_eq_Addr(Addr __l, Addr __r);

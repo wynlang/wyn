@@ -411,7 +411,7 @@ void init_checker() {
     result_int_is_ok_type->fn_type.param_count = 1;
     result_int_is_ok_type->fn_type.param_types = malloc(sizeof(Type*));
     result_int_is_ok_type->fn_type.param_types[0] = result_int_type;
-    result_int_is_ok_type->fn_type.return_type = builtin_int;
+    result_int_is_ok_type->fn_type.return_type = builtin_bool;
     Token result_int_is_ok_tok = {TOKEN_IDENT, "ResultInt_is_ok", 15, 0};
     add_symbol(global_scope, result_int_is_ok_tok, result_int_is_ok_type, false);
     
@@ -419,7 +419,7 @@ void init_checker() {
     result_int_is_err_type->fn_type.param_count = 1;
     result_int_is_err_type->fn_type.param_types = malloc(sizeof(Type*));
     result_int_is_err_type->fn_type.param_types[0] = result_int_type;
-    result_int_is_err_type->fn_type.return_type = builtin_int;
+    result_int_is_err_type->fn_type.return_type = builtin_bool;
     Token result_int_is_err_tok = {TOKEN_IDENT, "ResultInt_is_err", 16, 0};
     add_symbol(global_scope, result_int_is_err_tok, result_int_is_err_type, false);
     
@@ -443,7 +443,7 @@ void init_checker() {
     result_string_is_ok_type->fn_type.param_count = 1;
     result_string_is_ok_type->fn_type.param_types = malloc(sizeof(Type*));
     result_string_is_ok_type->fn_type.param_types[0] = result_string_type;
-    result_string_is_ok_type->fn_type.return_type = builtin_int;
+    result_string_is_ok_type->fn_type.return_type = builtin_bool;
     Token result_string_is_ok_tok = {TOKEN_IDENT, "ResultString_is_ok", 18, 0};
     add_symbol(global_scope, result_string_is_ok_tok, result_string_is_ok_type, false);
     
@@ -451,7 +451,7 @@ void init_checker() {
     result_string_is_err_type->fn_type.param_count = 1;
     result_string_is_err_type->fn_type.param_types = malloc(sizeof(Type*));
     result_string_is_err_type->fn_type.param_types[0] = result_string_type;
-    result_string_is_err_type->fn_type.return_type = builtin_int;
+    result_string_is_err_type->fn_type.return_type = builtin_bool;
     Token result_string_is_err_tok = {TOKEN_IDENT, "ResultString_is_err", 19, 0};
     add_symbol(global_scope, result_string_is_err_tok, result_string_is_err_type, false);
     
@@ -513,7 +513,7 @@ void init_checker() {
     oi_is_some_t->fn_type.param_count = 1;
     oi_is_some_t->fn_type.param_types = malloc(sizeof(Type*));
     oi_is_some_t->fn_type.param_types[0] = option_int_type;
-    oi_is_some_t->fn_type.return_type = builtin_int;
+    oi_is_some_t->fn_type.return_type = builtin_bool;
     Token oi_is_some_tok = {TOKEN_IDENT, "OptionInt_is_some", 17, 0};
     add_symbol(global_scope, oi_is_some_tok, oi_is_some_t, false);
 
@@ -521,7 +521,7 @@ void init_checker() {
     oi_is_none_t->fn_type.param_count = 1;
     oi_is_none_t->fn_type.param_types = malloc(sizeof(Type*));
     oi_is_none_t->fn_type.param_types[0] = option_int_type;
-    oi_is_none_t->fn_type.return_type = builtin_int;
+    oi_is_none_t->fn_type.return_type = builtin_bool;
     Token oi_is_none_tok = {TOKEN_IDENT, "OptionInt_is_none", 17, 0};
     add_symbol(global_scope, oi_is_none_tok, oi_is_none_t, false);
 
@@ -567,7 +567,7 @@ void init_checker() {
     os_is_some_t->fn_type.param_count = 1;
     os_is_some_t->fn_type.param_types = malloc(sizeof(Type*));
     os_is_some_t->fn_type.param_types[0] = option_string_type;
-    os_is_some_t->fn_type.return_type = builtin_int;
+    os_is_some_t->fn_type.return_type = builtin_bool;
     Token os_is_some_tok = {TOKEN_IDENT, "OptionString_is_some", 20, 0};
     add_symbol(global_scope, os_is_some_tok, os_is_some_t, false);
 
@@ -575,7 +575,7 @@ void init_checker() {
     os_is_none_t->fn_type.param_count = 1;
     os_is_none_t->fn_type.param_types = malloc(sizeof(Type*));
     os_is_none_t->fn_type.param_types[0] = option_string_type;
-    os_is_none_t->fn_type.return_type = builtin_int;
+    os_is_none_t->fn_type.return_type = builtin_bool;
     Token os_is_none_tok = {TOKEN_IDENT, "OptionString_is_none", 20, 0};
     add_symbol(global_scope, os_is_none_tok, os_is_none_t, false);
 
@@ -618,14 +618,14 @@ void init_checker() {
     optionfloat_is_some_t->fn_type.param_count = 1;
     optionfloat_is_some_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
     optionfloat_is_some_t->fn_type.param_types[0] = optionfloat_type;
-    optionfloat_is_some_t->fn_type.return_type = builtin_int;
+    optionfloat_is_some_t->fn_type.return_type = builtin_bool;
     Token optionfloat_is_some_tok = {TOKEN_IDENT, "OptionFloat_is_some", 19, 0};
     add_symbol(global_scope, optionfloat_is_some_tok, optionfloat_is_some_t, false);
     Type* optionfloat_is_none_t = make_type(TYPE_FUNCTION);
     optionfloat_is_none_t->fn_type.param_count = 1;
     optionfloat_is_none_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
     optionfloat_is_none_t->fn_type.param_types[0] = optionfloat_type;
-    optionfloat_is_none_t->fn_type.return_type = builtin_int;
+    optionfloat_is_none_t->fn_type.return_type = builtin_bool;
     Token optionfloat_is_none_tok = {TOKEN_IDENT, "OptionFloat_is_none", 19, 0};
     add_symbol(global_scope, optionfloat_is_none_tok, optionfloat_is_none_t, false);
     Type* optionfloat_unwrap_t = make_type(TYPE_FUNCTION);
@@ -666,14 +666,14 @@ void init_checker() {
     optionbool_is_some_t->fn_type.param_count = 1;
     optionbool_is_some_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
     optionbool_is_some_t->fn_type.param_types[0] = optionbool_type;
-    optionbool_is_some_t->fn_type.return_type = builtin_int;
+    optionbool_is_some_t->fn_type.return_type = builtin_bool;
     Token optionbool_is_some_tok = {TOKEN_IDENT, "OptionBool_is_some", 18, 0};
     add_symbol(global_scope, optionbool_is_some_tok, optionbool_is_some_t, false);
     Type* optionbool_is_none_t = make_type(TYPE_FUNCTION);
     optionbool_is_none_t->fn_type.param_count = 1;
     optionbool_is_none_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
     optionbool_is_none_t->fn_type.param_types[0] = optionbool_type;
-    optionbool_is_none_t->fn_type.return_type = builtin_int;
+    optionbool_is_none_t->fn_type.return_type = builtin_bool;
     Token optionbool_is_none_tok = {TOKEN_IDENT, "OptionBool_is_none", 18, 0};
     add_symbol(global_scope, optionbool_is_none_tok, optionbool_is_none_t, false);
     Type* optionbool_unwrap_t = make_type(TYPE_FUNCTION);
@@ -715,14 +715,14 @@ void init_checker() {
     resultfloat_is_ok_t->fn_type.param_count = 1;
     resultfloat_is_ok_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
     resultfloat_is_ok_t->fn_type.param_types[0] = resultfloat_type;
-    resultfloat_is_ok_t->fn_type.return_type = builtin_int;
+    resultfloat_is_ok_t->fn_type.return_type = builtin_bool;
     Token resultfloat_is_ok_tok = {TOKEN_IDENT, "ResultFloat_is_ok", 17, 0};
     add_symbol(global_scope, resultfloat_is_ok_tok, resultfloat_is_ok_t, false);
     Type* resultfloat_is_err_t = make_type(TYPE_FUNCTION);
     resultfloat_is_err_t->fn_type.param_count = 1;
     resultfloat_is_err_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
     resultfloat_is_err_t->fn_type.param_types[0] = resultfloat_type;
-    resultfloat_is_err_t->fn_type.return_type = builtin_int;
+    resultfloat_is_err_t->fn_type.return_type = builtin_bool;
     Token resultfloat_is_err_tok = {TOKEN_IDENT, "ResultFloat_is_err", 18, 0};
     add_symbol(global_scope, resultfloat_is_err_tok, resultfloat_is_err_t, false);
     Type* resultfloat_unwrap_t = make_type(TYPE_FUNCTION);
@@ -771,14 +771,14 @@ void init_checker() {
     resultbool_is_ok_t->fn_type.param_count = 1;
     resultbool_is_ok_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
     resultbool_is_ok_t->fn_type.param_types[0] = resultbool_type;
-    resultbool_is_ok_t->fn_type.return_type = builtin_int;
+    resultbool_is_ok_t->fn_type.return_type = builtin_bool;
     Token resultbool_is_ok_tok = {TOKEN_IDENT, "ResultBool_is_ok", 16, 0};
     add_symbol(global_scope, resultbool_is_ok_tok, resultbool_is_ok_t, false);
     Type* resultbool_is_err_t = make_type(TYPE_FUNCTION);
     resultbool_is_err_t->fn_type.param_count = 1;
     resultbool_is_err_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
     resultbool_is_err_t->fn_type.param_types[0] = resultbool_type;
-    resultbool_is_err_t->fn_type.return_type = builtin_int;
+    resultbool_is_err_t->fn_type.return_type = builtin_bool;
     Token resultbool_is_err_tok = {TOKEN_IDENT, "ResultBool_is_err", 17, 0};
     add_symbol(global_scope, resultbool_is_err_tok, resultbool_is_err_t, false);
     Type* resultbool_unwrap_t = make_type(TYPE_FUNCTION);
