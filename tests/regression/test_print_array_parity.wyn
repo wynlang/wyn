@@ -36,9 +36,9 @@
 // EXPECT: [[1.5], [2.5]]
 // EXPECT: [[true], [false]]
 // EXPECT: [[]]
-// EXPECT: [<struct>]
-// EXPECT: [<struct>]
-// EXPECT: [<struct>]
+// EXPECT: [P { x: 1 }]
+// EXPECT: [P { x: 1 }]
+// EXPECT: [P { x: 1 }]
 
 struct P { x: int }
 
@@ -88,9 +88,10 @@ fn main() {
     inner_empty: [[int]] = [[]]
     print(inner_empty)
 
-    // A boxed STRUCT element carries no type name, so the runtime cannot render
-    // it - but it must not print the box's address either. All three agree on
-    // the placeholder.
+    // A boxed STRUCT element carries no type name, so the runtime formatters
+    // alone can only reach the `<struct>` placeholder - never the box's address.
+    // The typed element renderer, built from the print site's static type, takes
+    // over and prints the value; all three spellings must land on the same one.
     structs = [P { x: 1 }]
     print(structs)
     println(structs)

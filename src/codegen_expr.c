@@ -298,6 +298,52 @@ static const char* cg_optlike_family(Expr* e) {
     return cg_optlike_has_renderer(fam) ? fam : NULL;
 }
 
+// Element type name for an array about to be PRINTED whose elements are boxed
+// structs, or NULL. Boxed elements carry no type name at runtime, so the generic
+// formatters can only print `<struct>`; codegen_program emits a
+// __wyn_arrstr_<Name> for exactly the element types the checker saw printed, and
+// this is the guard that decides whether to call one.
+static const char* cg_array_elem_helper(Expr* e) {
+    if (!e || !e->expr_type || e->expr_type->kind != TYPE_ARRAY) return NULL;
+    Type* el = e->expr_type->array_type.element_type;
+    if (!el) return NULL;
+    static char nb[128];
+    if (el->kind == TYPE_STRUCT && el->struct_type.name.length > 0) {
+        token_to_cstr(nb, sizeof(nb), el->struct_type.name);
+    } else if (el->kind == TYPE_OPTIONAL && el->optional_type.inner_type) {
+        // An ANNOTATED `[int?]` keeps its element as TYPE_OPTIONAL; the same
+        // array inferred from a `-> int?` call is already the lowered
+        // TYPE_STRUCT. Route both through the family authority so the two
+        // spellings cannot render differently.
+        Type* in = el->optional_type.inner_type;
+        const char* pn = NULL;
+        char ib[96];
+        if (in->kind == TYPE_STRING)      pn = "string";
+        else if (in->kind == TYPE_FLOAT)  pn = "float";
+        else if (in->kind == TYPE_BOOL)   pn = "bool";
+        else if (in->kind == TYPE_INT)    pn = "int";
+        else if (in->kind == TYPE_STRUCT && in->struct_type.name.length > 0) {
+            token_to_cstr(ib, sizeof(ib), in->struct_type.name); pn = ib;
+        } else if (in->kind == TYPE_ENUM && in->name.length > 0) {
+            token_to_cstr(ib, sizeof(ib), in->name); pn = ib;
+        }
+        if (!pn) return NULL;
+        extern const char* wyn_option_family(const char*, const char**, int*);
+        snprintf(nb, sizeof(nb), "%s", wyn_option_family(pn, NULL, NULL));
+    } else {
+        return NULL;
+    }
+    extern int is_printed_array_elem(const char*);
+    if (!is_printed_array_elem(nb)) return NULL;
+    // Ask the same two questions the emitter asks, so a call is never emitted
+    // for a helper that was skipped.
+    if (cg_optlike_has_renderer(nb)) return nb;
+    extern int cg_struct_has_str_helper(Token name);
+    Token et = {TOKEN_IDENT, nb, (int)strlen(nb), 0};
+    if (cg_struct_has_str_helper(et)) return nb;
+    return NULL;
+}
+
 void codegen_expr(Expr* expr) {
     if (!expr) return;
     // If this expr was pre-evaluated to a temp, emit the temp name
@@ -1566,8 +1612,16 @@ void codegen_expr(Expr* expr) {
                         // them and they would fall through to wyn_out_append ->
                         // `default: wyn_out_int`, which is the pointer-as-decimal
                         // bug for `none` and a hard build failure for `Some(v)`.
+                        // An array of boxed structs renders through the typed
+                        // element helper; without it the generic formatter can
+                        // only print <struct> per element.
+                        const char* _print_arrel = _print_temp ? NULL : cg_array_elem_helper(parg);
                         const char* _print_optfam = _print_temp ? NULL : cg_optlike_family(parg);
-                        if (_print_optfam) {
+                        if (_print_arrel) {
+                            emit("{ const char* __pae = __wyn_arrstr_%s(", _print_arrel);
+                            codegen_expr(parg);
+                            emit("); wyn_out_str(&__wo, __pae); wyn_rc_release(__pae); } ");
+                        } else if (_print_optfam) {
                             emit("{ const char* __pot = %s_to_string(", _print_optfam);
                             codegen_expr(parg);
                             emit("); wyn_out_str(&__wo, __pot); wyn_rc_release(__pot); } ");
@@ -1619,6 +1673,16 @@ void codegen_expr(Expr* expr) {
                 // newline, matching print(arr) but with the trailing '\n'.
                 if (!arg_is_string && parg->expr_type &&
                     (parg->expr_type->kind == TYPE_ARRAY)) {
+                    // Same typed-element path as print(); one printf keeps the
+                    // line atomic like the other println_* branches.
+                    const char* _plnarrel = cg_array_elem_helper(parg);
+                    if (_plnarrel) {
+                        emit("({ const char* __pae = __wyn_arrstr_%s(", _plnarrel);
+                        codegen_expr(parg);
+                        emit("); printf(\"%%s\\n\", __pae); wyn_rc_release(__pae); })");
+                        codegen_skip_strdup = prev_skip;
+                        break;
+                    }
                     emit("({ print_array_no_nl(");
                     codegen_expr(parg);
                     emit("); printf(\"\\n\"); })");
@@ -6150,12 +6214,19 @@ void codegen_expr(Expr* expr) {
                     // through to to_string rather than calling a missing function.
                     extern int cg_struct_has_str_helper(Token name);
                     const char* _ifam = cg_optlike_family(e);
+                    const char* _iarrel = cg_array_elem_helper(e);
                     if (e->type == EXPR_STRING) {
                         codegen_expr(e);
                     } else if (e->expr_type && e->expr_type->kind == TYPE_MAP) {
                         // Same defect as println(map): to_string(map) lowered to
                         // the integer path, so "${m}" rendered the map pointer.
                         emit("map_to_string(");
+                        codegen_expr(e);
+                        emit(")");
+                    } else if (_iarrel) {
+                        // "${arr}" must agree with print(arr) - it went through
+                        // array_to_string, which sees only the WynValue tag.
+                        emit("__wyn_arrstr_%s(", _iarrel);
                         codegen_expr(e);
                         emit(")");
                     } else if (_ifam) {

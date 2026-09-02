@@ -801,6 +801,27 @@ static Type* resolve_array_elem_annotation(Expr* elem_type_expr) {
             inner->map_type.value_type = resolve_array_elem_annotation(elem_type_expr->call.args[1]);
         return inner;
     }
+    // Optional element: `[int?]`, `[P?]`. This returned NULL, so an ANNOTATED
+    // optional array had no element type at all while the same array inferred
+    // from a `-> int?` call carried the lowered family - so `a: [int?]` printed
+    // element POINTERS where `a = [g(1)]` printed values, and `a[0]` on the
+    // annotated one did not even compile. Resolve to the same concrete family
+    // the EXPR_OPTIONAL_TYPE case in check_expr produces, via the family
+    // authority, so the two spellings cannot disagree.
+    if (elem_type_expr->type == EXPR_OPTIONAL_TYPE) {
+        Expr* in = elem_type_expr->optional_type.inner_type;
+        if (!in || in->type != EXPR_IDENT) return NULL;
+        char pn[96];
+        token_to_cstr(pn, sizeof(pn), in->token);
+        extern const char* wyn_option_family(const char*, const char**, int*);
+        const char* fam = wyn_option_family(pn, NULL, NULL);
+        if (!fam) return NULL;
+        Type* t = make_type(TYPE_STRUCT);
+        // The family name has to outlive this call, and it comes back in a
+        // static buffer the next caller reuses.
+        t->struct_type.name = (Token){TOKEN_IDENT, strdup(fam), (int)strlen(fam), in->token.line};
+        return t;
+    }
     if (elem_type_expr->type != EXPR_IDENT) return NULL;
     Token n = elem_type_expr->token;
     StructStmt* struct_def = find_struct_definition(n);
@@ -1245,6 +1266,57 @@ static Symbol* find_local_noncallable(SymbolTable* scope, Token name) {
         }
     }
     return NULL;
+}
+
+// An array being printed needs a renderer built from its ELEMENT type: the boxed
+// element carries no type name at runtime, so the runtime formatters can only
+// ever print `<struct>` for it. Called from every print/println/interpolation
+// site, which is why it takes the type rather than a name - the three spellings
+// must register identically or they render differently again.
+//
+// Only struct-shaped elements need this. Scalars and strings already carry a
+// usable WynValue tag, and a nested array recurses inside the runtime.
+static void register_printed_array_elem_type(Type* t) {
+    if (!t || t->kind != TYPE_ARRAY) return;
+    Type* el = t->array_type.element_type;
+    if (!el) return;
+    char en[128];
+    if (el->kind == TYPE_STRUCT && el->struct_type.name.length > 0) {
+        token_to_cstr(en, sizeof(en), el->struct_type.name);
+    } else if (el->kind == TYPE_OPTIONAL) {
+        // `a: [int?]` annotates the element as TYPE_OPTIONAL, while the same
+        // array built from a `-> int?` call carries the already-lowered
+        // TYPE_STRUCT "OptionInt". Both must resolve to the same family, or the
+        // annotated spelling prints pointers while the inferred one prints
+        // values - the exact split this whole series is removing.
+        Type* in = el->optional_type.inner_type;
+        const char* pn = NULL;
+        char ib[96];
+        if (!in) return;
+        if (in->kind == TYPE_STRING)      pn = "string";
+        else if (in->kind == TYPE_FLOAT)  pn = "float";
+        else if (in->kind == TYPE_BOOL)   pn = "bool";
+        else if (in->kind == TYPE_INT)    pn = "int";
+        else if (in->kind == TYPE_STRUCT && in->struct_type.name.length > 0) {
+            token_to_cstr(ib, sizeof(ib), in->struct_type.name); pn = ib;
+        } else if (in->kind == TYPE_ENUM && in->name.length > 0) {
+            token_to_cstr(ib, sizeof(ib), in->name); pn = ib;
+        }
+        if (!pn) return;
+        extern const char* wyn_option_family(const char*, const char**, int*);
+        snprintf(en, sizeof(en), "%s", wyn_option_family(pn, NULL, NULL));
+    } else {
+        return;
+    }
+    extern void register_printed_array_elem(const char*);
+    register_printed_array_elem(en);
+    // A user struct element also needs its own stringifier, which is what the
+    // element renderer calls. An Option family element does not - its renderer
+    // is emitted from the family registry.
+    if (strncmp(en, "Option", 6) != 0 && strncmp(en, "Result", 6) != 0) {
+        extern void register_interpolated_struct(const char*);
+        register_interpolated_struct(en);
+    }
 }
 
 // Lazily register a monomorphic Option<Struct> family for a user-struct payload
@@ -2565,6 +2637,12 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                             extern void register_interpolated_struct(const char*);
                             register_interpolated_struct(sn);
                         }
+                        // An ARRAY of structs needs the element type registered
+                        // too. A boxed element carries no type name at runtime,
+                        // so print([P { x: 1 }]) could only ever render the box's
+                        // address (or the honest-but-empty <struct>); the element
+                        // renderer has to be built from the type known HERE.
+                        register_printed_array_elem_type(at);
                     }
                     expr->expr_type = builtin_void;
                     return builtin_void;
@@ -4472,6 +4550,10 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         extern void register_interpolated_struct(const char*);
                         register_interpolated_struct(sn);
                     }
+                    // "${arr}" renders through the same element renderer print
+                    // uses, so the element type is registered from here too - or
+                    // the three spellings would disagree again.
+                    register_printed_array_elem_type(it);
                 }
             }
             // SET expr_type, do not merely return it. Bare-assignment hoisting
