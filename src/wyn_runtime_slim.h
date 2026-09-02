@@ -933,6 +933,8 @@ bool ResultBool_unwrap_or(ResultBool r, bool def);
 // wyn_runtime.h and reach the archive through runtime_exports.c, so these are
 // declarations - not slim-header copies. A copy here is exactly how --release
 // kept its own stale println for a whole release cycle.
+// Used by the per-program Result renderers codegen emits.
+char* wyn_rc_sprintf(const char* fmt, ...);
 char* OptionInt_to_string(OptionInt o);
 char* OptionString_to_string(OptionString o);
 char* OptionFloat_to_string(OptionFloat o);
