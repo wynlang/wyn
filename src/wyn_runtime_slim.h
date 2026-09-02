@@ -88,6 +88,15 @@ typedef struct { int tag; union { int ok_value; const char* err_value; } data; }
 typedef struct { int tag; union { const char* ok_value; const char* err_value; } data; } ResultString;
 typedef struct { int tag; int value; } OptionInt;
 typedef struct { int tag; const char* value; } OptionString;
+// Float and bool payload families. These were absent, so a program using
+// `float?` / `bool?` / `Result<float,…>` / `Result<bool,…>` did not compile
+// under --release at all while building fine on the default path - the same
+// class of fat-header/slim-header drift that hid the println atomicity fix in
+// v1.21. Layouts mirror wyn_runtime.h; keep in sync.
+typedef struct { int tag; double value; } OptionFloat;
+typedef struct { int tag; bool value; } OptionBool;
+typedef struct { int tag; union { double ok_value; const char* err_value; } data; } ResultFloat;
+typedef struct { int tag; union { bool ok_value; const char* err_value; } data; } ResultBool;
 typedef struct {
     long long value;
     pthread_mutex_t lock;
@@ -894,6 +903,44 @@ int OptionString_is_some(OptionString o);
 int OptionString_is_none(OptionString o);
 const char* OptionString_unwrap(OptionString o);
 const char* OptionString_unwrap_or(OptionString o, const char* def);
+OptionFloat OptionFloat_Some(double value);
+OptionFloat OptionFloat_None();
+int OptionFloat_is_some(OptionFloat o);
+int OptionFloat_is_none(OptionFloat o);
+double OptionFloat_unwrap(OptionFloat o);
+double OptionFloat_unwrap_or(OptionFloat o, double def);
+OptionBool OptionBool_Some(bool value);
+OptionBool OptionBool_None();
+int OptionBool_is_some(OptionBool o);
+int OptionBool_is_none(OptionBool o);
+bool OptionBool_unwrap(OptionBool o);
+bool OptionBool_unwrap_or(OptionBool o, bool def);
+ResultFloat ResultFloat_Ok(double value);
+ResultFloat ResultFloat_Err(const char* msg);
+int ResultFloat_is_ok(ResultFloat r);
+int ResultFloat_is_err(ResultFloat r);
+double ResultFloat_unwrap(ResultFloat r);
+const char* ResultFloat_unwrap_err(ResultFloat r);
+double ResultFloat_unwrap_or(ResultFloat r, double def);
+ResultBool ResultBool_Ok(bool value);
+ResultBool ResultBool_Err(const char* msg);
+int ResultBool_is_ok(ResultBool r);
+int ResultBool_is_err(ResultBool r);
+bool ResultBool_unwrap(ResultBool r);
+const char* ResultBool_unwrap_err(ResultBool r);
+bool ResultBool_unwrap_or(ResultBool r, bool def);
+// The eight renderers every print spelling routes to. Definitions are in
+// wyn_runtime.h and reach the archive through runtime_exports.c, so these are
+// declarations - not slim-header copies. A copy here is exactly how --release
+// kept its own stale println for a whole release cycle.
+char* OptionInt_to_string(OptionInt o);
+char* OptionString_to_string(OptionString o);
+char* OptionFloat_to_string(OptionFloat o);
+char* OptionBool_to_string(OptionBool o);
+char* ResultInt_to_string(ResultInt r);
+char* ResultString_to_string(ResultString r);
+char* ResultFloat_to_string(ResultFloat r);
+char* ResultBool_to_string(ResultBool r);
 long long Task_value(long long initial);
 long long Task_get(long long handle);
 void Task_set(long long handle, long long value);

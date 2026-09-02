@@ -4838,12 +4838,8 @@ int ResultInt_is_err(ResultInt r) { return r.tag == 1; }
 int ResultInt_unwrap(ResultInt r) { if (r.tag == 1) { fprintf(stderr, "Error: unwrap() called on Err: %s\n", r.data.err_value); exit(1); } return r.data.ok_value; }
 const char* ResultInt_unwrap_err(ResultInt r) { if (r.tag == 0) { fprintf(stderr, "Error: unwrap_err() called on Ok\n"); exit(1); } return r.data.err_value; }
 long long ResultInt_unwrap_or(ResultInt r, long long def) { return r.tag == 0 ? r.data.ok_value : def; }
-char* ResultInt_to_string(ResultInt r) {
-    char* buf = wyn_str_alloc(256);
-    if (r.tag == 0) snprintf(buf, 256, "Ok(%d)", r.data.ok_value);
-    else snprintf(buf, 256, "Err(%s)", r.data.err_value);
-    return buf;
-}
+// ResultInt_to_string lives with the other seven renderers further down - see
+// the "Option / Result rendering" block.
 
 ResultString ResultString_Ok(const char* value) { ResultString r; r.tag = 0; r.data.ok_value = value; return r; }
 ResultString ResultString_Err(const char* msg) { ResultString r; r.tag = 1; r.data.err_value = msg; return r; }
@@ -4904,6 +4900,85 @@ int ResultBool_is_err(ResultBool r) { return r.tag == 1; }
 bool ResultBool_unwrap(ResultBool r) { if (r.tag == 1) { fprintf(stderr, "Error: unwrap() called on Err: %s\n", r.data.err_value); exit(1); } return r.data.ok_value; }
 const char* ResultBool_unwrap_err(ResultBool r) { if (r.tag == 0) { fprintf(stderr, "Error: unwrap_err() called on Ok\n"); exit(1); } return r.data.err_value; }
 bool ResultBool_unwrap_or(ResultBool r, bool def) { return r.tag == 0 ? r.data.ok_value : def; }
+
+// ---------------------------------------------------------------------------
+// Option / Result rendering.
+//
+// Kept as ONE block rather than one stringifier per family block above: every
+// print spelling (print, println, "${o}") now routes here, so the eight
+// renderers have to agree byte for byte, and they only do that reliably if a
+// reader can see them together. The families themselves are distinct C structs
+// with no common header, so there is no generic Option to render - hence one
+// function per family, all sharing the sizing helper below.
+//
+// Before this existed, `to_string(o)` fell through the _Generic table to
+// `default: int_to_string` and passed a struct by value to a `long long`
+// parameter: print(Option) did not compile, and bare `none` printed the
+// struct's address as a decimal.
+// ---------------------------------------------------------------------------
+
+// One RC string from a printf-style format, sized by a probe so a long payload
+// is never truncated. wyn_str_alloc + wyn_rc_set_length is the same contract
+// float_to_string and the __wyn_str_<Struct> helpers use.
+static char* wyn_rc_sprintf(const char* fmt, ...) {
+    va_list ap, ap2;
+    va_start(ap, fmt);
+    va_copy(ap2, ap);
+    int n = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+    if (n < 0) n = 0;
+    char* b = wyn_str_alloc((size_t)n + 1);
+    vsnprintf(b, (size_t)n + 1, fmt, ap2);
+    va_end(ap2);
+    wyn_rc_set_length(b, (unsigned int)n);
+    return b;
+}
+
+// `none` is the same four characters for every Option family. Returning a fresh
+// RC string (not a literal) keeps the release side uniform: every caller does
+// wyn_rc_release() unconditionally.
+static char* wyn_rc_none_str(void) { return wyn_rc_sprintf("none"); }
+
+char* OptionInt_to_string(OptionInt o) {
+    return o.tag == 1 ? wyn_rc_sprintf("Some(%lld)", (long long)o.value) : wyn_rc_none_str();
+}
+// A string payload is QUOTED, so Some("") is visibly Some and not an empty
+// Some(). A Some holding NULL is still a Some - the tag decides, not the value.
+char* OptionString_to_string(OptionString o) {
+    return o.tag == 1 ? wyn_rc_sprintf("Some(\"%s\")", o.value ? o.value : "") : wyn_rc_none_str();
+}
+char* OptionFloat_to_string(OptionFloat o) {
+    if (o.tag != 1) return wyn_rc_none_str();
+    char fb[40];
+    wyn_format_float(fb, sizeof(fb), o.value);
+    return wyn_rc_sprintf("Some(%s)", fb);
+}
+char* OptionBool_to_string(OptionBool o) {
+    return o.tag == 1 ? wyn_rc_sprintf("Some(%s)", o.value ? "true" : "false") : wyn_rc_none_str();
+}
+
+// Result mirrors Option exactly, including the quoting rule: the Err payload is
+// always a string, so it is quoted like a string Ok payload. ResultInt_to_string
+// already existed but was unreachable dead code with %d and an unquoted Err -
+// rewritten here so all four families render the same shape.
+char* ResultInt_to_string(ResultInt r) {
+    return r.tag == 0 ? wyn_rc_sprintf("Ok(%lld)", (long long)r.data.ok_value)
+                      : wyn_rc_sprintf("Err(\"%s\")", r.data.err_value ? r.data.err_value : "");
+}
+char* ResultString_to_string(ResultString r) {
+    return r.tag == 0 ? wyn_rc_sprintf("Ok(\"%s\")", r.data.ok_value ? r.data.ok_value : "")
+                      : wyn_rc_sprintf("Err(\"%s\")", r.data.err_value ? r.data.err_value : "");
+}
+char* ResultFloat_to_string(ResultFloat r) {
+    if (r.tag != 0) return wyn_rc_sprintf("Err(\"%s\")", r.data.err_value ? r.data.err_value : "");
+    char fb[40];
+    wyn_format_float(fb, sizeof(fb), r.data.ok_value);
+    return wyn_rc_sprintf("Ok(%s)", fb);
+}
+char* ResultBool_to_string(ResultBool r) {
+    return r.tag == 0 ? wyn_rc_sprintf("Ok(%s)", r.data.ok_value ? "true" : "false")
+                      : wyn_rc_sprintf("Err(\"%s\")", r.data.err_value ? r.data.err_value : "");
+}
 
 // Task - simplified concurrency API
 // Task.all(f1, f2) - wait for multiple spawns

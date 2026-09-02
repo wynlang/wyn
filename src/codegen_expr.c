@@ -243,6 +243,57 @@ static const char* wyn_option_ctor_kind(Expr* e, const char* kind) {
     return wyn_ctor_family(e->option.value ? e->option.value->expr_type : NULL, kind);
 }
 
+// Do we have a <fam>_to_string renderer for this Option/Result family? The eight
+// builtin payload families do (wyn_runtime.h, "Option / Result rendering"); a
+// monomorphic Option<Struct>/Result<Struct> family emitted per-program does NOT
+// yet, so it must keep its old path rather than call a function nobody defines.
+static int cg_optlike_has_renderer(const char* fam) {
+    static const char* known[] = {
+        "OptionInt", "OptionString", "OptionFloat", "OptionBool",
+        "ResultInt", "ResultString", "ResultFloat", "ResultBool",
+    };
+    if (!fam) return 0;
+    for (size_t i = 0; i < sizeof(known) / sizeof(known[0]); i++)
+        if (strcmp(fam, known[i]) == 0) return 1;
+    return 0;
+}
+
+// Resolve the Option/Result C family for an expression about to be PRINTED, in
+// any syntactic form. Returns a static string ("OptionInt", …), or NULL if the
+// expression is not Option/Result-like or has no renderer.
+//
+// Shape-independent by design, and that is the whole fix: the renderer this
+// replaces was gated on `parg->type == EXPR_IDENT`, so `println(o)` printed
+// Some(5) while `println(Some(5))` - the identical value written inline - failed
+// to build, as did every print() and every "${o}".
+static const char* cg_optlike_family(Expr* e) {
+    if (!e) return NULL;
+    const char* fam = NULL;
+    // A Some/none/Ok/Err constructor names its own family, annotation-aware.
+    if (e->type == EXPR_SOME || e->type == EXPR_NONE)
+        fam = wyn_option_ctor_kind(e, "Option");
+    else if (e->type == EXPR_OK || e->type == EXPR_ERR)
+        fam = wyn_option_ctor_kind(e, "Result");
+    // Otherwise the checker's type is the authority - it covers call results,
+    // struct fields and index expressions with one test.
+    if (!fam && e->expr_type && e->expr_type->kind == TYPE_STRUCT &&
+        e->expr_type->struct_type.name.length > 0) {
+        static char nb[128];
+        token_to_cstr(nb, sizeof(nb), e->expr_type->struct_type.name);
+        if (strncmp(nb, "Option", 6) == 0 || strncmp(nb, "Result", 6) == 0) fam = nb;
+    }
+    // Last resort: the codegen enum-var registry. The checker often does not
+    // propagate a struct type onto a bare ident reference, which is why the
+    // registry exists and why the old ident-only path consulted it.
+    if (!fam && e->type == EXPR_IDENT) {
+        char vn[128]; token_to_cstr(vn, sizeof(vn), e->token);
+        extern const char* get_enum_var_type(const char*);
+        const char* t = get_enum_var_type(vn);
+        if (t && (strncmp(t, "Option", 6) == 0 || strncmp(t, "Result", 6) == 0)) fam = t;
+    }
+    return cg_optlike_has_renderer(fam) ? fam : NULL;
+}
+
 void codegen_expr(Expr* expr) {
     if (!expr) return;
     // If this expr was pre-evaluated to a temp, emit the temp name
@@ -1504,7 +1555,19 @@ void codegen_expr(Expr* expr) {
                             parg->expr_type->kind == TYPE_STRUCT &&
                             parg->expr_type->struct_type.name.length > 0 &&
                             cg_struct_has_str_helper(parg->expr_type->struct_type.name));
-                        if (_print_struct) {
+                        // An Option/Result argument goes through its family
+                        // renderer for the same reason, and this branch must be
+                        // tested BEFORE _print_struct: the families ARE C structs,
+                        // so a `cg_struct_has_str_helper` lookup would never match
+                        // them and they would fall through to wyn_out_append ->
+                        // `default: wyn_out_int`, which is the pointer-as-decimal
+                        // bug for `none` and a hard build failure for `Some(v)`.
+                        const char* _print_optfam = _print_temp ? NULL : cg_optlike_family(parg);
+                        if (_print_optfam) {
+                            emit("{ const char* __pot = %s_to_string(", _print_optfam);
+                            codegen_expr(parg);
+                            emit("); wyn_out_str(&__wo, __pot); wyn_rc_release(__pot); } ");
+                        } else if (_print_struct) {
                             Token _sn = parg->expr_type->struct_type.name;
                             emit("{ const char* __pst = __wyn_str_%.*s(", _sn.length, _sn.start);
                             codegen_expr(parg);
@@ -1570,6 +1633,21 @@ void codegen_expr(Expr* expr) {
                     codegen_skip_strdup = prev_skip;
                     break;
                 }
+                // println(Option) / println(Result): one renderer, shared with
+                // print() and with interpolation, resolved from the expression's
+                // TYPE rather than its syntactic shape. It must be tested before
+                // the struct block below, because an Option family IS a C struct
+                // and would otherwise be looked up as a user struct.
+                if (!arg_is_string) {
+                    const char* _plnfam = cg_optlike_family(parg);
+                    if (_plnfam) {
+                        emit("({ const char* __pot = %s_to_string(", _plnfam);
+                        codegen_expr(parg);
+                        emit("); printf(\"%%s\\n\", __pot); wyn_rc_release(__pot); })");
+                        codegen_skip_strdup = prev_skip;
+                        break;
+                    }
+                }
                 // println(struct): print "Name { field: value, ... }" by
                 // looking up the struct declaration from current_program.
                 // Falling through to to_string(struct) passed a struct by
@@ -1591,30 +1669,12 @@ void codegen_expr(Expr* expr) {
                         extern const char* get_struct_var_type(const char*);
                         _psn = get_struct_var_type(_pvn);
                     }
-                    // println(Option): print "Some(v)" / "none" from the tag.
-                    // Detect via the enum-var registry OR the checker typing
-                    // the ident as an Option* family struct (_psn) - falling
-                    // through to to_string(opt) passed the struct by value to
-                    // a long long param - an internal codegen error.
-                    if (!arg_is_string && parg->type == EXPR_IDENT) {
-                        char _pvn[128]; token_to_cstr(_pvn, sizeof(_pvn), parg->token);
-                        extern const char* get_enum_var_type(const char*);
-                        const char* _oet = get_enum_var_type(_pvn);
-                        if (!_oet && _psn && strncmp(_psn, "Option", 6) == 0) _oet = _psn;
-                        if (_oet && strncmp(_oet, "Option", 6) == 0) {
-                            const char* _fam = _oet + 6;
-                            const char* _fmt =
-                                strcmp(_fam, "String") == 0 ? "printf(\"Some(\\\"%%s\\\")\\n\", %s.value);"
-                              : strcmp(_fam, "Float") == 0  ? "printf(\"Some(\"); print_float_no_nl(%s.value); printf(\")\\n\");"
-                              : strcmp(_fam, "Bool") == 0   ? "printf(\"Some(%%s)\\n\", %s.value ? \"true\" : \"false\");"
-                              : "printf(\"Some(%%lld)\\n\", (long long)%s.value);";
-                            emit("({ if (%s.tag == 1) { ", _pvn);
-                            emit(_fmt, _pvn);
-                            emit(" } else { printf(\"none\\n\"); } })");
-                            codegen_skip_strdup = prev_skip;
-                            break;
-                        }
-                    }
+                    // The ident-only Option renderer that used to sit here is
+                    // gone: it duplicated the family formats inline, so the four
+                    // payload types could drift from print()'s and from
+                    // interpolation's, and being keyed on EXPR_IDENT it was the
+                    // reason a variable printed while the same value written
+                    // inline did not compile. The single renderer is above.
                     if (_psn) {
                     Token _sn = {TOKEN_IDENT, _psn, (int)strlen(_psn), 0};
                     // Prefer the __wyn_str_<Name> helper that codegen_program
@@ -6085,12 +6145,21 @@ void codegen_expr(Expr* expr) {
                     // same registry, so a struct without a helper still falls
                     // through to to_string rather than calling a missing function.
                     extern int cg_struct_has_str_helper(Token name);
+                    const char* _ifam = cg_optlike_family(e);
                     if (e->type == EXPR_STRING) {
                         codegen_expr(e);
                     } else if (e->expr_type && e->expr_type->kind == TYPE_MAP) {
                         // Same defect as println(map): to_string(map) lowered to
                         // the integer path, so "${m}" rendered the map pointer.
                         emit("map_to_string(");
+                        codegen_expr(e);
+                        emit(")");
+                    } else if (_ifam) {
+                        // Same defect again for Option/Result, and here it was
+                        // worse than the struct case: interpolation was NOT a
+                        // workaround, because "${o}" failed to build too. Tested
+                        // before the struct arm - the families are C structs.
+                        emit("%s_to_string(", _ifam);
                         codegen_expr(e);
                         emit(")");
                     } else if (e->expr_type && e->expr_type->kind == TYPE_STRUCT &&
