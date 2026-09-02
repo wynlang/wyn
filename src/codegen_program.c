@@ -588,6 +588,68 @@ static void emit_optlike_str_helpers(Program* prog, int pass) {
     }
 }
 
+// --- Typed array-element renderers ----------------------------------------
+//
+// A struct pushed into an array is heap-boxed as WYN_TYPE_STRUCT with no type
+// name, so the runtime's three element formatters can only print `<struct>` for
+// it. The element type IS known at the print site, so one renderer per printed
+// element type is emitted here and the print sites call it instead of the
+// generic array formatter.
+//
+// Emitted last: it calls __wyn_str_<T> for a user struct and <Fam>_to_string for
+// an Option family, so both must already exist.
+static void emit_array_elem_str_helpers(Program* prog) {
+    extern int printed_array_elem_count(void);
+    extern const char* printed_array_elem_name(int);
+    for (int i = 0; i < printed_array_elem_count(); i++) {
+        const char* el = printed_array_elem_name(i);
+        // How one element renders. An Option/Result family has a _to_string; a
+        // user struct has the interpolation helper. Anything else gets no
+        // renderer at all and keeps the runtime's <struct> placeholder.
+        char call[192];
+        Token et = {TOKEN_IDENT, el, (int)strlen(el), 0};
+        // codegen_expr.c is #included ahead of this file, so its guard is in
+        // scope - and using the SAME guard the print sites use is what keeps the
+        // emitted set and the called set from diverging.
+        if (cg_optlike_has_renderer(el))
+            snprintf(call, sizeof(call), "%s_to_string(*(%s*)__v.data.struct_val)", el, el);
+        else if (cg_find_struct(prog, et) && cg_struct_has_str_helper(et))
+            snprintf(call, sizeof(call), "__wyn_str_%s(*(%s*)__v.data.struct_val)", el, el);
+        else
+            continue;
+        // Grown with realloc rather than sized by a probe: probing would mean
+        // rendering every element twice, and each render allocates.
+        emit("static char* __wyn_arrstr_%s(WynArray __a) {\n", el);
+        emit("    size_t __cap = 64, __len = 0;\n"
+             "    char* __t = (char*)malloc(__cap);\n"
+             "    if (!__t) return wyn_str_alloc(1);\n"
+             "    __t[__len++] = '[';\n"
+             "    for (int __i = 0; __i < __a.count; __i++) {\n"
+             "        WynValue __v = __a.data[__i];\n"
+             "        char* __e = NULL;\n");
+        // The array is a tagged container, so an element that is not a boxed
+        // struct must not be cast - it keeps the runtime's placeholder.
+        emit("        if (__v.type == WYN_TYPE_STRUCT && __v.data.struct_val) __e = %s;\n", call);
+        emit("        const char* __s = __e ? __e : \"<struct>\";\n"
+             "        size_t __el = strlen(__s);\n"
+             "        size_t __need = __len + __el + 4;\n"
+             "        if (__need > __cap) { while (__need > __cap) __cap *= 2;\n"
+             "            char* __nt = (char*)realloc(__t, __cap);\n"
+             "            if (!__nt) { free(__t); if (__e) wyn_rc_release(__e); return wyn_str_alloc(1); }\n"
+             "            __t = __nt; }\n"
+             "        if (__i > 0) { __t[__len++] = ','; __t[__len++] = ' '; }\n"
+             "        memcpy(__t + __len, __s, __el); __len += __el;\n"
+             "        if (__e) wyn_rc_release(__e);\n"
+             "    }\n"
+             "    __t[__len++] = ']';\n"
+             "    char* __b = wyn_str_alloc(__len + 1);\n"
+             "    memcpy(__b, __t, __len); __b[__len] = 0;\n"
+             "    wyn_rc_set_length(__b, (unsigned int)__len);\n"
+             "    free(__t);\n"
+             "    return __b;\n}\n");
+    }
+}
+
 void codegen_program(Program* prog) {
     current_program = prog;
     bool has_main = false;
@@ -935,6 +997,8 @@ void codegen_program(Program* prog) {
     emit_optlike_str_helpers(prog, 0);
     emit_struct_str_helpers(prog);
     emit_optlike_str_helpers(prog, 1);
+    // Last: an element renderer calls one of the two above.
+    emit_array_elem_str_helpers(prog);
 
     // Generate module-level constants (only if has main - script mode puts them in wyn_main)
     if (has_main) {

@@ -2433,6 +2433,36 @@ int is_interpolated_struct(const char* struct_name) {
     return 0;
 }
 
+// Registry of ELEMENT type names for arrays that get printed, so codegen emits a
+// __wyn_arrstr_<Name> renderer for exactly those. Separate from the registry
+// above because the need is different: a boxed array element carries no type
+// name at runtime, so `print([P{x:1}])` printed the box's address (now the
+// honest-but-empty `<struct>`); only the print SITE knows the element type.
+// Registered by the checker for the same reason as above - it is the pass that
+// visits every expression with a resolved type - and registered narrowly, since
+// emitting a renderer per struct would put a dead static function in every
+// program that declares one.
+static char** arr_elem_types = NULL;
+static int arr_elem_type_count = 0;
+static int arr_elem_type_cap = 0;
+void register_printed_array_elem(const char* type_name) {
+    if (!type_name || !*type_name) return;
+    for (int i = 0; i < arr_elem_type_count; i++)
+        if (strcmp(arr_elem_types[i], type_name) == 0) return;
+    WYN_ENSURE_CAP(arr_elem_types, arr_elem_type_count, arr_elem_type_cap);
+    arr_elem_types[arr_elem_type_count++] = strdup(type_name);
+}
+int printed_array_elem_count(void) { return arr_elem_type_count; }
+const char* printed_array_elem_name(int i) {
+    return (i >= 0 && i < arr_elem_type_count) ? arr_elem_types[i] : NULL;
+}
+int is_printed_array_elem(const char* type_name) {
+    if (!type_name) return 0;
+    for (int i = 0; i < arr_elem_type_count; i++)
+        if (strcmp(arr_elem_types[i], type_name) == 0) return 1;
+    return 0;
+}
+
 // Registry for monomorphic Result<Ok, Err> families with a user-struct OK payload
 // (e.g. `ResultUser` for `Result<User, string>`, `ResultPoint_Fail` for
 // `Result<Point, Fail>`). Mirrors the Option<Struct> registry above: populated as
