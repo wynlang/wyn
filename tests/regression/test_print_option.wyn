@@ -1,0 +1,122 @@
+// Regression: printing an Option or Result worked in exactly ONE of the six
+// spellings. Measured on dev @ 4675318, every payload type:
+//
+//   o = Some(5)
+//   println(o)      -> Some(5)        the only form that worked
+//   print(o)        -> BUILD FAILED   "passing 'OptionInt' to parameter of
+//   println(Some(5))-> BUILD FAILED    incompatible type 'long long'"
+//   print(Some(5))  -> BUILD FAILED
+//   print("${o}")   -> BUILD FAILED   interpolation was NOT a workaround here,
+//                                     unlike the struct case in #333
+//   print(none)     -> 4340806724     a pointer, printed as a decimal
+//   println(Ok(5))  -> BUILD FAILED
+//
+// Cause: no Option family had a _to_string at all, so every spelling that goes
+// through to_string()/wyn_out_append() hit `default: int_to_string` in the
+// _Generic table and passed a struct by value to a long long parameter. The one
+// working form was a hand-written inline printf in codegen_expr.c gated on
+// `parg->type == EXPR_IDENT` - which is why a variable worked and the identical
+// value written inline did not.
+//
+// Fix mirrors #333 (structs) and #334 (maps): one renderer per family in the
+// runtime, and codegen routes every spelling to it via the expression's static
+// type rather than its syntactic shape.
+//
+// EXPECT: Some(5)
+// EXPECT: Some(5)
+// EXPECT: Some(5)
+// EXPECT: Some(5)
+// EXPECT: Some(5)
+// EXPECT: Some("hi")
+// EXPECT: Some("hi")
+// EXPECT: Some("hi")
+// EXPECT: Some(2.5)
+// EXPECT: Some(2.5)
+// EXPECT: Some(2.5)
+// EXPECT: Some(true)
+// EXPECT: Some(true)
+// EXPECT: Some(true)
+// EXPECT: none
+// EXPECT: none
+// EXPECT: none
+// EXPECT: none
+// EXPECT: Some(1)
+// EXPECT: none
+// EXPECT: v= Some(5) 7
+// EXPECT: Ok(5)
+// EXPECT: Ok(5)
+// EXPECT: Ok(5)
+// EXPECT: Ok(5)
+// EXPECT: Err("bad")
+// EXPECT: Err("bad")
+// EXPECT: Ok("yes")
+// EXPECT: Some("")
+
+fn find(n: int) -> int? { if n > 0 { return Some(n) } return none }
+fn miss() -> string? { return none }
+fn ok_str() -> Result<string, string> { return Ok("yes") }
+fn ok_int() -> Result<int, string> { return Ok(5) }
+fn err_int() -> Result<int, string> { return Err("bad") }
+
+fn main() {
+    // int payload: all five spellings must agree - that is the invariant.
+    o = Some(5)
+    print(o)
+    println(o)
+    print("${o}")
+    print(Some(5))
+    println(Some(5))
+
+    // string payload quotes the value, as struct fields and arrays already do.
+    s = Some("hi")
+    print(s)
+    println(s)
+    print("${s}")
+
+    // float and bool payloads must render as their real type, not as an int.
+    f = Some(2.5)
+    print(f)
+    println(f)
+    print("${f}")
+
+    b = Some(true)
+    print(b)
+    println(b)
+    print("${b}")
+
+    // The empty case, both spellings and interpolated. Bare `none` has no
+    // payload type to infer from, so it lowers to the int family - it must
+    // still print `none` rather than the address of the struct.
+    print(none)
+    println(none)
+    print("${none}")
+    print(miss())
+
+    // A call result, not a variable: the form that failed while the variable
+    // holding the identical value worked.
+    print(find(1))
+    print(find(-1))
+
+    // Alongside other arguments, separators intact.
+    print("v=", o, 7)
+
+    // Result renders the same way, both variants and both spellings. The Result
+    // here comes from a TYPED source, because a bare `r = Ok(5)` local does not
+    // compile at all today - the declaration lowers to `WynResult*` while the
+    // initializer is `ResultInt`. That is a declaration defect, not a rendering
+    // one, so it is deliberately not exercised here.
+    r = ok_int()
+    print(r)
+    println(r)
+    print(Ok(5))
+    println(Ok(5))
+    print(Err("bad"))
+    print(err_int())
+
+    // A string Ok payload is quoted like Some("hi").
+    print(ok_str())
+
+    // An empty string payload is still Some, not none - the tag decides, not
+    // the value's truthiness.
+    print(Some(""))
+}

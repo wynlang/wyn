@@ -1839,7 +1839,22 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // Found while building VisualWyn, which worked around it by renaming.
             if (expr->token.length == 4 && memcmp(expr->token.start, "none", 4) == 0 &&
                 !find_symbol(scope, expr->token)) {
-                expr->expr_type = builtin_int;  // Return type is pointer to Option
+                // Rewrite the node to the real no-value node. As a bare EXPR_IDENT
+                // it lowered to the C symbol `none` - which is optional.c's
+                // `WynOptional* none(void)` - so `print(none)` printed that
+                // FUNCTION's address as a decimal (4302194004) and exited 0. Every
+                // other site that understands no-value already accepts EXPR_NONE
+                // (the `== none` rewrite at the top of this function, the
+                // Option-return check below, codegen_stmt's return lowering), so
+                // this makes the ident spelling agree with the node spelling
+                // instead of each place re-testing the token.
+                //
+                // The TYPE stays int, exactly as before: retyping it to the
+                // OptionInt struct here is the separate `none`-inference concern
+                // (`var o: int? = none` still fails its own way), and changing both
+                // at once would make a regression impossible to attribute.
+                expr->type = EXPR_NONE;
+                expr->expr_type = builtin_int;
                 return builtin_int;
             }
             
