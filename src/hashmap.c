@@ -336,6 +336,60 @@ void hashmap_insert(WynHashMap* map, const char* key, int value) {
 }
 
 // Return all keys as newline-separated string
+// Render a map as `{"k": v, "k2": v2}` into a caller-supplied buffer.
+//
+// Before this existed, print/println/"${m}" of a map fell through the _Generic
+// tables to the integer case and printed the map POINTER as a decimal number
+// (e.g. 48163192832) - check-clean, exit 0, silently meaningless. Same for
+// HashMap and HashSet. Inspecting a map is one of the most common things anyone
+// does while debugging, and there was no workaround, because interpolation was
+// broken the same way.
+//
+// Written here rather than in wyn_runtime.h because only this file can see
+// `struct WynHashMap` and the real HashMapValue type tags. Going through
+// hashmap_keys()/hashmap_values() would not work: hashmap_values pushes every
+// value with array_push_str, so an int value comes back as the string "1".
+//
+// Returns the number of bytes that WOULD be written (snprintf semantics), so the
+// caller can size a buffer with a first call and fill it with a second.
+int hashmap_format(WynHashMap* map, char* out, size_t cap) {
+    size_t pos = 0;
+    #define HM_EMIT(...) do { \
+        int _n = snprintf(out && pos < cap ? out + pos : NULL, \
+                          out && pos < cap ? cap - pos : 0, __VA_ARGS__); \
+        if (_n > 0) pos += (size_t)_n; \
+    } while (0)
+    HM_EMIT("{");
+    int first = 1;
+    if (map) {
+        for (int i = 0; i < HASHMAP_SIZE; i++) {
+            Entry* entry = map->buckets[i];
+            while (entry) {
+                if (!first) HM_EMIT(", ");
+                first = 0;
+                HM_EMIT("\"%s\": ", entry->key);
+                switch (entry->value.type) {
+                    case HASHMAP_INT:    HM_EMIT("%d", entry->value.value.as_int); break;
+                    case HASHMAP_BOOL:   HM_EMIT("%s", entry->value.value.as_bool ? "true" : "false"); break;
+                    case HASHMAP_FLOAT:  HM_EMIT("%g", entry->value.value.as_float); break;
+                    case HASHMAP_STRING: HM_EMIT("\"%s\"", entry->value.value.as_string ? entry->value.value.as_string : ""); break;
+                    // An array/struct value lives behind hashmap_insert_ptr and
+                    // its element type is not recorded, so say so rather than
+                    // print a pointer - which is the bug this function exists to
+                    // remove.
+                    case HASHMAP_PTR:    HM_EMIT("<ptr>"); break;
+                    default:             HM_EMIT("<?>"); break;
+                }
+                entry = entry->next;
+            }
+        }
+    }
+    HM_EMIT("}");
+    #undef HM_EMIT
+    if (out && cap > 0) out[pos < cap ? pos : cap - 1] = 0;
+    return (int)pos;
+}
+
 char* hashmap_keys_string(WynHashMap* map) {
     if (!map) return "";
     // First pass: compute total length

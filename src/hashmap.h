@@ -36,6 +36,11 @@ void hashmap_insert_string(WynHashMap* map, const char* key, const char* value);
 void hashmap_insert_bool(WynHashMap* map, const char* key, int value);
 void hashmap_insert_ptr(WynHashMap* map, const char* key, void* value);
 
+// Render as {"k": v, ...} into a caller buffer; returns the length that WOULD be
+// written, snprintf-style, so callers can size then fill. Defined in hashmap.c
+// because only that file sees struct WynHashMap and the real value type tags.
+int hashmap_format(WynHashMap* map, char* out, size_t cap);
+
 // Generic get (returns HashMapValue)
 HashMapValue hashmap_get(WynHashMap* map, const char* key);
 

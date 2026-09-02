@@ -2515,6 +2515,37 @@ void wyn_out_flush(WynOut* o) {
         wyn_rc_release(s);
     }
 }
+
+// Map rendering. Delegates to hashmap_format (hashmap.c), the only place that can
+// see the real value type tags. Two calls: size, then fill.
+void wyn_out_map(WynOut* o, WynHashMap* m) {
+    extern int hashmap_format(WynHashMap* map, char* out, size_t cap);
+    int n = hashmap_format(m, NULL, 0);
+    if (n < 0) { wyn_sb_append(&o->sb, "{}"); return; }
+    char* tmp = (char*)wyn_malloc((size_t)n + 1);
+    hashmap_format(m, tmp, (size_t)n + 1);
+    wyn_sb_append_n(&o->sb, tmp, (size_t)n);
+    free(tmp);
+}
+void print_map_no_nl(WynHashMap* m) {
+    WynOut o; wyn_out_begin(&o);
+    wyn_out_map(&o, m);
+    char* s = wyn_sb_finish(&o.sb);
+    if (s) { fputs(s, stdout); wyn_rc_release(s); }
+}
+// Fresh +1 RC string form, for the single-argument println fast path and for
+// "${m}" interpolation - both of which need a string rather than a side effect.
+char* map_to_string(WynHashMap* m) {
+    WynOut o; wyn_out_begin(&o);
+    wyn_out_map(&o, m);
+    return wyn_sb_finish(&o.sb);
+}
+void println_map(WynHashMap* m) {
+    WynOut o; wyn_out_begin(&o);
+    wyn_out_map(&o, m);
+    wyn_out_str(&o, "\n");
+    wyn_out_flush(&o);
+}
 #define wyn_out_append(o, x) _Generic((x), \
     int: wyn_out_int, \
     long: wyn_out_int, \
@@ -2525,6 +2556,7 @@ void wyn_out_flush(WynOut* o) {
     const char*: wyn_out_str, \
     bool: wyn_out_bool, \
     WynArray: wyn_out_array, \
+    WynHashMap*: wyn_out_map, \
     default: wyn_out_int)(o, x)
 
 // Writes straight to stdout, allocation-free. wyn_out_elem() above is the
@@ -2562,6 +2594,7 @@ void print_value(WynValue v) {
     const char*: print_str_no_nl, \
     bool: print_bool_no_nl, \
     WynArray: print_array_no_nl, \
+    WynHashMap*: print_map_no_nl, \
     default: print_int_no_nl)(x)
 
 
@@ -2589,6 +2622,7 @@ void println_value(WynValue v)  { print_value(v); }  // print_value already ends
     const char*: println_str, \
     bool: println_bool, \
     WynArray: println_array, \
+    WynHashMap*: println_map, \
     WynValue: println_value, \
     default: println_int)(x)
 void print_debug(const char* label, int val) { printf("%s: %d\n", label, val); }
