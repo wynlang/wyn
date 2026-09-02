@@ -2485,6 +2485,7 @@ void wyn_out_bool(WynOut* o, bool v) { wyn_sb_append(&o->sb, v ? "true" : "false
 // tests/regression/test_float_bool_arrays.wyn). Their agreement is pinned by
 // tests/regression/test_print_array_parity.wyn - collapsing them into one
 // function is NOT the answer, see the comment on print_array_elem.
+void wyn_out_array(WynOut* o, WynArray arr);   // mutually recursive with wyn_out_elem
 void wyn_out_elem(WynOut* o, WynValue v) {
     switch (v.type) {
         case WYN_TYPE_STRING: wyn_sb_append_n(&o->sb, "\"", 1);
@@ -2493,6 +2494,16 @@ void wyn_out_elem(WynOut* o, WynValue v) {
         case WYN_TYPE_FLOAT:  wyn_out_float(o, v.data.float_val); break;
         case WYN_TYPE_BOOL:   wyn_out_bool(o, v.data.int_val ? true : false); break;
         case WYN_TYPE_INT:    wyn_out_int(o, v.data.int_val); break;
+        // A nested array is a real tag, so recurse: print([[1,2],[3]]) used to
+        // fall into `default:` and print each inner array's POINTER as a decimal.
+        case WYN_TYPE_ARRAY:  if (v.data.array_val) wyn_out_array(o, *v.data.array_val);
+                              else wyn_sb_append(&o->sb, "[]");
+                              break;
+        // A boxed struct carries no type name, so the runtime cannot render it -
+        // but printing its heap address as a decimal claimed a value that was
+        // never there. Name what it is instead, the rule the struct field
+        // helpers' <Type> placeholder already follows.
+        case WYN_TYPE_STRUCT: wyn_sb_append(&o->sb, "<struct>"); break;
         default:              wyn_out_int(o, v.data.int_val); break;
     }
 }
@@ -2567,12 +2578,19 @@ void println_map(WynHashMap* m) {
 // formatter. Do not do that: it adds an RC allocation per array element on the
 // direct-print path, and it segfaulted the stdlib suite on macos-15 while
 // passing locally. Sharing the switch is not worth allocating in a printf path.
+void print_array_no_nl(WynArray arr);   // mutually recursive with print_array_elem
 static void print_array_elem(WynValue v) {
     switch (v.type) {
         case WYN_TYPE_STRING: printf("\"%s\"", v.data.string_val ? v.data.string_val : ""); break;
         case WYN_TYPE_FLOAT:  { char b[40]; wyn_format_float(b, sizeof(b), v.data.float_val); fputs(b, stdout); } break;
         case WYN_TYPE_BOOL:   printf("%s", v.data.int_val ? "true" : "false"); break;
         case WYN_TYPE_INT:    printf("%lld", v.data.int_val); break;
+        // Same two additions as wyn_out_elem, and they must stay in step - see
+        // test_print_array_parity.wyn.
+        case WYN_TYPE_ARRAY:  if (v.data.array_val) print_array_no_nl(*v.data.array_val);
+                              else fputs("[]", stdout);
+                              break;
+        case WYN_TYPE_STRUCT: fputs("<struct>", stdout); break;
         default:              printf("%lld", v.data.int_val); break;
     }
 }
@@ -2911,18 +2929,30 @@ char* array_to_string(WynArray arr) {
     tmp[len++] = '[';
     for (int i = 0; i < arr.count; i++) {
         char elem[512];
+        // A nested array's rendering is unbounded, so it goes through a heap
+        // string rather than the 512-byte stack buffer the scalars share.
+        char* nested = NULL;
+        const char* src = elem;
         WynValue v = arr.data[i];
         switch (v.type) {
             case WYN_TYPE_STRING: snprintf(elem, sizeof(elem), "\"%s\"", v.data.string_val ? v.data.string_val : ""); break;
             case WYN_TYPE_FLOAT:  wyn_format_float(elem, sizeof(elem), v.data.float_val); break;
             case WYN_TYPE_BOOL:   snprintf(elem, sizeof(elem), "%s", v.data.int_val ? "true" : "false"); break;
+            // Third copy of the same two cases (this switch cannot share the
+            // others: it writes into a caller buffer, not to stdout or a WynOut).
+            // "${[[1,2],[3]]}" used to render each inner array's pointer.
+            case WYN_TYPE_ARRAY:  if (v.data.array_val) { nested = array_to_string(*v.data.array_val); src = nested; }
+                                  else src = "[]";
+                                  break;
+            case WYN_TYPE_STRUCT: src = "<struct>"; break;
             default:              snprintf(elem, sizeof(elem), "%lld", v.data.int_val); break;
         }
-        size_t elen = strlen(elem);
+        size_t elen = strlen(src);
         size_t need = len + elen + 4; // elem + ", " + "]" + NUL
-        if (need > cap) { while (need > cap) cap *= 2; char* nt = realloc(tmp, cap); if (!nt) { free(tmp); return wyn_strdup("[]"); } tmp = nt; }
+        if (need > cap) { while (need > cap) cap *= 2; char* nt = realloc(tmp, cap); if (!nt) { free(tmp); if (nested) wyn_rc_release(nested); return wyn_strdup("[]"); } tmp = nt; }
         if (i > 0) { tmp[len++] = ','; tmp[len++] = ' '; }
-        memcpy(tmp + len, elem, elen); len += elen;
+        memcpy(tmp + len, src, elen); len += elen;
+        if (nested) wyn_rc_release(nested);
     }
     tmp[len++] = ']';
     char* r = wyn_str_alloc(len + 1);
