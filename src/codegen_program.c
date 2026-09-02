@@ -36,8 +36,8 @@ static void emit_option_struct_family(const char* s) {
     emit("typedef struct { int tag; %s value; } Option%s;\n", s, s);
     emit("static inline Option%s Option%s_Some(%s value){ Option%s o; o.tag=1; o.value=value; return o; }\n", s, s, s, s);
     emit("static inline Option%s Option%s_None(void){ Option%s o; o.tag=0; return o; }\n", s, s, s);
-    emit("static inline int Option%s_is_some(Option%s o){ return o.tag==1; }\n", s, s);
-    emit("static inline int Option%s_is_none(Option%s o){ return o.tag==0; }\n", s, s);
+    emit("static inline bool Option%s_is_some(Option%s o){ return o.tag==1; }\n", s, s);
+    emit("static inline bool Option%s_is_none(Option%s o){ return o.tag==0; }\n", s, s);
     emit("static inline %s Option%s_unwrap(Option%s o){ if(o.tag==0){ fprintf(stderr, \"Error: unwrap() called on None\\n\"); exit(1); } return o.value; }\n", s, s, s);
     emit("static inline %s Option%s_unwrap_or(Option%s o, %s def){ return o.tag==1 ? o.value : def; }\n", s, s, s, s);
 }
@@ -72,8 +72,8 @@ static void emit_result_struct_family(const char* fam) {
     emit("typedef struct { int tag; union { %s ok_value; %s err_value; } data; } %s;\n", ok, err, fam);
     emit("static inline %s %s_Ok(%s value){ %s r; r.tag=0; r.data.ok_value=value; return r; }\n", fam, fam, ok, fam);
     emit("static inline %s %s_Err(%s msg){ %s r; r.tag=1; r.data.err_value=msg; return r; }\n", fam, fam, err, fam);
-    emit("static inline int %s_is_ok(%s r){ return r.tag==0; }\n", fam, fam);
-    emit("static inline int %s_is_err(%s r){ return r.tag==1; }\n", fam, fam);
+    emit("static inline bool %s_is_ok(%s r){ return r.tag==0; }\n", fam, fam);
+    emit("static inline bool %s_is_err(%s r){ return r.tag==1; }\n", fam, fam);
     if (err_is_str)
         emit("static inline %s %s_unwrap(%s r){ if(r.tag==1){ fprintf(stderr, \"Error: unwrap() called on Err: %%s\\n\", r.data.err_value); exit(1); } return r.data.ok_value; }\n", ok, fam, fam);
     else

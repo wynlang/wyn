@@ -4863,8 +4863,8 @@ typedef struct { int tag; union { const char* ok_value; const char* err_value; }
 
 ResultInt ResultInt_Ok(int value) { ResultInt r; r.tag = 0; r.data.ok_value = value; return r; }
 ResultInt ResultInt_Err(const char* msg) { ResultInt r; r.tag = 1; r.data.err_value = msg; return r; }
-int ResultInt_is_ok(ResultInt r) { return r.tag == 0; }
-int ResultInt_is_err(ResultInt r) { return r.tag == 1; }
+bool ResultInt_is_ok(ResultInt r) { return r.tag == 0; }
+bool ResultInt_is_err(ResultInt r) { return r.tag == 1; }
 int ResultInt_unwrap(ResultInt r) { if (r.tag == 1) { fprintf(stderr, "Error: unwrap() called on Err: %s\n", r.data.err_value); exit(1); } return r.data.ok_value; }
 const char* ResultInt_unwrap_err(ResultInt r) { if (r.tag == 0) { fprintf(stderr, "Error: unwrap_err() called on Ok\n"); exit(1); } return r.data.err_value; }
 long long ResultInt_unwrap_or(ResultInt r, long long def) { return r.tag == 0 ? r.data.ok_value : def; }
@@ -4873,24 +4873,24 @@ long long ResultInt_unwrap_or(ResultInt r, long long def) { return r.tag == 0 ? 
 
 ResultString ResultString_Ok(const char* value) { ResultString r; r.tag = 0; r.data.ok_value = value; return r; }
 ResultString ResultString_Err(const char* msg) { ResultString r; r.tag = 1; r.data.err_value = msg; return r; }
-int ResultString_is_ok(ResultString r) { return r.tag == 0; }
-int ResultString_is_err(ResultString r) { return r.tag == 1; }
+bool ResultString_is_ok(ResultString r) { return r.tag == 0; }
+bool ResultString_is_err(ResultString r) { return r.tag == 1; }
 const char* ResultString_unwrap(ResultString r) { if (r.tag == 1) { fprintf(stderr, "Error: unwrap() called on Err: %s\n", r.data.err_value); exit(1); } return r.data.ok_value; }
 const char* ResultString_unwrap_err(ResultString r) { if (r.tag == 0) { fprintf(stderr, "Error: unwrap_err() called on Ok\n"); exit(1); } return r.data.err_value; }
 
 typedef struct { int tag; int value; } OptionInt;
 OptionInt OptionInt_Some(int value) { OptionInt o; o.tag = 1; o.value = value; return o; }
 OptionInt OptionInt_None() { OptionInt o; o.tag = 0; o.value = 0; return o; }
-int OptionInt_is_some(OptionInt o) { return o.tag == 1; }
-int OptionInt_is_none(OptionInt o) { return o.tag == 0; }
+bool OptionInt_is_some(OptionInt o) { return o.tag == 1; }
+bool OptionInt_is_none(OptionInt o) { return o.tag == 0; }
 int OptionInt_unwrap(OptionInt o) { if (o.tag == 0) { fprintf(stderr, "Error: unwrap() called on None\n"); exit(1); } return o.value; }
 int OptionInt_unwrap_or(OptionInt o, int def) { return o.tag == 1 ? o.value : def; }
 
 typedef struct { int tag; const char* value; } OptionString;
 OptionString OptionString_Some(const char* value) { OptionString o; o.tag = 1; o.value = value; return o; }
 OptionString OptionString_None() { OptionString o; o.tag = 0; o.value = NULL; return o; }
-int OptionString_is_some(OptionString o) { return o.tag == 1; }
-int OptionString_is_none(OptionString o) { return o.tag == 0; }
+bool OptionString_is_some(OptionString o) { return o.tag == 1; }
+bool OptionString_is_none(OptionString o) { return o.tag == 0; }
 const char* OptionString_unwrap(OptionString o) { if (o.tag == 0) { fprintf(stderr, "Error: unwrap() called on None\n"); exit(1); } return o.value; }
 const char* OptionString_unwrap_or(OptionString o, const char* def) { return o.tag == 1 ? o.value : def; }
 
@@ -4898,8 +4898,8 @@ const char* OptionString_unwrap_or(OptionString o, const char* def) { return o.t
 typedef struct { int tag; double value; } OptionFloat;
 OptionFloat OptionFloat_Some(double value) { OptionFloat o; o.tag = 1; o.value = value; return o; }
 OptionFloat OptionFloat_None() { OptionFloat o; o.tag = 0; o.value = 0.0; return o; }
-int OptionFloat_is_some(OptionFloat o) { return o.tag == 1; }
-int OptionFloat_is_none(OptionFloat o) { return o.tag == 0; }
+bool OptionFloat_is_some(OptionFloat o) { return o.tag == 1; }
+bool OptionFloat_is_none(OptionFloat o) { return o.tag == 0; }
 double OptionFloat_unwrap(OptionFloat o) { if (o.tag == 0) { fprintf(stderr, "Error: unwrap() called on None\n"); exit(1); } return o.value; }
 double OptionFloat_unwrap_or(OptionFloat o, double def) { return o.tag == 1 ? o.value : def; }
 
@@ -4907,8 +4907,8 @@ double OptionFloat_unwrap_or(OptionFloat o, double def) { return o.tag == 1 ? o.
 typedef struct { int tag; bool value; } OptionBool;
 OptionBool OptionBool_Some(bool value) { OptionBool o; o.tag = 1; o.value = value; return o; }
 OptionBool OptionBool_None() { OptionBool o; o.tag = 0; o.value = false; return o; }
-int OptionBool_is_some(OptionBool o) { return o.tag == 1; }
-int OptionBool_is_none(OptionBool o) { return o.tag == 0; }
+bool OptionBool_is_some(OptionBool o) { return o.tag == 1; }
+bool OptionBool_is_none(OptionBool o) { return o.tag == 0; }
 bool OptionBool_unwrap(OptionBool o) { if (o.tag == 0) { fprintf(stderr, "Error: unwrap() called on None\n"); exit(1); } return o.value; }
 bool OptionBool_unwrap_or(OptionBool o, bool def) { return o.tag == 1 ? o.value : def; }
 
@@ -4916,8 +4916,8 @@ bool OptionBool_unwrap_or(OptionBool o, bool def) { return o.tag == 1 ? o.value 
 typedef struct { int tag; union { double ok_value; const char* err_value; } data; } ResultFloat;
 ResultFloat ResultFloat_Ok(double value) { ResultFloat r; r.tag = 0; r.data.ok_value = value; return r; }
 ResultFloat ResultFloat_Err(const char* msg) { ResultFloat r; r.tag = 1; r.data.err_value = msg; return r; }
-int ResultFloat_is_ok(ResultFloat r) { return r.tag == 0; }
-int ResultFloat_is_err(ResultFloat r) { return r.tag == 1; }
+bool ResultFloat_is_ok(ResultFloat r) { return r.tag == 0; }
+bool ResultFloat_is_err(ResultFloat r) { return r.tag == 1; }
 double ResultFloat_unwrap(ResultFloat r) { if (r.tag == 1) { fprintf(stderr, "Error: unwrap() called on Err: %s\n", r.data.err_value); exit(1); } return r.data.ok_value; }
 const char* ResultFloat_unwrap_err(ResultFloat r) { if (r.tag == 0) { fprintf(stderr, "Error: unwrap_err() called on Ok\n"); exit(1); } return r.data.err_value; }
 double ResultFloat_unwrap_or(ResultFloat r, double def) { return r.tag == 0 ? r.data.ok_value : def; }
@@ -4925,8 +4925,8 @@ double ResultFloat_unwrap_or(ResultFloat r, double def) { return r.tag == 0 ? r.
 typedef struct { int tag; union { bool ok_value; const char* err_value; } data; } ResultBool;
 ResultBool ResultBool_Ok(bool value) { ResultBool r; r.tag = 0; r.data.ok_value = value; return r; }
 ResultBool ResultBool_Err(const char* msg) { ResultBool r; r.tag = 1; r.data.err_value = msg; return r; }
-int ResultBool_is_ok(ResultBool r) { return r.tag == 0; }
-int ResultBool_is_err(ResultBool r) { return r.tag == 1; }
+bool ResultBool_is_ok(ResultBool r) { return r.tag == 0; }
+bool ResultBool_is_err(ResultBool r) { return r.tag == 1; }
 bool ResultBool_unwrap(ResultBool r) { if (r.tag == 1) { fprintf(stderr, "Error: unwrap() called on Err: %s\n", r.data.err_value); exit(1); } return r.data.ok_value; }
 const char* ResultBool_unwrap_err(ResultBool r) { if (r.tag == 0) { fprintf(stderr, "Error: unwrap_err() called on Ok\n"); exit(1); } return r.data.err_value; }
 bool ResultBool_unwrap_or(ResultBool r, bool def) { return r.tag == 0 ? r.data.ok_value : def; }

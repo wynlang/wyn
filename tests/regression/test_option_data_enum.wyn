@@ -41,7 +41,7 @@
 // EXPECT: param some
 // EXPECT: param none
 // EXPECT: local some
-// EXPECT: is_some=1 is_none=0
+// EXPECT: is_some=true is_none=false
 // EXPECT: struct field some
 // EXPECT: struct field none
 
