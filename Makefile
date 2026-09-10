@@ -316,6 +316,8 @@ test: wyn
 	@WYN=./wyn bash tests/errors/run_print_atomicity_test.sh
 	@echo "=== Running cc-error isolation test (parallel wyn run) ==="
 	@WYN=./wyn bash tests/errors/run_cc_err_isolation_test.sh
+	@echo "=== Running stale-pch recovery test ==="
+	@WYN=./wyn bash tests/errors/run_stale_pch_test.sh
 	@echo "=== Running unresolved-import abort test ==="
 	@WYN=./wyn bash tests/errors/run_unresolved_import_test.sh
 	@echo "=== Running selective-import alias rejection test ==="
