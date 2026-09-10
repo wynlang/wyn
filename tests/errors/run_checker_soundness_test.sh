@@ -105,6 +105,40 @@ expect_check_error "K3 non-exhaustive none-match rejected" "$TMP/k3_opt.wyn" "no
 printf 'enum Color { Red, Green, Blue }\nfn main(){ c = Color.Blue\n y = match c { Color.Red => 1 }\n print(y) }\n' > "$TMP/k3_color.wyn"
 expect_check_error "K3 builtin-namespace enum match rejected" "$TMP/k3_color.wyn" "non-exhaustive match"
 
+# --- K12: a match EXPRESSION on an Option/Result must cover both halves -------
+# Neither the K3 scalar rule nor the enum rule saw these: both families are a
+# TYPE_STRUCT named Option*/Result*, so a missing arm reached codegen, which emits no
+# fall-through and reads uninitialised memory. Measured on dev before the fix:
+#
+#   fn f() -> Result<int,string> { return Err("x") }
+#   y = match f() { Ok(v) => v }     # wyn check: no errors
+#   print(y)                         # -> 0, Err payload discarded silently
+#
+# K3 above LOOKED like it covered the Option spelling, but only by accident: bare
+# `none` was typed int, so `x = none` tripped the scalar rule. A real `int?` - from a
+# function, an annotation or a Some - never reached it.
+printf 'fn f() -> int? { return Some(5) }\nfn main(){ x = f()\n y = match x { Some(v) => v }\n print(y) }\n' > "$TMP/k12_opt_some.wyn"
+expect_check_error "K12 Option match missing the none arm rejected" "$TMP/k12_opt_some.wyn" "must handle 'none'"
+printf 'fn f() -> int? { return none }\nfn main(){ x = f()\n y = match x { none => -1 }\n print(y) }\n' > "$TMP/k12_opt_none.wyn"
+expect_check_error "K12 Option match missing the Some arm rejected" "$TMP/k12_opt_none.wyn" "must handle 'Some'"
+printf 'fn f() -> Result<int,string> { return Err("x") }\nfn main(){ r = f()\n y = match r { Ok(v) => v }\n print(y) }\n' > "$TMP/k12_res_ok.wyn"
+expect_check_error "K12 Result match missing the Err arm rejected" "$TMP/k12_res_ok.wyn" "must handle 'Err'"
+printf 'fn f() -> Result<int,string> { return Ok(1) }\nfn main(){ r = f()\n y = match r { Err(e) => -1 }\n print(y) }\n' > "$TMP/k12_res_err.wyn"
+expect_check_error "K12 Result match missing the Ok arm rejected" "$TMP/k12_res_err.wyn" "must handle 'Ok'"
+# The diagnostic must name the arm that is MISSING. An earlier cut had the two halves
+# swapped, so it told you to add the arm you had just written.
+printf 'fn f() -> int? { return Some(5) }\nfn main(){ x = f()\n y = match x { Some(v) => v }\n print(y) }\n' > "$TMP/k12_msg.wyn"
+# Asserted as presence-AND-absence on purpose: testing only that the WRONG half is
+# absent passes vacuously when there is no diagnostic at all (e.g. the rule regresses
+# to accepting the program), which is how a test can go green while the fix is gone.
+_k12msg=$("$WYN" check "$TMP/k12_msg.wyn" 2>&1); _k12rc=$?
+if [ $_k12rc -eq 1 ] && echo "$_k12msg" | grep -q "must handle 'none'" && \
+   ! echo "$_k12msg" | grep -q "must handle 'Some'"; then
+    ok "K12 diagnostic names the missing arm, not the present one"
+else
+    bad "K12 diagnostic names the missing arm, not the present one (rc=$_k12rc) [$(echo "$_k12msg" | head -1)]"
+fi
+
 # ============================================================================
 # POSITIVE guards: legitimate programs that must still type-check (no over-reject)
 # ============================================================================
@@ -275,5 +309,22 @@ expect_runs "interpolation hoisted from an else keeps its string type" "$TMP/ih_
 # The interpolated value must still be usable AS a string, not just printable.
 printf 'fn main() {\n  var n = 2\n  if n == 2 {\n    s = "v${n}"\n    println(s.len())\n    println(s.upper())\n  }\n}\n' > "$TMP/ih_use.wyn"
 expect_runs "hoisted interpolation is a real string (len/upper)" "$TMP/ih_use.wyn" "$(printf '2\nV2')"
+
+# --- K12 POSITIVE guards: a covered Option/Result match must still be accepted ---
+# Over-rejecting here would break every correct match in the tree, so each spelling of
+# "covered" is asserted: both arms, a wildcard, `None` as well as `none`, and arm order.
+printf 'fn f() -> int? { return none }\nfn main(){ x = f()\n y = match x { Some(v) => v, none => -1 }\n print(y) }\n' > "$TMP/ok_opt_both.wyn"
+expect_check_ok "Option match with both arms still ok" "$TMP/ok_opt_both.wyn"
+printf 'fn f() -> int? { return none }\nfn main(){ x = f()\n y = match x { Some(v) => v, _ => -1 }\n print(y) }\n' > "$TMP/ok_opt_wc.wyn"
+expect_check_ok "Option match with a wildcard still ok" "$TMP/ok_opt_wc.wyn"
+printf 'fn f() -> int? { return Some(5) }\nfn main(){ x = f()\n y = match x { None => -1, Some(v) => v }\n print(y) }\n' > "$TMP/ok_opt_capnone.wyn"
+expect_check_ok "Option match with capital None, none-arm first, still ok" "$TMP/ok_opt_capnone.wyn"
+printf 'fn f() -> Result<int,string> { return Ok(1) }\nfn main(){ r = f()\n y = match r { Ok(v) => v, Err(e) => -1 }\n print(y) }\n' > "$TMP/ok_res_both.wyn"
+expect_check_ok "Result match with both arms still ok" "$TMP/ok_res_both.wyn"
+printf 'fn f() -> Result<int,string> { return Ok(1) }\nfn main(){ r = f()\n y = match r { Ok(v) => v, _ => -1 }\n print(y) }\n' > "$TMP/ok_res_wc.wyn"
+expect_check_ok "Result match with a wildcard still ok" "$TMP/ok_res_wc.wyn"
+# And the covered forms must produce the RIGHT value, not merely check clean.
+printf 'fn f() -> Result<int,string> { return Err("x") }\nfn main(){ r = f()\n y = match r { Ok(v) => v, Err(e) => -1 }\n print(y) }\n' > "$TMP/ok_res_val.wyn"
+expect_runs "a covered Result match returns the Err arm's value" "$TMP/ok_res_val.wyn" "-1"
 
 echo ""; echo "checker-soundness: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]
