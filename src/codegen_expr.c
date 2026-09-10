@@ -259,6 +259,10 @@ static int cg_optlike_has_renderer(const char* fam) {
         if (strcmp(fam, known[i]) == 0) return 1;
     extern int is_registered_option_struct(const char*);
     if (strncmp(fam, "Option", 6) == 0 && is_registered_option_struct(fam + 6)) return 1;
+    // The Result registry is keyed by the FAMILY name, not the payload name, so
+    // this asks with `fam` where the Option check strips the prefix.
+    extern int is_registered_result_struct(const char*);
+    if (strncmp(fam, "Result", 6) == 0 && is_registered_result_struct(fam)) return 1;
     return 0;
 }
 

@@ -540,6 +540,54 @@ static void cg_register_optlike_payloads(Program* prog) {
         StructStmt* sd = cg_find_struct(prog, pt);
         if (sd && sd->type_param_count == 0) register_interpolated_struct(p);
     }
+    // Same for a Result family's ok/err payloads. The Result registry is keyed by
+    // FAMILY name, not payload name, so the payload C types come from the lookup.
+    extern int result_struct_count(void);
+    extern const char* result_struct_name(int);
+    extern int result_family_lookup(const char*, const char**, const char**, int*);
+    for (int i = 0; i < result_struct_count(); i++) {
+        const char* fam = result_struct_name(i);
+        const char* ok = NULL; const char* err = NULL; int eis = 1;
+        if (!result_family_lookup(fam, &ok, &err, &eis)) continue;
+        const char* names[2] = { ok, eis ? NULL : err };
+        for (int k = 0; k < 2; k++) {
+            if (!names[k]) continue;
+            Token t = {TOKEN_IDENT, names[k], (int)strlen(names[k]), 0};
+            StructStmt* sd = cg_find_struct(prog, t);
+            if (sd && sd->type_param_count == 0) register_interpolated_struct(names[k]);
+        }
+    }
+}
+
+// How a Result family's ok or err payload renders, given its C type. Writes the C
+// expression for a fresh char* into `out`, or returns 0 for a payload with no
+// string form. `field` is "ok_value" or "err_value".
+static int cg_result_payload_expr(Program* prog, const char* cty, const char* field,
+                                  char* out, size_t outsz) {
+    if (strcmp(cty, "const char*") == 0 || strcmp(cty, "char*") == 0) {
+        // Quoted, like Option's string payload and like Err's message.
+        snprintf(out, outsz, "wyn_rc_sprintf(\"\\\"%%s\\\"\", __v.data.%s ? __v.data.%s : \"\")",
+                 field, field);
+        return 1;
+    }
+    if (strcmp(cty, "long long") == 0 || strcmp(cty, "int") == 0) {
+        snprintf(out, outsz, "int_to_string((long long)__v.data.%s)", field);
+        return 1;
+    }
+    if (strcmp(cty, "double") == 0) {
+        snprintf(out, outsz, "float_to_string(__v.data.%s)", field);
+        return 1;
+    }
+    if (strcmp(cty, "bool") == 0) {
+        snprintf(out, outsz, "wyn_rc_sprintf(\"%%s\", __v.data.%s ? \"true\" : \"false\")", field);
+        return 1;
+    }
+    Token t = {TOKEN_IDENT, cty, (int)strlen(cty), 0};
+    if (cg_find_struct(prog, t) && cg_struct_has_str_helper(t)) {
+        snprintf(out, outsz, "__wyn_str_%s(__v.data.%s)", cty, field);
+        return 1;
+    }
+    return 0;
 }
 
 // pass 0 = forward declarations, pass 1 = definitions.
@@ -585,6 +633,34 @@ static void emit_optlike_str_helpers(Program* prog, int pass) {
                  "    return __b;\n");
         }
         emit("}\n");
+    }
+    // Result families. Same two passes, same reason. Rendered as Ok(v) / Err(v)
+    // with the string payloads quoted, matching the builtin Result renderers in
+    // wyn_runtime.h byte for byte - a program can hold both kinds at once.
+    extern int result_struct_count(void);
+    extern const char* result_struct_name(int);
+    extern int result_family_lookup(const char*, const char**, const char**, int*);
+    for (int i = 0; i < result_struct_count(); i++) {
+        const char* fam = result_struct_name(i);
+        const char* ok = NULL; const char* err = NULL; int eis = 1;
+        if (!result_family_lookup(fam, &ok, &err, &eis)) continue;
+        if (pass == 0) {
+            emit("static char* %s_to_string(%s __v);\n", fam, fam);
+            continue;
+        }
+        char okx[256], errx[256];
+        int have_ok  = cg_result_payload_expr(prog, ok,  "ok_value",  okx,  sizeof(okx));
+        int have_err = cg_result_payload_expr(prog, err, "err_value", errx, sizeof(errx));
+        emit("static char* %s_to_string(%s __v) {\n", fam, fam);
+        emit("    char* __p = NULL;\n");
+        if (have_ok)  emit("    if (__v.tag == 0) __p = %s;\n", okx);
+        if (have_err) emit("    if (__v.tag != 0) __p = %s;\n", errx);
+        // A payload with no string form names its type rather than inventing a
+        // value, the same rule the struct-field placeholder follows.
+        emit("    const char* __s = __p ? __p : (__v.tag == 0 ? \"<%s>\" : \"<%s>\");\n", ok, err);
+        emit("    char* __b = wyn_rc_sprintf(__v.tag == 0 ? \"Ok(%%s)\" : \"Err(%%s)\", __s);\n"
+             "    if (__p) wyn_rc_release(__p);\n"
+             "    return __b;\n}\n");
     }
 }
 

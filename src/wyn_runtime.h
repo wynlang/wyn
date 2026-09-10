@@ -4950,7 +4950,9 @@ bool ResultBool_unwrap_or(ResultBool r, bool def) { return r.tag == 0 ? r.data.o
 // One RC string from a printf-style format, sized by a probe so a long payload
 // is never truncated. wyn_str_alloc + wyn_rc_set_length is the same contract
 // float_to_string and the __wyn_str_<Struct> helpers use.
-static char* wyn_rc_sprintf(const char* fmt, ...) {
+// NOT static: codegen emits calls to this from the per-program Result renderers,
+// so it has to be a real symbol in libwyn_rt.a for --release to link.
+char* wyn_rc_sprintf(const char* fmt, ...) {
     va_list ap, ap2;
     va_start(ap, fmt);
     va_copy(ap2, ap);

@@ -1,0 +1,80 @@
+// Regression: a MONOMORPHIC Result family had no renderer, so printing a
+// Result whose Ok payload is a user struct failed to build:
+//
+//   fn f() -> Result<P, string> { return Ok(P { x: 1 }) }
+//   print(f())   ->  "passing 'ResultP' to parameter of incompatible type
+//                     'long long'"
+//
+// Same shape as the Option case: the four builtin Result families render in
+// wyn_runtime.h, but a family with a struct payload is emitted PER PROGRAM (it
+// names a user type) and only its seven members were emitted, never a
+// _to_string. A struct ERROR payload was doubly unreachable - the builtin
+// families all pin the error to a string, so `Result<P, E>` had no renderer to
+// fall back on at all.
+//
+// EXPECT: Ok(P { x: 1, y: 0.5 })
+// EXPECT: Ok(P { x: 1, y: 0.5 })
+// EXPECT: Ok(P { x: 1, y: 0.5 })
+// EXPECT: Err("bad")
+// EXPECT: Err("bad")
+// EXPECT: Ok(P { x: 2, y: 0.5 })
+// EXPECT: Err(E { code: 7 })
+// EXPECT: Ok(1.5)
+// EXPECT: Err("no")
+// EXPECT: [Ok(1), Err("x")]
+// EXPECT: Ok(5)
+// EXPECT: Err("bad")
+// EXPECT: Ok(5)
+// EXPECT: Err("bad")
+
+struct P { x: int, y: float }
+struct E { code: int }
+
+fn f(n: int) -> Result<P, string> {
+    if n > 0 { return Ok(P { x: n, y: 0.5 }) }
+    return Err("bad")
+}
+// A STRUCT error payload, not a string - the builtin families cannot express it.
+fn g(n: int) -> Result<P, E> {
+    if n > 0 { return Ok(P { x: n, y: 0.5 }) }
+    return Err(E { code: 7 })
+}
+fn h(n: int) -> Result<float, string> {
+    if n > 0 { return Ok(1.5) }
+    return Err("no")
+}
+fn i(n: int) -> Result<int, string> {
+    if n > 0 { return Ok(n) }
+    return Err("x")
+}
+fn ok_int() -> Result<int, string> { return Ok(5) }
+fn err_int() -> Result<int, string> { return Err("bad") }
+
+fn main() {
+    // Struct Ok payload, all three spellings - they must agree byte for byte.
+    print(f(1))
+    println(f(1))
+    print("${f(1)}")
+
+    // The Err arm of the same family, both spellings.
+    print(f(-1))
+    println(f(-1))
+
+    // A struct error payload renders as a struct, not as an address.
+    print(g(2))
+    print(g(-1))
+
+    // A non-struct payload on a family that still needs a per-program renderer.
+    print(h(1))
+    print(h(-1))
+
+    // Composes with the typed array-element renderer.
+    print([i(1), i(-1)])
+
+    // No-regression: the four builtin families still render from the runtime,
+    // and must match the per-program ones byte for byte.
+    print(ok_int())
+    print(err_int())
+    print(Ok(5))
+    print(Err("bad"))
+}
