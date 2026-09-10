@@ -1421,9 +1421,33 @@ void codegen_stmt(Stmt* stmt) {
                         needs_arc_management = true;
                     }
                 } else if (stmt->var.init->type == EXPR_OK || stmt->var.init->type == EXPR_ERR) {
-                    // TASK-026: Result type
-                    c_type = "WynResult*";
-                    needs_arc_management = true;
+                    // Same rule as the Some(...)/None branch above, which this branch was
+                    // missing: prefer the concrete Result family the checker resolved
+                    // (ResultInt/ResultString/... or a per-program family named for a struct
+                    // payload) over the boxed WynResult*.
+                    //
+                    // `r = Ok(5)` emits `ResultInt_Ok(5)` for the initializer, so a boxed
+                    // declaration is a type error in the generated C before the value is even
+                    // used - and every later operation is monomorphic too, so `match r`,
+                    // `r.unwrap()` and `r.is_ok()` all failed the same way. Binding the
+                    // IDENTICAL value from a function call (`r = f()`) always worked, and so
+                    // did `o = Some(5)`, which is what made this look like a print or a
+                    // Result-rendering bug rather than one missing type decision.
+                    if (stmt->var.init->expr_type && stmt->var.init->expr_type->kind == TYPE_STRUCT &&
+                        stmt->var.init->expr_type->struct_type.name.length > 0) {
+                        static char _rsvbuf[128];
+                        token_to_cstr(_rsvbuf, sizeof(_rsvbuf), stmt->var.init->expr_type->struct_type.name);
+                        if (strncmp(_rsvbuf, "Result", 6) == 0) {
+                            c_type = _rsvbuf;
+                            needs_arc_management = false;
+                            char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                            extern void register_enum_var(const char*, const char*);
+                            register_enum_var(_vn, _rsvbuf);
+                        } else { c_type = "WynResult*"; needs_arc_management = true; }
+                    } else {
+                        c_type = "WynResult*";
+                        needs_arc_management = true;
+                    }
                 } else if (stmt->var.init->type == EXPR_OPT_CHAIN) {
                     // `var x = opt?.field` - the checker resolved the result Option
                     // family (Option<FieldType>); use it and register for match.

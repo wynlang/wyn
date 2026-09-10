@@ -1,0 +1,89 @@
+// Regression: a Result CONSTRUCTED INLINE into a local was declared as the boxed
+// WynResult* while its initializer was monomorphic, so the generated C failed before
+// the value was ever used:
+//
+//   r = Ok(5)      ->  WynResult* r = ResultInt_Ok(5);
+//                      error: initializing 'WynResult *' with an expression of
+//                             incompatible type 'ResultInt'
+//
+// Every later operation is monomorphic too, so `match r`, `r.unwrap()`, `r.is_ok()`
+// and printing all failed the same way - and a reassignment (`r = Ok(7)`) did too.
+//
+// What made this read as a print/rendering bug rather than one missing type decision:
+// binding the IDENTICAL value from a function call (`r = f()`) always worked, printing
+// the call directly (`print(f())`) always worked, and the Option spelling
+// (`o = Some(5)`) always worked. Only the inline Result construction was broken.
+//
+// Root cause: the EXPR_OK/EXPR_ERR arm of the var-decl type decision hardcoded
+// "WynResult*", while the EXPR_SOME/EXPR_NONE arm immediately above it already asked
+// the checker for the concrete family it had resolved. The fix mirrors the Option arm.
+//
+// EXPECT: true
+// EXPECT: 5
+// EXPECT: Ok(5)
+// EXPECT: Ok(5)
+// EXPECT: Ok(5)
+// EXPECT: true
+// EXPECT: 9
+// EXPECT: Err("bad")
+// EXPECT: matched 5
+// EXPECT: Ok("hi")
+// EXPECT: Ok(1.5)
+// EXPECT: Ok(true)
+// EXPECT: Ok(P { x: 7 })
+// EXPECT: 7
+// EXPECT: true
+// EXPECT: true
+
+struct P { x: int }
+
+fn from_call() -> Result<int, string> { return Ok(5) }
+
+fn main() {
+    // The core case: an inline Ok bound to a local, then used.
+    r = Ok(5)
+    print(r.is_ok())
+    print(r.unwrap())
+    // All three print spellings must agree, as they do for every other renderer.
+    print(r)
+    println(r)
+    print("${r}")
+
+    // The Err arm of the same shape.
+    e = Err("bad")
+    print(e.is_err())
+    print(e.unwrap_or(9))
+    print(e)
+
+    // `match` on an inline-constructed local - it needs the family to be detected at
+    // the declaration, which is exactly what was missing.
+    m = Ok(5)
+    match m {
+        Ok(v) => print("matched ${v}"),
+        Err(x) => print("unreachable ${x}")
+    }
+
+    // Each payload type resolves its own family.
+    s = Ok("hi")
+    print(s)
+    f = Ok(1.5)
+    print(f)
+    b = Ok(true)
+    print(b)
+    // A struct payload needs the per-program family, not a builtin one.
+    sp = Ok(P { x: 7 })
+    print(sp)
+
+    // Reassignment within the same arm: the declared family has to survive it.
+    ra = Ok(5)
+    ra = Ok(7)
+    print(ra.unwrap())
+
+    // An Option payload inside the Result - the two families must not collide.
+    n = Ok(Some(1))
+    print(n.is_ok())
+
+    // No-regression: the route that always worked must still work, and must agree.
+    c = from_call()
+    print(c.is_ok())
+}
