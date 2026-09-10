@@ -735,6 +735,34 @@ static const struct { const char* c_prefix; const char* wyn_ns; } wyn_lowercase_
     {NULL, NULL}
 };
 
+// Does the captured C-compiler output name a precompiled-header mismatch?
+//
+// Guarded, like its one caller: the dev-loop pch is injected only on macOS/clang, and
+// an unused static would be a warning on the other platforms.
+//
+// The three wordings clang uses for a pch it refuses, all hard errors:
+//   "PCH file '...' built from a different branch ((clang-A)) than the compiler
+//    ((clang-B))"                                    - the toolchain moved
+//   "file '...' is not a valid precompiled header"   - truncated or corrupt
+//   "... differs in precompiled file"                - the flags disagree
+// Matching "PCH file" and "precompiled" covers all three. Kept a text match on
+// purpose: the alternative is running `cc --version` on every build to compare it
+// against the pch, i.e. an extra fork in the hot dev loop to detect something that
+// happens once per Xcode update.
+#ifdef __APPLE__
+static int wyn_cc_err_is_pch_mismatch(const char* cc_err_path) {
+    FILE* f = fopen(cc_err_path, "r");
+    if (!f) return 0;
+    char line[2048];
+    int hit = 0;
+    while (!hit && fgets(line, sizeof(line), f)) {
+        if (strstr(line, "PCH file") || strstr(line, "precompiled")) hit = 1;
+    }
+    fclose(f);
+    return hit;
+}
+#endif
+
 static int wyn_report_undeclared_namespace_call(const char* cc_err_path) {
     FILE* f = fopen(cc_err_path, "r");
     if (!f) return 0;
@@ -2397,6 +2425,13 @@ int main(int argc, char** argv) {
         // the redirect and inserts its -l flags before it.
         char cc_err_redir[544];
         snprintf(cc_err_redir, sizeof(cc_err_redir), "\"%s\"", cc_err_path);
+#ifdef __APPLE__
+        // Holds the dev-loop pch's path when one was injected below, so that a
+        // pch-mismatch failure can self-heal after the compile. Declared out here
+        // because the injection sits inside the precompiled-runtime branch while the
+        // compile that can fail on it runs after that branch closes.
+        char _pch_used[512]; _pch_used[0] = '\0';
+#endif
         if (result != 0) {
 #ifdef __APPLE__
             const char* plibs = "-lpthread -lm";
@@ -2439,6 +2474,7 @@ int main(int argc, char** argv) {
                     if (stat(_pch_path, &_ps) == 0 && stat(_hdr_path, &_hs) == 0 &&
                         _ps.st_mtime >= _hs.st_mtime) {
                         snprintf(_pch_flag, sizeof(_pch_flag), "-include-pch %s ", _pch_path);
+                        snprintf(_pch_used, sizeof(_pch_used), "%s", _pch_path);
                     }
                 }
 #endif
@@ -2497,6 +2533,41 @@ int main(int argc, char** argv) {
 #endif
             }
             result = system(cmd);
+#ifdef __APPLE__
+            // A pch is a CACHE, so a mismatch has to self-heal rather than fail the
+            // build. The mtime guard that injected it cannot see a TOOLCHAIN change:
+            // after an Xcode update clang hard-errors with "PCH file ... built from a
+            // different branch", and because the Makefile's pch rule depends on the
+            // header and the Makefile - neither of which moved - `make runtime` reports
+            // nothing to do. So every macOS build stays broken until the file is
+            // deleted by hand. Measured cost of not doing this: a full 300-test suite
+            // run in which every single test reported BUILD FAILED, which reads like a
+            // compiler regression rather than a stale artifact.
+            //
+            // Deliberately NOT regenerating the pch here, only removing it: the suite
+            // compiles with 12+ parallel jobs, and having each of them write the same
+            // output path would race and leave a corrupt pch behind. Removing it is
+            // idempotent under any amount of concurrency; `make runtime` restores the
+            // fast path.
+            //
+            // Gated narrowly on the pch text. Retrying EVERY failed compile would
+            // double the time to report an ordinary syntax error, which is the most
+            // common outcome in a dev loop.
+            if (result != 0 && _pch_used[0] && wyn_cc_err_is_pch_mismatch(cc_err_path)) {
+                char _pch_flag_used[600];
+                snprintf(_pch_flag_used, sizeof(_pch_flag_used), "-include-pch %s ", _pch_used);
+                char* _at = strstr(cmd, _pch_flag_used);
+                if (_at) {
+                    size_t _fl = strlen(_pch_flag_used);
+                    memmove(_at, _at + _fl, strlen(_at + _fl) + 1);
+                }
+                unlink(_pch_used);
+                fprintf(stderr,
+                        "note: removed a stale precompiled header - it no longer matches this C compiler.\n"
+                        "      Run `make runtime` to restore the fast dev build.\n");
+                result = system(cmd);
+            }
+#endif
         }
         
         // Strip debug symbols for release builds
