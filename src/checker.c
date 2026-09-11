@@ -5948,7 +5948,36 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                     } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
                         init_type = make_type(TYPE_SET);
                     } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
-                        init_type = make_type(TYPE_OPTIONAL);
+                        // Carry the ANNOTATED payload type through, exactly as the
+                        // HashMap branch above does and for the same reason. This used
+                        // to be a bare `make_type(TYPE_OPTIONAL)`, i.e. "an optional of
+                        // nothing in particular", so `o: Option<int> = Some(5)`
+                        // type-checked CLEAN and then failed the C compile:
+                        //
+                        //   WynOptional* o = OptionInt_Some(5);
+                        //   error: initializing 'WynOptional *' with an expression of
+                        //          incompatible type 'OptionInt'
+                        //   error: call to undeclared function 'Option_is_some'
+                        //
+                        // A struct FIELD of the identical type always worked, because
+                        // only that path knew how to resolve the annotation. Both
+                        // spellings now go through the one authority.
+                        Type* fam = wyn_optlike_annotation_type(stmt->var.type);
+                        if (!fam && stmt->var.init) {
+                            // An `Option<Struct>` family symbol only exists once
+                            // something has constructed one, and the initializer is
+                            // checked AFTER this branch - so the lookup above misses on
+                            // the first `o: Option<P> = Some(P{..})` in a program. Check
+                            // the initializer now and adopt the family it resolved to.
+                            // The annotation stays authoritative whenever it resolves on
+                            // its own; this only fills in the payload the annotation
+                            // named but could not yet look up.
+                            Type* it = check_expr(stmt->var.init, scope);
+                            if (it && it->kind == TYPE_STRUCT && it->struct_type.name.length >= 6 &&
+                                memcmp(it->struct_type.name.start, "Option", 6) == 0)
+                                fam = it;
+                        }
+                        init_type = fam ? fam : make_type(TYPE_OPTIONAL);
                     } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
                         init_type = make_type(TYPE_RESULT);
                     } else if (find_struct_definition(type_name)) {
