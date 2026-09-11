@@ -680,8 +680,39 @@ void codegen_stmt(Stmt* stmt) {
                                 }
                             }
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
+                            // `r: Result<T,E> = ...`. Prefer the concrete family the
+                            // checker resolved from the ANNOTATION, exactly as the Option
+                            // branch above does and as the inferred `r = Ok(5)` branch
+                            // further down already does for the INIT (#342).
                             c_type = "WynResult*";
                             needs_arc_management = true;
+                            // The ANNOTATION's family wins over the initializer's. A
+                            // Result family depends on E as well as the ok payload, and a
+                            // bare `Err(42)` / `Ok(P{..})` does not know E - it resolves
+                            // to ResultInt / ResultP where the annotation says
+                            // ResultInt_int / ResultP_E. Since the METHODS are resolved
+                            // from the annotation, declaring from the initializer gave
+                            // "passing 'ResultInt' to parameter of incompatible type
+                            // 'ResultInt_int'". The checker records what the annotation
+                            // resolved to on the annotation node.
+                            Type* _rann = stmt->var.type->expr_type;
+                            Type* _rsrc = (_rann && _rann->kind == TYPE_STRUCT &&
+                                           _rann->struct_type.name.length > 0)
+                                        ? _rann
+                                        : (stmt->var.init ? stmt->var.init->expr_type : NULL);
+                            if (_rsrc && _rsrc->kind == TYPE_STRUCT &&
+                                _rsrc->struct_type.name.length > 0) {
+                                static char _ravbuf[128];
+                                token_to_cstr(_ravbuf, sizeof(_ravbuf),
+                                              _rsrc->struct_type.name);
+                                if (strncmp(_ravbuf, "Result", 6) == 0) {
+                                    c_type = _ravbuf;
+                                    needs_arc_management = false;
+                                    char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                                    extern void register_enum_var(const char*, const char*);
+                                    register_enum_var(_vn, _ravbuf);
+                                }
+                            }
                         }
                     }
                 } else if (stmt->var.type->type == EXPR_IDENT) {
