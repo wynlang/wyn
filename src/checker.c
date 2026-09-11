@@ -6045,7 +6045,46 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                         }
                         init_type = fam ? fam : make_type(TYPE_OPTIONAL);
                     } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
-                        init_type = make_type(TYPE_RESULT);
+                        // Carry the ANNOTATED ok/err types through, the same way the
+                        // Option branch above and the HashMap branch further up do. This
+                        // used to be a bare `make_type(TYPE_RESULT)` - "a result of
+                        // nothing in particular" - which nothing could be compared
+                        // against, so `r: Result<int,string> = Ok(5)` was rejected with
+                        //
+                        //   Type mismatch  Expected: unknown (unknown)  Got: struct
+                        //
+                        // while `fn f() -> Result<int,string>` had always worked, because
+                        // only the return-type path knew how to resolve the annotation.
+                        Type* fam = wyn_result_annotation_type(stmt->var.type);
+                        if (!fam && stmt->var.init) {
+                            // A `Result<Struct, E>` family symbol may not exist yet, and
+                            // the initializer is checked AFTER this branch. Same fallback
+                            // as the Option case: the annotation stays authoritative
+                            // whenever it resolves, otherwise adopt the initializer's.
+                            Type* it = check_expr(stmt->var.init, scope);
+                            if (it && it->kind == TYPE_STRUCT && it->struct_type.name.length >= 6 &&
+                                memcmp(it->struct_type.name.start, "Result", 6) == 0)
+                                fam = it;
+                        }
+                        init_type = fam ? fam : make_type(TYPE_RESULT);
+                        // Hand the resolved family to codegen on the ANNOTATION node.
+                        //
+                        // Codegen cannot read it off the initializer here, the way it can
+                        // for an Option: an Option family is fully determined by its
+                        // payload, which `Some(5)` knows, but a Result family also
+                        // depends on E - and a bare `Err(42)` or `Ok(P{..})` has no idea
+                        // what E is, so it resolves to ResultInt / ResultP while the
+                        // annotation says ResultInt_int / ResultP_E. Declaring the
+                        // variable from the initializer therefore produced
+                        //
+                        //   error: passing 'ResultInt' to parameter of incompatible type
+                        //          'ResultInt_int'
+                        //
+                        // because the METHODS were resolved from the annotation. For a
+                        // non-string E the annotation is the authority, and this is the
+                        // only place that knows what it resolved to. Nothing else in the
+                        // tree reads a type-annotation node's expr_type.
+                        if (fam) stmt->var.type->expr_type = fam;
                     } else if (find_struct_definition(type_name)) {
                         // Generic STRUCT annotation: `b: Box<int> = Box{val: 7}`.
                         // This fell through to check_expr, which read the
