@@ -233,6 +233,31 @@ static const char* wyn_ctor_family(Type* payload, const char* kind) {
 // return kind - both name the exact declared family and must win over inference;
 // (3) the payload's own type (so bare `Some(x)`/`Ok(x)`/`Err(x)` work anywhere);
 // (4) the int family as the catch-all default. `kind` is "Option" or "Result".
+// Emit an assignment's RHS with the TARGET's Option/Result family in scope.
+//
+// A bare `Err(x)` / `Ok(x)` / `Some(x)` picks its family from the PAYLOAD when nothing
+// tells it otherwise, so a reassignment disagreed with the variable's own family:
+//
+//     r = Ok(5)          // r is ResultInt
+//     r = Err("bad")     // ResultString_Err(...) -> error: assigning to 'ResultInt'
+//                        //   from incompatible type 'ResultString'
+//
+// The var-decl path has set current_assign_target_kind for exactly this reason since the
+// annotation work; assignment never did. Wrapped in a helper because `case EXPR_ASSIGN`
+// emits its RHS from five different branches and has six exits - a save/restore spanning
+// the case would leak the context to whatever Some/Ok/Err came next.
+static void cg_assign_rhs_with_target_family(Expr* assign) {
+    extern const char* current_assign_target_kind;
+    const char* _prev = current_assign_target_kind;
+    char _tn[256]; token_to_cstr(_tn, sizeof(_tn), assign->assign.name);
+    extern const char* get_enum_var_type(const char*);
+    const char* _fam = get_enum_var_type(_tn);
+    if (_fam && (strncmp(_fam, "Option", 6) == 0 || strncmp(_fam, "Result", 6) == 0))
+        current_assign_target_kind = _fam;
+    codegen_expr(assign->assign.value);
+    current_assign_target_kind = _prev;
+}
+
 static const char* wyn_option_ctor_kind(Expr* e, const char* kind) {
     extern const char* current_assign_target_kind;
     extern const char* current_fn_return_kind;
@@ -5039,7 +5064,7 @@ void codegen_expr(Expr* expr) {
                     // Fresh temporary: ownership transfer
                     // If concat reused the buffer (same pointer), don't release
                     emit("({ const char* __rc_tmp = ");
-                    codegen_expr(expr->assign.value);
+                    cg_assign_rhs_with_target_family(expr);
                     if (_rc_target_borrowed) {
                         emit("; %s = __rc_tmp; })", target_name);
                     } else {
@@ -5048,7 +5073,7 @@ void codegen_expr(Expr* expr) {
                 } else {
                     // Shared reference: retain new, release old
                     emit("({ const char* __rc_tmp = ");
-                    codegen_expr(expr->assign.value);
+                    cg_assign_rhs_with_target_family(expr);
                     if (_rc_target_borrowed) {
                         emit("; wyn_rc_retain(__rc_tmp); %s = __rc_tmp; })", target_name);
                     } else {
@@ -5088,7 +5113,7 @@ void codegen_expr(Expr* expr) {
                     } else {
                         emit("%.*s = ", expr->assign.name.length, expr->assign.name.start);
                     }
-                    codegen_expr(expr->assign.value);
+                    cg_assign_rhs_with_target_family(expr);
                     break;
                 }
                 
@@ -5097,7 +5122,7 @@ void codegen_expr(Expr* expr) {
                 // collision, so use it rather than the raw token).
                 if (is_local_variable(target_name)) {
                     emit("%s = ", target_name);
-                    codegen_expr(expr->assign.value);
+                    cg_assign_rhs_with_target_family(expr);
                     break;
                 }
                 
@@ -5126,7 +5151,7 @@ void codegen_expr(Expr* expr) {
                     emit("%s = ", target_name);
                 }
             }
-            codegen_expr(expr->assign.value);
+            cg_assign_rhs_with_target_family(expr);
             break;
         }
         case EXPR_STRUCT_INIT: {

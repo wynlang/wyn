@@ -1,0 +1,62 @@
+// Regression: reassigning a Result/Option local disagreed with its own family, because a
+// bare `Err(x)` / `Ok(x)` / `Some(x)` / `none` picks its family from the PAYLOAD when
+// nothing tells it otherwise:
+//
+//   r = Ok(5)        // r is ResultInt
+//   r = Err("bad")   // emitted ResultString_Err(...)
+//   -> error: assigning to 'ResultInt' from incompatible type 'ResultString'
+//
+// The var-DECL path has told the constructor its target family since the annotation work
+// (current_assign_target_kind); the ASSIGNMENT path never did. Setting the error path on a
+// result you already hold is ordinary code - `r = Ok(...)` on success, `r = Err(...)` on
+// failure - and it did not compile.
+//
+// Note `r = Err("x")` on its OWN always worked (ResultString is self-consistent), and so
+// did the annotated `r: Result<int,string> = Err("x")`. Only the disagreement between a
+// declared family and a later bare constructor broke, which is why this looked like an
+// Err-specific bug rather than a missing piece of context.
+//
+// EXPECT: true
+// EXPECT: 9
+// EXPECT: 3
+// EXPECT: true
+// EXPECT: 2
+// EXPECT: 7
+// EXPECT: true
+// EXPECT: true
+// EXPECT: true
+
+fn from_fn() -> Result<int, string> { return Err("e") }
+
+fn main() {
+    // The core case: declared ResultInt, then the Err arm.
+    a = Ok(5)
+    a = Err("bad")
+    print(a.is_err())
+    print(a.unwrap_or(9))
+
+    // And the other direction - declared from Err, then Ok.
+    b = Err("x")
+    b = Ok(3)
+    print(b.unwrap())
+
+    // The Option analogue: reassigning to no-value.
+    o = Some(5)
+    o = none
+    print(o.is_none())
+
+    // Same arm twice must be unaffected.
+    p = Some(1)
+    p = Some(2)
+    print(p.unwrap())
+    q = Ok(5)
+    q = Ok(7)
+    print(q.unwrap())
+
+    // No-regression: the three routes that always worked.
+    c = Err("x")
+    print(c.is_err())
+    print(from_fn().is_err())
+    d: Result<int, string> = Err("x")
+    print(d.is_err())
+}
