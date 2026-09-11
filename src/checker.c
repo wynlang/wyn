@@ -115,6 +115,49 @@ static bool is_ptr_type(Type* t) {
 
 static StructStmt* find_struct_definition(Token struct_name);
 Type* make_type(TypeKind kind);
+
+// Mark which half of an Option/Result a single match arm covers.
+//
+// Deliberately biased toward "covered": anything this cannot positively classify marks
+// BOTH halves, so the exhaustiveness rule that calls it can only reject a match whose
+// arms it fully understands. Over-rejecting a valid program is worse than missing one
+// invalid program - a bare identifier arm binds the whole value in some positions, and
+// guessing wrong there would break working code.
+//
+// `is_opt` selects the pair: Some/None for an Option, Ok/Err for a Result. Or-patterns
+// are walked, so `Some(v) | none` counts as both halves.
+static void wyn_mark_optlike_arm(Pattern* pat, int is_opt, int* cover_a, int* cover_b) {
+    if (!pat) { *cover_a = 1; *cover_b = 1; return; }
+    if (pat->type == PATTERN_OR) {
+        for (int i = 0; i < pat->or_pat.pattern_count; i++)
+            wyn_mark_optlike_arm(pat->or_pat.patterns[i], is_opt, cover_a, cover_b);
+        return;
+    }
+    if (pat->type == PATTERN_WILDCARD) { *cover_a = 1; *cover_b = 1; return; }
+    Token vn; vn.length = 0; vn.start = NULL;
+    if (pat->type == PATTERN_OPTION && pat->option.variant_name.length > 0) vn = pat->option.variant_name;
+    else if (pat->type == PATTERN_IDENT) vn = pat->ident.name;
+    // A `Some(x)` / `None` arm carries no variant_name - the parser records which half it
+    // is in the `is_some` flag instead, and only the Result spelling fills the name in.
+    // Reading only the name is why the Result half of this rule fired while the Option
+    // half silently passed everything.
+    if (pat->type == PATTERN_OPTION && vn.length == 0 && is_opt) {
+        if (pat->option.is_some) *cover_a = 1; else *cover_b = 1;
+        return;
+    }
+    if (vn.length == 0 || !vn.start) { *cover_a = 1; *cover_b = 1; return; }
+    #define WYN_VN_IS(s) (vn.length == (int)(sizeof(s) - 1) && memcmp(vn.start, s, sizeof(s) - 1) == 0)
+    if (is_opt) {
+        if (WYN_VN_IS("Some")) { *cover_a = 1; return; }
+        if (WYN_VN_IS("None") || WYN_VN_IS("none")) { *cover_b = 1; return; }
+    } else {
+        if (WYN_VN_IS("Ok")) { *cover_a = 1; return; }
+        if (WYN_VN_IS("Err")) { *cover_b = 1; return; }
+    }
+    #undef WYN_VN_IS
+    // An arm naming neither half - treat it as a catch-all rather than guess.
+    *cover_a = 1; *cover_b = 1;
+}
 static Type* extern_map_type(Expr* type_expr) {
     if (!type_expr) return builtin_void;
     if (type_expr->type == EXPR_IDENT) {
@@ -5687,6 +5730,63 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
             }
             
+            // Option/Result exhaustiveness. Both families are a TYPE_STRUCT named
+            // Option*/Result*, so neither the scalar rule nor the enum rule above sees
+            // them - and a match EXPRESSION missing an arm reads uninitialized memory.
+            // Measured on dev:
+            //
+            //   fn f() -> Result<int,string> { return Err("x") }
+            //   r = f()
+            //   y = match r { Ok(v) => v }   // wyn check: no errors
+            //   print(y)                     // -> 0
+            //
+            // A silent wrong answer at exit 0 - the v1.21 soundness rule broken, and the
+            // Err payload discarded without a word.
+            //
+            // The K3 scalar rule above appeared to cover the Option spelling, but only by
+            // accident: bare `none` was typed `int`, so `x = none; match x { Some(v) => v }`
+            // tripped "a match on an int must end with a wildcard". A real `int?` - from a
+            // function, an annotation, or a Some - never reached that rule.
+            // Two representations reach here for the same thing: a resolved family is a
+            // TYPE_STRUCT named OptionInt/ResultInt/..., while an unresolved `int?` (a
+            // declared return type, Task.try_recv's builtin_int_opt) is TYPE_OPTIONAL.
+            // Both are an Option as far as exhaustiveness is concerned.
+            if (!has_wildcard &&
+                (match_value_type->kind == TYPE_OPTIONAL ||
+                 (match_value_type->kind == TYPE_STRUCT &&
+                  match_value_type->struct_type.name.length > 0 &&
+                  match_value_type->struct_type.name.start))) {
+                int is_opt = match_value_type->kind == TYPE_OPTIONAL;
+                int is_res = 0;
+                if (match_value_type->kind == TYPE_STRUCT) {
+                    Token fam = match_value_type->struct_type.name;
+                    is_opt = fam.length >= 6 && memcmp(fam.start, "Option", 6) == 0;
+                    is_res = fam.length >= 6 && memcmp(fam.start, "Result", 6) == 0;
+                }
+                if (is_opt || is_res) {
+                    int cover_a = 0, cover_b = 0;
+                    for (int ai = 0; ai < expr->match.arm_count; ai++) {
+                        Pattern* pat = expr->match.arms[ai].pattern;
+                        // A guarded arm may not fire, so it never counts as coverage -
+                        // the same rule the enum check above applies.
+                        if (pat && pat->type == PATTERN_GUARD) continue;
+                        wyn_mark_optlike_arm(pat, is_opt, &cover_a, &cover_b);
+                    }
+                    if (!cover_a || !cover_b) {
+                        // Name the half that is MISSING, not the one already written:
+                        // cover_a is Some/Ok, cover_b is none/Err.
+                        const char* missing = is_opt ? (cover_a ? "none" : "Some")
+                                                     : (cover_a ? "Err" : "Ok");
+                        fprintf(stderr,
+                                "Error at line %d: non-exhaustive match - a match on %s must handle "
+                                "'%s' too (add that arm or a wildcard '_ =>' arm)\n",
+                                expr->match.value->token.line,
+                                is_opt ? "an Option" : "a Result", missing);
+                        had_error = true;
+                    }
+                }
+            }
+
             expr->expr_type = result_type ? result_type : builtin_void;
             return expr->expr_type;
         }
