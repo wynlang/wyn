@@ -137,6 +137,77 @@ static void codegen_hoist_nested_bare_assigns(Stmt** stmts, int count) {
 
 // Check if expression produces a fresh RC string that needs release
 // Conservative: only match patterns known to allocate new strings
+// The C return type for an impl-block method's declared return annotation.
+//
+// ONE copy. This decision existed TWICE - the forward-declaration emitter in
+// codegen_program.c and the definition emitter in this file - as two byte-identical
+// chains that MUST name the same type or C reports "conflicting types for '<fn>'".
+// Both copies also:
+//
+//   - hardcoded `Option<T>` -> OptionInt and `Result<T,E>` -> ResultInt, so any non-int
+//     payload emitted the WRONG family (`-> Option<string>` returned an OptionString
+//     from an OptionInt function);
+//   - did not handle the `T?` spelling at all, so it fell through to "long long" and an
+//     impl method returning `int?` returned an OptionInt from a `long long` function
+//     while `wyn check` reported no errors;
+//   - did not handle `[T]`, same fall-through.
+//
+// A free function with any of those signatures always worked, because only the free-fn
+// emitters had learned these spellings.
+static const char* wyn_method_c_return_type(FnStmt* method) {
+    static char buf[192];
+    if (!method || !method->return_type) return "long long";
+    Expr* rt = method->return_type;
+    extern const char* wyn_option_family(const char*, const char**, int*);
+    extern const char* register_result_family_for_types(const char*, const char*);
+
+    if (rt->type == EXPR_OPTIONAL_TYPE) {
+        Expr* inner = rt->optional_type.inner_type;
+        if (inner && inner->type == EXPR_IDENT) {
+            char pn[96]; token_to_cstr(pn, sizeof(pn), inner->token);
+            snprintf(buf, sizeof(buf), "%s", wyn_option_family(pn, NULL, NULL));
+            return buf;
+        }
+        return "WynOptional*";
+    }
+    if (rt->type == EXPR_ARRAY) return "WynArray";
+    if (rt->type == EXPR_CALL && rt->call.callee && rt->call.callee->type == EXPR_IDENT) {
+        Token c = rt->call.callee->token;
+        if (c.length == 6 && memcmp(c.start, "Option", 6) == 0) {
+            if (rt->call.arg_count >= 1 && rt->call.args[0]->type == EXPR_IDENT) {
+                char pn[96]; token_to_cstr(pn, sizeof(pn), rt->call.args[0]->token);
+                snprintf(buf, sizeof(buf), "%s", wyn_option_family(pn, NULL, NULL));
+                return buf;
+            }
+            return "OptionInt";
+        }
+        if (c.length == 6 && memcmp(c.start, "Result", 6) == 0) {
+            // Same naming authority the checker uses, and it REGISTERS the family as a
+            // side effect - which is what emits the struct for a non-builtin one.
+            char okn[96] = "int"; char ern[96] = "string";
+            if (rt->call.arg_count >= 1 && rt->call.args[0]->type == EXPR_IDENT)
+                token_to_cstr(okn, sizeof(okn), rt->call.args[0]->token);
+            if (rt->call.arg_count >= 2 && rt->call.args[1]->type == EXPR_IDENT)
+                token_to_cstr(ern, sizeof(ern), rt->call.args[1]->token);
+            snprintf(buf, sizeof(buf), "%s", register_result_family_for_types(okn, ern));
+            return buf;
+        }
+        if (c.length == 7 && memcmp(c.start, "HashMap", 7) == 0) return "WynHashMap*";
+        if (c.length == 7 && memcmp(c.start, "HashSet", 7) == 0) return "WynHashSet*";
+        if (c.length == 5 && memcmp(c.start, "Array", 5) == 0) return "WynArray";
+    }
+    if (rt->type == EXPR_IDENT) {
+        Token t = rt->token;
+        if (t.length == 3 && memcmp(t.start, "int", 3) == 0) return "long long";
+        if (t.length == 5 && memcmp(t.start, "float", 5) == 0) return "double";
+        if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) return "bool";
+        if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return "const char*";
+        token_to_cstr(buf, sizeof(buf), t);   // custom struct/enum
+        return buf;
+    }
+    return "long long";
+}
+
 static bool is_fresh_string_temp(Expr* e) {
     if (!e) return false;
     // String concat (binary + with at least one string operand) always allocates
@@ -4280,29 +4351,7 @@ void codegen_stmt(Stmt* stmt) {
             for (int i = 0; i < stmt->impl.method_count; i++) {
                 FnStmt* method = stmt->impl.methods[i];
                 
-                // Determine return type
-                const char* return_type = "long long";
-                if (method->return_type && method->return_type->type == EXPR_CALL &&
-                    method->return_type->call.callee->type == EXPR_IDENT) {
-                    Token rt = method->return_type->call.callee->token;
-                    if (rt.length == 6 && memcmp(rt.start, "Result", 6) == 0) return_type = "ResultInt";
-                    else if (rt.length == 6 && memcmp(rt.start, "Option", 6) == 0) return_type = "OptionInt";
-                } else if (method->return_type && method->return_type->type == EXPR_IDENT) {
-                    Token ret_type = method->return_type->token;
-                    if (ret_type.length == 3 && memcmp(ret_type.start, "int", 3) == 0) {
-                        return_type = "long long";
-                    } else if (ret_type.length == 5 && memcmp(ret_type.start, "float", 5) == 0) {
-                        return_type = "double";
-                    } else if (ret_type.length == 4 && memcmp(ret_type.start, "bool", 4) == 0) {
-                        return_type = "bool";
-                    } else if (ret_type.length == 6 && memcmp(ret_type.start, "string", 6) == 0) {
-                        return_type = "const char*";
-                    } else {
-                        // Custom struct/enum return type
-                        static char impl_ret_buf[128]; token_to_cstr(impl_ret_buf, sizeof(impl_ret_buf), ret_type);
-                        return_type = impl_ret_buf;
-                    }
-                }
+                const char* return_type = wyn_method_c_return_type(method);
                 
                 emit("%s %.*s_%.*s(", return_type,
                      stmt->impl.type_name.length, stmt->impl.type_name.start,

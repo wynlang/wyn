@@ -1700,6 +1700,22 @@ static Type* wyn_result_annotation_type(Expr* type_expr) {
     return sym ? sym->type : NULL;
 }
 
+// Resolve a DECLARED return-type annotation to a Type, or NULL if unrecognised.
+//
+// Routes through the three existing authorities in the order that matters: optional
+// (`T?` / `Option<T>`), then Result (`Result<T,E>`), then the leaf/array/map resolver.
+// Only the free-function path knew how to do any of this; an impl method's return type
+// was the literal placeholder `builtin_int` ("// Simplified"), which is why `-> int`
+// worked by accident and everything whose VALUE has its own methods did not.
+static Type* wyn_declared_return_type(Expr* type_expr) {
+    if (!type_expr) return NULL;
+    Type* t = wyn_optlike_annotation_type(type_expr);
+    if (t) return t;
+    t = wyn_result_annotation_type(type_expr);
+    if (t) return t;
+    return resolve_array_elem_annotation(type_expr);
+}
+
 
 // reg_fn - register one builtin function signature in the global scope.
 //
@@ -6760,7 +6776,25 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                     
                     fn_type->fn_type.param_types[j] = param_type;
                 }
-                fn_type->fn_type.return_type = builtin_int; // Simplified
+                // An impl method's return type used to be the placeholder
+                // `builtin_int` ("// Simplified"), so `-> int` worked by accident and
+                // every return type whose VALUE has its own methods did not:
+                //
+                //   impl P { fn maybe(self) -> int? { return Some(self.x) } }
+                //   p.maybe().is_some()
+                //   -> wyn check: no errors
+                //      error: returning 'OptionInt' from a function with incompatible
+                //             result type 'long long'
+                //      error: call to undeclared function 'P_is_some'
+                //
+                // `-> string`/`float`/`bool`/`Struct` happened to work because codegen
+                // resolves those elsewhere and nothing consulted this type; Option,
+                // Result and `[T]` all broke, because calling a method ON the result
+                // needs it. A free function with the identical signature always worked.
+                {
+                    Type* rt = wyn_declared_return_type(method->return_type);
+                    fn_type->fn_type.return_type = rt ? rt : builtin_int;
+                }
                 
                 // Register as extension method: Type_method
                 char* ext_name = malloc(stmt->impl.type_name.length + 1 + method->name.length + 1);
