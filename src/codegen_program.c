@@ -993,8 +993,15 @@ void codegen_program(Program* prog) {
                 char _sn[96]; token_to_cstr(_sn, sizeof(_sn), s->struct_decl.name);
                 extern int is_registered_option_struct(const char*);
                 if (is_registered_option_struct(_sn)) emit_option_struct_family(_sn);
+                // The two registries are keyed DIFFERENTLY: the Option one by the payload
+                // name ("P"), the Result one by the FAMILY name ("ResultP"). Asking the
+                // Result registry with the payload name never matched, so this hook has
+                // never fired for a Result - the family only appeared in the catch-all
+                // further below, i.e. AFTER any struct holding a `Result<P,E>` FIELD, which
+                // failed to compile with "unknown type name 'ResultP'".
                 extern int is_registered_result_struct(const char*);
-                if (is_registered_result_struct(_sn)) emit_result_struct_family(_sn);
+                char _rfam[128]; snprintf(_rfam, sizeof(_rfam), "Result%s", _sn);
+                if (is_registered_result_struct(_rfam)) emit_result_struct_family(_rfam);
             }
             // A DATA-carrying enum needs the same hook: its Option<Enum> family names the
             // enum's own C struct, and a LATER struct may hold that family as a field
@@ -1006,8 +1013,10 @@ void codegen_program(Program* prog) {
                 char _en[96]; token_to_cstr(_en, sizeof(_en), s->enum_decl.name);
                 extern int is_registered_option_struct(const char*);
                 if (is_registered_option_struct(_en)) emit_option_struct_family(_en);
+                // Family-keyed, as above.
                 extern int is_registered_result_struct(const char*);
-                if (is_registered_result_struct(_en)) emit_result_struct_family(_en);
+                char _refam[128]; snprintf(_refam, sizeof(_refam), "Result%s", _en);
+                if (is_registered_result_struct(_refam)) emit_result_struct_family(_refam);
             }
             // For imported enums, emit module-prefixed typedef and constructor aliases
             if (s->type == STMT_ENUM && prog->stmts[i]->type == STMT_EXPORT) {

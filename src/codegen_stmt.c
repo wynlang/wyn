@@ -3798,6 +3798,31 @@ void codegen_stmt(Stmt* stmt) {
                                stmt->struct_decl.field_types[i]->call.callee &&
                                stmt->struct_decl.field_types[i]->call.callee->type == EXPR_IDENT &&
                                stmt->struct_decl.field_types[i]->call.callee->token.length == 6 &&
+                               memcmp(stmt->struct_decl.field_types[i]->call.callee->token.start, "Result", 6) == 0 &&
+                               stmt->struct_decl.field_types[i]->call.arg_count >= 1) {
+                        // A `Result<T, E>` field. Option fields already emitted their
+                        // family here; Result fields fell through to `long long` while the
+                        // initializer emitted `ResultInt_Ok(1)`, so the struct did not
+                        // compile. Combined with the checker reporting the field as
+                        // missing, "Result fields do not exist" was the net effect.
+                        //
+                        // register_result_family_for_types is the same naming authority the
+                        // checker uses, and it REGISTERS the family, which is what emits
+                        // the struct for a non-builtin one.
+                        Expr* _rft = stmt->struct_decl.field_types[i];
+                        char _rok[96] = "int"; char _rer[96] = "string";
+                        if (_rft->call.arg_count >= 1 && _rft->call.args[0]->type == EXPR_IDENT)
+                            token_to_cstr(_rok, sizeof(_rok), _rft->call.args[0]->token);
+                        if (_rft->call.arg_count >= 2 && _rft->call.args[1]->type == EXPR_IDENT)
+                            token_to_cstr(_rer, sizeof(_rer), _rft->call.args[1]->token);
+                        extern const char* register_result_family_for_types(const char*, const char*);
+                        static char _rsf[128];
+                        snprintf(_rsf, sizeof(_rsf), "%s", register_result_family_for_types(_rok, _rer));
+                        c_type = _rsf;
+                    } else if (stmt->struct_decl.field_types[i]->type == EXPR_CALL &&
+                               stmt->struct_decl.field_types[i]->call.callee &&
+                               stmt->struct_decl.field_types[i]->call.callee->type == EXPR_IDENT &&
+                               stmt->struct_decl.field_types[i]->call.callee->token.length == 6 &&
                                memcmp(stmt->struct_decl.field_types[i]->call.callee->token.start, "Option", 6) == 0 &&
                                stmt->struct_decl.field_types[i]->call.arg_count == 1) {
                         // Generic optional field `f: Option<T>` (parsed as an

@@ -115,6 +115,9 @@ static bool is_ptr_type(Type* t) {
 
 static StructStmt* find_struct_definition(Token struct_name);
 Type* make_type(TypeKind kind);
+// Defined below, next to the Result family registrar it depends on; the struct-field
+// resolver above needs it.
+static Type* wyn_result_annotation_type(Expr* type_expr);
 
 // The type of a no-value literal - ONE answer, for both spellings of it.
 //
@@ -1076,6 +1079,16 @@ static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
                 return wyn_optlike_annotation_type(field_type_expr);
             }
 
+            // A `Result<T, E>` field. Without this the resolution fell to the NULL below,
+            // and the CALLER reports NULL as "struct 'S' has no field 'r'" - naming a
+            // field that is declared right there in the struct, which is why this read as
+            // a parser or scoping bug rather than a missing type resolution. Option
+            // fields worked; Result fields simply did not exist.
+            {
+                Type* rf = wyn_result_annotation_type(field_type_expr);
+                if (rf) return rf;
+            }
+
             return NULL;
         }
     }
@@ -1628,6 +1641,16 @@ static Type* register_result_struct_family_e(Type* struct_type, Type* err_type) 
 
     extern const char* register_result_family_for_types(const char*, const char*);
     register_result_family_for_types(ok_wyn, ename);
+    // Mirror of register_option_struct() in the Option registrar above: tell codegen that
+    // this STRUCT is used as a Result ok payload, so the family's typedef is emitted right
+    // after the struct's own - and therefore before any LATER struct that holds a
+    // `Result<S, E>` field can reference it. The only other registrar is the `Ok(S{..})`
+    // expression lowering, which runs after the typedefs, so a Result<Struct,E> field
+    // emitted `unknown type name 'ResultP'`.
+    if (struct_type->kind == TYPE_STRUCT) {
+        extern void register_result_struct(const char*);
+        register_result_struct(sname);
+    }
     return res_type;
 }
 // Backward-compatible shim: string-error family.
