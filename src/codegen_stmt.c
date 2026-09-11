@@ -656,8 +656,29 @@ void codegen_stmt(Stmt* stmt) {
                         } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
                             c_type = "WynHashSet*";
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
+                            // `o: Option<T> = ...`. Prefer the concrete family the
+                            // checker resolved from the ANNOTATION - the same rule the
+                            // inferred `o = Some(5)` branch further down already applies
+                            // to the INIT. Declaring the boxed WynOptional* here while
+                            // the initializer is monomorphic is a type error in the
+                            // generated C, and the method calls that follow are
+                            // monomorphic too (`Option_is_some` came out undeclared).
                             c_type = "WynOptional*";
                             needs_arc_management = true;
+                            if (stmt->var.init && stmt->var.init->expr_type &&
+                                stmt->var.init->expr_type->kind == TYPE_STRUCT &&
+                                stmt->var.init->expr_type->struct_type.name.length > 0) {
+                                static char _oavbuf[128];
+                                token_to_cstr(_oavbuf, sizeof(_oavbuf),
+                                              stmt->var.init->expr_type->struct_type.name);
+                                if (strncmp(_oavbuf, "Option", 6) == 0) {
+                                    c_type = _oavbuf;
+                                    needs_arc_management = false;
+                                    char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                                    extern void register_enum_var(const char*, const char*);
+                                    register_enum_var(_vn, _oavbuf);
+                                }
+                            }
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
                             c_type = "WynResult*";
                             needs_arc_management = true;
