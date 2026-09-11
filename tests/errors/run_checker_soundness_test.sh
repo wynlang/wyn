@@ -96,8 +96,14 @@ expect_check_error "K4 unwrap_or default type mismatch rejected" "$TMP/k4.wyn" "
 
 # --- K3: a match EXPRESSION on a scalar needs a wildcard --------------------
 # Non-exhaustive scalar match in expr position had no fall-through arm -> silent
-# 0 / (null) / ICE. int-literal, `none`-inferred Option, and builtin-namespace
-# enum (Color) all land here.
+# 0 / (null) / ICE. int-literal and builtin-namespace enum (Color) land here.
+#
+# The `none` case below used to land here TOO, because bare `none` was typed int - which
+# made this section look as though it covered non-exhaustive Option matches when it did
+# not (see K12). Now that `none` is typed as an Option, that case is caught by the K12
+# Option rule instead, with a message naming the missing arm. It is deliberately left in
+# this section: the assertion is "this program is rejected", and which rule rejects it is
+# an implementation detail that must not silently become "neither".
 printf 'fn main(){ n = 5\n y = match n { 99 => 1 }\n print(y) }\n' > "$TMP/k3_int.wyn"
 expect_check_error "K3 non-exhaustive int match rejected" "$TMP/k3_int.wyn" "must end with a wildcard"
 printf 'fn main(){ x = none\n y = match x { Some(v) => v }\n print(y) }\n' > "$TMP/k3_opt.wyn"
