@@ -116,6 +116,25 @@ static bool is_ptr_type(Type* t) {
 static StructStmt* find_struct_definition(Token struct_name);
 Type* make_type(TypeKind kind);
 
+// The type of a no-value literal - ONE answer, for both spellings of it.
+//
+// `none` reaches the checker two ways: as EXPR_NONE from the parser, and as an
+// EXPR_IDENT that the ident case rewrites into EXPR_NONE. Those two sites used to
+// answer differently - the parser node got the OptionInt struct, the rewritten ident
+// got `builtin_int` - so the same node kind carried two types depending only on how it
+// had been written. `int` is what made every context reject it (`o: int? = none`,
+// `o = none`, `[Some(1), none]`).
+//
+// OptionInt is a DEFAULT, not an inference: no-value carries no payload type, so there
+// is nothing to infer from. Contexts that know better refine it (the Option return
+// check, the array element unifier, the var-decl family selection), which is what makes
+// `s: string? = none; s = Some("hi")` round-trip a real string.
+static Type* wyn_none_type(void) {
+    Token concrete_name = {TOKEN_IDENT, "OptionInt", 9, 0};
+    Symbol* sym = find_symbol(global_scope, concrete_name);
+    return sym ? sym->type : make_type(TYPE_OPTIONAL);
+}
+
 // Mark which half of an Option/Result a single match arm covers.
 //
 // Deliberately biased toward "covered": anything this cannot positively classify marks
@@ -1964,13 +1983,23 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 // this makes the ident spelling agree with the node spelling
                 // instead of each place re-testing the token.
                 //
-                // The TYPE stays int, exactly as before: retyping it to the
-                // OptionInt struct here is the separate `none`-inference concern
-                // (`var o: int? = none` still fails its own way), and changing both
-                // at once would make a regression impossible to attribute.
+                // The type comes from wyn_none_type(), the same authority `case
+                // EXPR_NONE:` uses. It used to be hardcoded `builtin_int` here, so one
+                // node kind had TWO types depending only on how it had been spelled -
+                // and `int` is what made every context reject it:
+                //
+                //   o: int? = none          Expected: struct, Got: int
+                //   o = Some(5); o = none   Expected: OptionInt (struct), Got: int
+                //   [Some(1), none]         Array elements must have consistent types
+                //
+                // #335 deliberately left the type alone so that its own fix (the ident
+                // spelling lowering to optional.c's `WynOptional* none(void)`, whose
+                // ADDRESS `print(none)` printed) could be attributed on its own. This is
+                // that follow-up.
                 expr->type = EXPR_NONE;
-                expr->expr_type = builtin_int;
-                return builtin_int;
+                Type* nt = wyn_none_type();
+                expr->expr_type = nt;
+                return nt;
             }
             
             // Check for boolean literals
@@ -5437,10 +5466,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return opt_type;
         }
         case EXPR_NONE: {
-            // Default to OptionInt - context would refine this
-            Token concrete_name = {TOKEN_IDENT, "OptionInt", 9, 0};
-            Symbol* sym = find_symbol(global_scope, concrete_name);
-            Type* opt_type = sym ? sym->type : make_type(TYPE_OPTIONAL);
+            Type* opt_type = wyn_none_type();
             expr->expr_type = opt_type;
             return opt_type;
         }
