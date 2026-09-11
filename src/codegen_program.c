@@ -1788,28 +1788,9 @@ void codegen_program(Program* prog) {
             for (int j = 0; j < stmt->impl.method_count; j++) {
                 FnStmt* method = stmt->impl.methods[j];
                 
-                // Determine return type
-                const char* return_type = "long long";
-                if (method->return_type && method->return_type->type == EXPR_CALL &&
-                    method->return_type->call.callee->type == EXPR_IDENT) {
-                    Token rt = method->return_type->call.callee->token;
-                    if (rt.length == 6 && memcmp(rt.start, "Result", 6) == 0) return_type = "ResultInt";
-                    else if (rt.length == 6 && memcmp(rt.start, "Option", 6) == 0) return_type = "OptionInt";
-                } else if (method->return_type && method->return_type->type == EXPR_IDENT) {
-                    Token ret_type = method->return_type->token;
-                    if (ret_type.length == 3 && memcmp(ret_type.start, "int", 3) == 0) {
-                        return_type = "long long";
-                    } else if (ret_type.length == 5 && memcmp(ret_type.start, "float", 5) == 0) {
-                        return_type = "double";
-                    } else if (ret_type.length == 4 && memcmp(ret_type.start, "bool", 4) == 0) {
-                        return_type = "bool";
-                    } else if (ret_type.length == 6 && memcmp(ret_type.start, "string", 6) == 0) {
-                        return_type = "const char*";
-                    } else {
-                        static char impl_fwd_ret[128]; token_to_cstr(impl_fwd_ret, sizeof(impl_fwd_ret), ret_type);
-                        return_type = impl_fwd_ret;
-                    }
-                }
+                // Same authority as the DEFINITION in codegen_stmt - they must name the
+                // same type or C reports "conflicting types for '<fn>'".
+                const char* return_type = wyn_method_c_return_type(method);
                 
                 // Generate forward declaration: Type_method
                 emit("%s %.*s_%.*s(", return_type,
