@@ -907,6 +907,67 @@ static Type* resolve_array_elem_annotation(Expr* elem_type_expr) {
     return NULL;
 }
 
+// Is this type ANNOTATION an optional, in either of its two spellings?
+//
+//   f: T?           EXPR_OPTIONAL_TYPE
+//   f: Option<T>    EXPR_CALL with callee `Option` and one type argument
+//
+// Kept as a predicate separate from the resolver below so a caller can branch on "is
+// this an optional annotation" without also committing to a resolved type - the struct
+// field path needs exactly that, because a NULL resolution there means "no such field".
+static bool wyn_annotation_is_optlike(Expr* type_expr) {
+    if (!type_expr) return false;
+    if (type_expr->type == EXPR_OPTIONAL_TYPE) return true;
+    return type_expr->type == EXPR_CALL &&
+           type_expr->call.callee &&
+           type_expr->call.callee->type == EXPR_IDENT &&
+           type_expr->call.callee->token.length == 6 &&
+           memcmp(type_expr->call.callee->token.start, "Option", 6) == 0 &&
+           type_expr->call.arg_count == 1;
+}
+
+// Resolve an optional type ANNOTATION to its concrete Option family type, or NULL.
+//
+// Extracted from get_struct_field_type so that a struct field and any other annotation
+// site can agree. Previously only the field path knew how to turn `T?` / `Option<T>`
+// into OptionInt/OptionString/.../Option<Struct>, which is why the same spelling on a
+// LOCAL declaration silently kept the payload-less generic type.
+static Type* wyn_optlike_annotation_type(Expr* type_expr) {
+    if (!wyn_annotation_is_optlike(type_expr)) return NULL;
+    Expr* inner = (type_expr->type == EXPR_OPTIONAL_TYPE)
+        ? type_expr->optional_type.inner_type
+        : type_expr->call.args[0];
+    const char* fam = NULL;
+    if (inner && inner->type == EXPR_IDENT) {
+        Token t = inner->token;
+        if (t.length == 3 && memcmp(t.start, "int", 3) == 0) fam = "OptionInt";
+        else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) fam = "OptionString";
+        else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) fam = "OptionFloat";
+        else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) fam = "OptionBool";
+        else {
+            // A PLAIN enum payload's family is OptionInt (an enum is an int in C) -
+            // there is no `Option<Enum>` family symbol to find, so building the name
+            // `OptionCode` made the lookup MISS and return NULL, which the field caller
+            // reads as "struct 'H' has no field 'tag'". A data-carrying enum is a C
+            // struct, so it keeps the by-name path below.
+            Symbol* _es = find_symbol(global_scope, t);
+            if (_es && _es->type && _es->type->kind == TYPE_ENUM &&
+                !enum_name_is_data_enum(t)) {
+                fam = "OptionInt";
+            } else {
+                // Struct?: reuse the registered Option<Struct> family symbol.
+                char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
+                static char _famb[128]; snprintf(_famb, sizeof(_famb), "Option%s", _stn);
+                fam = _famb;
+            }
+        }
+    }
+    if (!fam) return NULL;
+    Token fam_tok = {TOKEN_IDENT, (char*)fam, (int)strlen(fam), 0};
+    Symbol* fsym = find_symbol(global_scope, fam_tok);
+    return (fsym && fsym->type) ? fsym->type : NULL;
+}
+
 // Helper function to get field type from struct definition
 static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
     if (!struct_def) return NULL;
@@ -1007,52 +1068,12 @@ static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
                     array_type->array_type.element_type = elem;
                 }
                 return array_type;
-            } else if ((field_type_expr->type == EXPR_OPTIONAL_TYPE) ||
-                       (field_type_expr->type == EXPR_CALL &&
-                        field_type_expr->call.callee &&
-                        field_type_expr->call.callee->type == EXPR_IDENT &&
-                        field_type_expr->call.callee->token.length == 6 &&
-                        memcmp(field_type_expr->call.callee->token.start, "Option", 6) == 0 &&
-                        field_type_expr->call.arg_count == 1)) {
-                // Optional field `f: T?` (EXPR_OPTIONAL_TYPE) or the generic form
-                // `f: Option<T>` (EXPR_CALL) - resolve to the Option<T> family type
-                // so field access (`x.f`) and match on it lower correctly (was
-                // falling through to NULL → default int, breaking match on the field).
-                Expr* inner = (field_type_expr->type == EXPR_OPTIONAL_TYPE)
-                    ? field_type_expr->optional_type.inner_type
-                    : field_type_expr->call.args[0];
-                const char* fam = NULL;
-                if (inner && inner->type == EXPR_IDENT) {
-                    Token t = inner->token;
-                    if (t.length == 3 && memcmp(t.start, "int", 3) == 0) fam = "OptionInt";
-                    else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) fam = "OptionString";
-                    else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) fam = "OptionFloat";
-                    else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) fam = "OptionBool";
-                    else {
-                        // A PLAIN enum payload's family is OptionInt (an enum is an int
-                        // in C) — there is no `Option<Enum>` family symbol to find, so
-                        // building the name `OptionCode` made the lookup below MISS and
-                        // return NULL, which the caller reads as "struct 'H' has no
-                        // field 'tag'". A data-carrying enum is a C struct, so it keeps
-                        // the by-name path below.
-                        Symbol* _es = find_symbol(global_scope, t);
-                        if (_es && _es->type && _es->type->kind == TYPE_ENUM &&
-                            !enum_name_is_data_enum(t)) {
-                            fam = "OptionInt";
-                        } else {
-                            // Struct?: reuse the registered Option<Struct> family symbol.
-                            char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
-                            static char _famb[128]; snprintf(_famb, sizeof(_famb), "Option%s", _stn);
-                            fam = _famb;
-                        }
-                    }
-                }
-                if (fam) {
-                    Token fam_tok = {TOKEN_IDENT, (char*)fam, (int)strlen(fam), 0};
-                    Symbol* fsym = find_symbol(global_scope, fam_tok);
-                    if (fsym && fsym->type) return fsym->type;
-                }
-                return NULL;
+            } else if (wyn_annotation_is_optlike(field_type_expr)) {
+                // Optional field `f: T?` or the generic form `f: Option<T>` - resolve to
+                // the concrete Option<T> family so field access (`x.f`) and match on it
+                // lower correctly (was falling through to NULL -> default int, breaking
+                // match on the field). Both spellings, one authority.
+                return wyn_optlike_annotation_type(field_type_expr);
             }
 
             return NULL;
