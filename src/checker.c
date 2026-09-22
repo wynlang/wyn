@@ -1228,6 +1228,27 @@ static int calculate_match_score(Type* fn_type, Type** arg_types, int arg_count)
 static bool can_convert_type(Type* from, Type* to);
 static void add_function_overload(SymbolTable* scope, Token name, Type* type, bool is_mutable);
 
+// A map value type's STORAGE signature - what actually has to agree across the
+// entries of a `{...}` literal, because `m[k]` emits ONE getter for the whole map.
+//
+// type_to_string() is not enough on its own: it renders EVERY struct as "struct",
+// and types_equal() answers true for any two TYPE_STRUCTs ("compare kinds for
+// now"), so `{"k": Some(1), "j": A{b:1}}` would look homogeneous while the two
+// values box to different C types. Aggregates are therefore identified by their
+// type NAME (OptionInt, ResultStringString, A, ...), which is exactly the name
+// codegen passes to hashmap_insert_struct.
+static void map_value_type_sig(Type* t, char* out, size_t n) {
+    if (!t) { snprintf(out, n, "unknown"); return; }
+    if (t->kind == TYPE_STRUCT || t->kind == TYPE_ENUM) {
+        Token nm = t->struct_type.name.start ? t->struct_type.name : t->name;
+        if (nm.start && nm.length > 0) {
+            snprintf(out, n, "%.*s", nm.length, nm.start);
+            return;
+        }
+    }
+    snprintf(out, n, "%s", type_to_string(t));
+}
+
 static Type* get_inner_type(Type* optional_type) {
     if (!is_optional_type(optional_type)) return optional_type;
     return optional_type->optional_type.inner_type;
@@ -4488,6 +4509,50 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 // still type-check the remaining entries
                 for (int _i = 0; _i < expr->array.count; _i++)
                     if (_i != 1) check_expr(expr->array.elements[_i], scope);
+
+                // ENFORCE the homogeneity the comment above ASSUMES. Nothing did,
+                // and the whole map took its value type from elements[1], so
+                // `{"a": 1, "b": "x"}` read m["b"] back through hashmap_index_int
+                // and printed 0 - a wrong answer at exit 0. `{"a": "x", "b": 1}`
+                // printed the empty string the same way.
+                //
+                // Wyn has no union value type and `m[k]` emits ONE getter for the
+                // whole map, so a mixed literal cannot be "correctly typed"; the
+                // honest outcome is a check-time error naming both types and the
+                // line (PLAN_v1.22 V-2). Deliberately mirrors EXPR_ARRAY's
+                // "elements must have consistent types" rule - a map literal is the
+                // same rule on the value slot.
+                //
+                // Aggregates are compared by C TYPE NAME, not just kind:
+                // Some(1) and A{b:1} are both TYPE_STRUCT, and types_equal() returns
+                // true for any two TYPE_STRUCTs ("compare kinds for now"), so a
+                // kind-only test would wave through two incompatible box types and
+                // reintroduce the same silent wrong answer one level up.
+                for (int _i = 3; _i < expr->array.count; _i += 2) {
+                    Type* ot = expr->array.elements[_i]->expr_type;
+                    if (!vt || !ot) continue;
+                    char a[128], b[128];
+                    map_value_type_sig(vt, a, sizeof a);
+                    map_value_type_sig(ot, b, sizeof b);
+                    if (strcmp(a, b) == 0) continue;
+                    // The KEY is always a string literal and always carries a real
+                    // line; a value expression may not (a struct-init node reported
+                    // line 0, which printed "Error at line 0").
+                    int line = expr->array.elements[_i - 1]->token.line;
+                    if (line <= 0) line = expr->array.elements[_i]->token.line;
+                    if (line <= 0) line = expr->token.line;
+                    fprintf(stderr,
+                        "\nError at line %d: map literal has mixed value types: '%s' and '%s'\n",
+                        line, a, b);
+                    show_source_line(line);
+                    fprintf(stderr,
+                        "  \033[34mHelp:\033[0m every value in a `{...}` literal must have the same "
+                        "type - `m[k]` reads them all back through one getter. Use separate maps, "
+                        "or give the values a common struct/enum type.\n");
+                    had_error = true;
+                    expr->expr_type = map_type;
+                    return map_type;
+                }
             } else {
                 // Empty `{}`: leave the value type OPEN so the first `m[k] = v`
                 // store fixes it (see EXPR_INDEX_ASSIGN). Defaulting to int here

@@ -85,6 +85,84 @@ static const char* hashmap_insert_fn_for(Expr* value_expr) {
     return "hashmap_insert_int";
 }
 
+// THE authority for emitting "store this value into this map".
+//
+// A map value is either a SCALAR (int/string/float/bool -> a typed
+// hashmap_insert_*, chosen by hashmap_insert_fn_for above) or an AGGREGATE
+// (a struct, and also Option/Result, whose C representation IS a struct ->
+// hashmap_insert_struct, which heap-boxes the value and therefore needs the C
+// type NAME as a fourth macro argument).
+//
+// That two-branch decision used to exist in FOUR copies - `m[k] = v`,
+// `m.set(k, v)`, `HashMap::set(m, k, v)` and the `{"k": v}` literal - and only
+// ONE of them (`m[k] = v`) had the aggregate branch at all. So `m["k"] = Some(1)`
+// worked while `{"k": Some(1)}` emitted
+// `hashmap_insert_int(__map_0, "k", OptionInt_Some(1))`: a C type error AFTER a
+// completely clean `wyn check`. Two lists of the same thing is a defect shape,
+// and the incomplete copy is the one that bites. There is one list now.
+//
+// The map is given either as an Expr (`m[k] = v`, `m.set()`) or as an already-
+// rendered C expression (the literal builds into a `__map_N` temp it has just
+// emitted); exactly one of map_e / map_c is non-NULL.
+//
+// allow_aggregate is 0 only for the compound form `m[k] += v`, which re-reads
+// m[k] and is scalar-only - it kept the pre-existing scalar-only behaviour rather
+// than acquiring a new one here.
+void codegen_expr(Expr* expr);
+static void emit_hashmap_store(Expr* map_e, const char* map_c, Expr* key_e,
+                               Expr* value_e, int allow_aggregate) {
+    char agg[160]; int is_agg = 0;
+    if (allow_aggregate && value_e) {
+        // The box type is the CHECKER's type for the value, deliberately - it is
+        // the same type the READ side uses. `m[k]` emits
+        // `hashmap_index_struct(m, k, <checker's map value_type>)`, so the box and
+        // the read must be named from one source or the value does not come back.
+        //
+        // The tempting alternative is cg_optlike_family(), the authority the
+        // EXPR_OK/EXPR_ERR/EXPR_SOME emitters use to name the CONSTRUCTOR. It was
+        // tried and is WRONG here, and the way it is wrong matters: for
+        //     fn f() -> Option<string> { m = {"k": Some(1)} ... }
+        // wyn_option_ctor_kind resolves a bare constructor from the enclosing
+        // function's return kind before the payload, so it answers OptionString for
+        // an int payload. Boxing as OptionString then AGREES with the constructor
+        // and DISAGREES with the OptionInt read - which compiles, survives the full
+        // runtime header by struct-layout luck, and returns 0 under --release.
+        // Naming the box from the checker instead keeps box and read in step; where
+        // the constructor disagrees, the C compiler says so LOUDLY. A loud error
+        // beats a silent wrong answer, which is the entire point of this ticket.
+        // (That precedence bug in wyn_option_ctor_kind is logged separately.)
+        Token stn = {0};
+        if (value_e->type == EXPR_STRUCT_INIT) {
+            stn = value_e->struct_init.type_name;
+        } else if (value_e->expr_type && value_e->expr_type->kind == TYPE_STRUCT) {
+            stn = value_e->expr_type->struct_type.name.start
+                      ? value_e->expr_type->struct_type.name
+                      : value_e->expr_type->name;
+        }
+        if (stn.start && stn.length > 0) {
+            // NOTE: spells the struct type with a bare current_module_prefix rather
+            // than the wyn_struct_needs_prefix() predicate, preserving the
+            // `m[k] = v` path's output byte-for-byte. The two disagree for a struct
+            // declared inside an imported module; that is a separate defect, logged
+            // as one rather than changed under cover of this fix.
+            if (current_module_prefix)
+                snprintf(agg, sizeof(agg), "%s_%.*s", current_module_prefix, stn.length, stn.start);
+            else
+                snprintf(agg, sizeof(agg), "%.*s", stn.length, stn.start);
+            is_agg = 1;
+        }
+    }
+    if (is_agg) emit("hashmap_insert_struct(");
+    else        emit("%s(", hashmap_insert_fn_for(value_e));
+    if (map_c) emit("%s", map_c); else codegen_expr(map_e);
+    emit(", ");
+    codegen_expr(key_e);
+    emit(", ");
+    codegen_expr(value_e);
+    if (is_agg) emit(", %s)", agg);
+    else        emit(")");
+}
+
 // A string pushed into an array transfers ownership: array_push_str stores the
 // pointer without retaining, and array_free releases it. So a local string var
 // pushed into an array must NOT also be released at scope exit - that would
@@ -1462,14 +1540,8 @@ void codegen_expr(Expr* expr) {
                 // `m[k]=v` and `m.set()` forms already dispatch via hashmap_insert_fn_for;
                 // this closes the last untyped store path.
                 if (fn.length == 12 && memcmp(fn.start, "HashMap::set", 12) == 0 && expr->call.arg_count == 3) {
-                    const char* insert_func = hashmap_insert_fn_for(expr->call.args[2]);
-                    emit("%s(", insert_func);
-                    codegen_expr(expr->call.args[0]);
-                    emit(", ");
-                    codegen_expr(expr->call.args[1]);
-                    emit(", ");
-                    codegen_expr(expr->call.args[2]);
-                    emit(")");
+                    emit_hashmap_store(expr->call.args[0], NULL, expr->call.args[1],
+                                       expr->call.args[2], 1);
                     break;
                 }
             }
@@ -4007,16 +4079,12 @@ void codegen_expr(Expr* expr) {
                 
                 if ((strcmp(method_name, "set") == 0 || strcmp(method_name, "insert") == 0) && 
                     expr->method_call.arg_count == 2) {
-                    // Determine insert function based on value type (shared helper).
-                    Expr* value_expr = expr->method_call.args[1];
-                    const char* insert_func = hashmap_insert_fn_for(value_expr);
-                    emit("%s(", insert_func);
-                    codegen_expr(expr->method_call.object);
-                    emit(", ");
-                    codegen_expr(expr->method_call.args[0]);
-                    emit(", ");
-                    codegen_expr(expr->method_call.args[1]);
-                    emit(")");
+                    // One shared authority with the literal / m[k]=v / HashMap::set,
+                    // so `m.set(k, Some(1))` boxes the aggregate instead of passing
+                    // it to hashmap_insert_int (a C type error after a clean check).
+                    emit_hashmap_store(expr->method_call.object, NULL,
+                                       expr->method_call.args[0],
+                                       expr->method_call.args[1], 1);
                     break;
                 }
                 
@@ -4659,15 +4727,16 @@ void codegen_expr(Expr* expr) {
                 
                 // Insert key-value pairs (stored as key, value, key, value...)
                 for (int i = 0; i < expr->array.count; i += 2) {
-                    Expr* value_expr = expr->array.elements[i+1];
-                    // Shared type→insert-fn selection (consults expr_type too, so a
-                    // typed non-literal value like `{k: someVar}` isn't defaulted to int).
-                    const char* insert_func = hashmap_insert_fn_for(value_expr);
-                    emit("%s(__map_%d, ", insert_func, map_id);
-                    codegen_expr(expr->array.elements[i]);    // key
-                    emit(", ");
-                    codegen_expr(expr->array.elements[i+1]);  // value
-                    emit("); ");
+                    // One shared authority with `m[k]=v` / `.set()` / HashMap::set,
+                    // so an AGGREGATE value (struct, Option, Result) is boxed here
+                    // too. This loop used to pick a scalar insert unconditionally,
+                    // which is why `{"k": Some(1)}` checked clean and then failed in
+                    // the C compiler while `m["k"] = Some(1)` worked.
+                    char mapbuf[32];
+                    snprintf(mapbuf, sizeof(mapbuf), "__map_%d", map_id);
+                    emit_hashmap_store(NULL, mapbuf, expr->array.elements[i],
+                                       expr->array.elements[i+1], 1);
+                    emit("; ");
                 }
                 
                 emit("__map_%d; })", map_id);
@@ -6660,33 +6729,6 @@ void codegen_expr(Expr* expr) {
             }
             
             if (is_map_assign) {
-                // Map-with-struct value: heap-box the struct via the
-                // hashmap_insert_struct macro (needs the struct's C type name).
-                {
-                    Expr* _mv = expr->index_assign.value;
-                    Token _stn = {0}; int _is_struct = 0;
-                    if (_mv->type == EXPR_STRUCT_INIT) { _stn = _mv->struct_init.type_name; _is_struct = 1; }
-                    else if (_mv->expr_type && _mv->expr_type->kind == TYPE_STRUCT) {
-                        _stn = _mv->expr_type->struct_type.name.start ? _mv->expr_type->struct_type.name : _mv->expr_type->name;
-                        _is_struct = (_stn.start && _stn.length > 0);
-                    }
-                    if (_is_struct && !expr->index_assign.is_compound) {
-                        emit("hashmap_insert_struct(");
-                        codegen_expr(expr->index_assign.object);
-                        emit(", ");
-                        codegen_expr(expr->index_assign.index);
-                        emit(", ");
-                        codegen_expr(_mv);
-                        if (current_module_prefix)
-                            emit(", %s_%.*s)", current_module_prefix, _stn.length, _stn.start);
-                        else
-                            emit(", %.*s)", _stn.length, _stn.start);
-                        break;
-                    }
-                }
-                // Map assignment: map["key"] = value -> hashmap_insert_*(map, "key", value)
-                // Determine insert function based on value type (shared helper).
-                const char* insert_func = hashmap_insert_fn_for(expr->index_assign.value);
                 // Compound form (m[k] += v): the value re-reads m[k], and the
                 // getters return 0/"" for a missing key - which would silently
                 // conjure a value out of nothing. Python raises KeyError here;
@@ -6700,13 +6742,12 @@ void codegen_expr(Expr* expr) {
                     codegen_expr(expr->index_assign.index);
                     emit("); ");
                 }
-                emit("%s(", insert_func);
-                codegen_expr(expr->index_assign.object);
-                emit(", ");
-                codegen_expr(expr->index_assign.index);
-                emit(", ");
-                codegen_expr(expr->index_assign.value);
-                emit(")");
+                // Scalar-vs-aggregate selection is one shared authority (see
+                // emit_hashmap_store); the compound form stays scalar-only, as it
+                // was before.
+                emit_hashmap_store(expr->index_assign.object, NULL,
+                                   expr->index_assign.index, expr->index_assign.value,
+                                   !expr->index_assign.is_compound);
                 if (expr->index_assign.is_compound) emit("; })");
             } else if (expr->index_assign.object->type == EXPR_INDEX) {
                 // Nested element assign: m[0][1] = v. The object m[0] is an
