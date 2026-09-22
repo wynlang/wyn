@@ -4244,6 +4244,21 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     } else if (strcmp(return_type_str, "bool") == 0) {
                         expr->expr_type = builtin_bool;
                         return builtin_bool;
+                    } else if (return_type_str[0] >= 'A' && return_type_str[0] <= 'Z') {
+                        // A NAMED type in the signature table (ResultInt,
+                        // ResultFloat, …): resolve it from the global scope,
+                        // where checker_builtins registered the family. One rule
+                        // for every builtin-struct-returning method instead of a
+                        // per-name branch that the next one has to remember to
+                        // add. Falls through to the generic paths if the name is
+                        // not registered, rather than inventing a type.
+                        Token named = {TOKEN_IDENT, return_type_str,
+                                       (int)strlen(return_type_str), method.line};
+                        Symbol* ns = find_symbol(global_scope, named);
+                        if (ns && ns->type) {
+                            expr->expr_type = ns->type;
+                            return ns->type;
+                        }
                     } else if (strcmp(return_type_str, "array") == 0) {
                         // Check if this is a method that returns string array
                         if (object_type && object_type->kind == TYPE_STRING) {

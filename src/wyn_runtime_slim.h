@@ -84,7 +84,10 @@ typedef struct { int start; int end; int current; } WynRange;
 typedef struct { const char* message; const char* type; } WynError;
 typedef struct { WynArray arr; } Queue;
 typedef struct { WynArray arr; } Stack;
-typedef struct { int tag; union { int ok_value; const char* err_value; } data; } ResultInt;
+// Ok payload is long long, matching wyn_runtime.h: Wyn's `int` is 64-bit, and an
+// `int` slot here truncated every Ok above 2^31. Layouts MUST stay in sync with
+// the full header or --release reads the wrong bytes.
+typedef struct { int tag; union { long long ok_value; const char* err_value; } data; } ResultInt;
 typedef struct { int tag; union { const char* ok_value; const char* err_value; } data; } ResultString;
 typedef struct { int tag; int value; } OptionInt;
 typedef struct { int tag; const char* value; } OptionString;
@@ -662,6 +665,14 @@ long long str_ascii(const char* s);
 const char* String_char_from_int(long long n);
 int str_parse_int_failed(int result);
 double str_parse_float(const char* s);
+// The ONE acceptance rule behind to_int / to_int_checked / is_int (and the float
+// trio). These MUST be declared here too: `--release` emits
+// `#include "wyn_runtime_slim.h"` instead of the full header, so a builtin that
+// exists only in wyn_runtime.h works under `wyn run` and `wyn build` and then
+// fails to compile under `wyn run --release`. That has happened before.
+int wyn_parse_int_core(const char* s, long long* out);
+int wyn_parse_float_core(const char* s, double* out);
+bool str_is_int(const char* s);
 int abs_val(int x);
 int pow_int(int base, int exp);
 int clamp(int x, int min_val, int max_val);
@@ -878,13 +889,14 @@ int bit_clear(int x, int pos);
 int bit_toggle(int x, int pos);
 int bit_check(int x, int pos);
 int bit_count(int x);
-ResultInt ResultInt_Ok(int value);
+ResultInt ResultInt_Ok(long long value);
 ResultInt ResultInt_Err(const char* msg);
 bool ResultInt_is_ok(ResultInt r);
 bool ResultInt_is_err(ResultInt r);
-int ResultInt_unwrap(ResultInt r);
+long long ResultInt_unwrap(ResultInt r);
 const char* ResultInt_unwrap_err(ResultInt r);
 long long ResultInt_unwrap_or(ResultInt r, long long def);
+ResultInt str_to_int_checked(const char* s);
 ResultString ResultString_Ok(const char* value);
 ResultString ResultString_Err(const char* msg);
 bool ResultString_is_ok(ResultString r);
@@ -915,6 +927,7 @@ bool OptionBool_is_some(OptionBool o);
 bool OptionBool_is_none(OptionBool o);
 bool OptionBool_unwrap(OptionBool o);
 bool OptionBool_unwrap_or(OptionBool o, bool def);
+ResultFloat str_to_float_checked(const char* s);
 ResultFloat ResultFloat_Ok(double value);
 ResultFloat ResultFloat_Err(const char* msg);
 bool ResultFloat_is_ok(ResultFloat r);

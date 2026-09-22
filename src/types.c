@@ -44,8 +44,20 @@ static const MethodSignature method_signatures[] = {
     {"string", "char_at", "string", 1},      // Get char at index
     {"string", "equals", "bool", 1},         // String equality
     {"string", "count", "int", 1},           // Count occurrences
+    // is_numeric means "looks like a DECIMAL number, int or float" - so
+    // "1.5".is_numeric() is true and that is correct, 1.5 IS a number. It is
+    // NOT the predicate that tells you `.to_int()` is safe; that one is
+    // is_int(), which is literally to_int_checked().is_ok(). Gating a to_int on
+    // is_numeric() was the V-18 trap: the true answer still panicked.
     {"string", "is_numeric", "bool", 0},     // Check if numeric (int or float)
-    {"string", "to_int", "int", 0},          // Parse string to int
+    {"string", "is_int", "bool", 0},         // to_int_checked().is_ok() - the predicate that gates to_int
+    {"string", "to_int", "int", 0},          // Parse string to int (PANICS on garbage)
+    // The catchable parses. PLAN_v1.22 V-18: before these there was no
+    // string->number that could not abort the process, so no CLI could read
+    // untrusted input. Uppercase return types are resolved as builtin types by
+    // name in checker.c's table mapper, so no per-name special case is needed.
+    {"string", "to_int_checked", "ResultInt", 0},      // -> Result<int, string>
+    {"string", "to_float_checked", "ResultFloat", 0},  // -> Result<float, string>
     {"string", "ascii", "int", 0},           // ASCII value of first char
     {"string", "to_float", "float", 0},      // Parse string to float
     {"string", "parse_int", "int", 0},       // Parse string to int (alias)
@@ -465,6 +477,15 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         }
         if (strcmp(method_name, "is_numeric") == 0 && arg_count == 0) {
             out->c_function = "string_is_numeric"; return true;
+        }
+        if (strcmp(method_name, "is_int") == 0 && arg_count == 0) {
+            out->c_function = "str_is_int"; return true;
+        }
+        if (strcmp(method_name, "to_int_checked") == 0 && arg_count == 0) {
+            out->c_function = "str_to_int_checked"; return true;
+        }
+        if (strcmp(method_name, "to_float_checked") == 0 && arg_count == 0) {
+            out->c_function = "str_to_float_checked"; return true;
         }
         if (strcmp(method_name, "parse_int") == 0 && arg_count == 0) {
             out->c_function = "str_parse_int"; return true;
