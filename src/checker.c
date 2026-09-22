@@ -3651,24 +3651,34 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // of the int default that S2 patched after the fact.
             // The week-one key-fn methods (sort_by/max_by/min_by/group_by) take
             // the same element-typed single-param lambda, so they share the seed.
+            // sort_by ALSO takes a two-parameter COMPARATOR lambda
+            // (`xs.sort_by((a, b) => b.n - a.n)`), and BOTH of its parameters are
+            // the element type. The seed used to require param_count == 1, so the
+            // comparator's parameters fell back to the `int` default and every
+            // field access on them died in the C compiler ("member reference base
+            // type 'long long' is not a structure or union") - reported as a bare
+            // "internal codegen error". PLAN_v1.22 V-19.
             if (object_type && object_type->kind == TYPE_ARRAY &&
                 object_type->array_type.element_type &&
                 expr->method_call.arg_count == 1 &&
-                expr->method_call.args[0]->type == EXPR_LAMBDA &&
-                expr->method_call.args[0]->lambda.param_count == 1 &&
-                ((expr->method_call.method.length == 3 &&
-                  memcmp(expr->method_call.method.start, "map", 3) == 0) ||
-                 (expr->method_call.method.length == 6 &&
-                  memcmp(expr->method_call.method.start, "filter", 6) == 0) ||
-                 (expr->method_call.method.length == 7 &&
-                  memcmp(expr->method_call.method.start, "sort_by", 7) == 0) ||
-                 (expr->method_call.method.length == 6 &&
-                  memcmp(expr->method_call.method.start, "max_by", 6) == 0) ||
-                 (expr->method_call.method.length == 6 &&
-                  memcmp(expr->method_call.method.start, "min_by", 6) == 0) ||
-                 (expr->method_call.method.length == 8 &&
-                  memcmp(expr->method_call.method.start, "group_by", 8) == 0))) {
-                lambda_ctx_param_seed = object_type->array_type.element_type;
+                expr->method_call.args[0]->type == EXPR_LAMBDA) {
+                int _pc = expr->method_call.args[0]->lambda.param_count;
+                bool _is_sort_by = (expr->method_call.method.length == 7 &&
+                                    memcmp(expr->method_call.method.start, "sort_by", 7) == 0);
+                bool _one_param_elem_fn = _pc == 1 &&
+                    (_is_sort_by ||
+                     (expr->method_call.method.length == 3 &&
+                      memcmp(expr->method_call.method.start, "map", 3) == 0) ||
+                     (expr->method_call.method.length == 6 &&
+                      memcmp(expr->method_call.method.start, "filter", 6) == 0) ||
+                     (expr->method_call.method.length == 6 &&
+                      memcmp(expr->method_call.method.start, "max_by", 6) == 0) ||
+                     (expr->method_call.method.length == 6 &&
+                      memcmp(expr->method_call.method.start, "min_by", 6) == 0) ||
+                     (expr->method_call.method.length == 8 &&
+                      memcmp(expr->method_call.method.start, "group_by", 8) == 0));
+                if (_one_param_elem_fn || (_pc == 2 && _is_sort_by))
+                    lambda_ctx_param_seed = object_type->array_type.element_type;
             }
             for (int i = 0; i < expr->method_call.arg_count; i++) {
                 check_expr(expr->method_call.args[i], scope);
