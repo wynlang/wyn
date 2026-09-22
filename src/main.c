@@ -891,19 +891,125 @@ static int wyn_report_undeclared_namespace_call(const char* cc_err_path) {
         // existed, which an `extern fn` would have provided.
         if (from_linker && !is_builtin_module(ns)) continue;
         if (!reported) {
-            fprintf(stderr,
-                "Error: unknown method '%s.%s' on namespace '%s'\n",
-                ns, method, ns);
-            fprintf(stderr,
-                "  \033[34mHelp:\033[0m '%s' is not a function Wyn knows about. Check the spelling"
-                " against the '%s' stdlib docs - namespace methods are not"
-                " verified until the generated C is compiled, so a typo surfaces"
-                " here rather than at the call site.\n", method, ns);
+            // "CHECK THE SPELLING" IS ONLY HONEST IF WYN DOES NOT HAVE THE NAME.
+            //
+            // `Time.now_millis()` is a real function: it is in the checker's builtin
+            // registry, it is declared in src/wyn_runtime.h, and it compiles and runs
+            // under `wyn check`, `wyn run` and `wyn build --release`. It failed under
+            // `wyn run --release` alone - the only path that emits
+            // src/wyn_runtime_slim.h - because that header never declared it. This
+            // branch then caught clang's "call to undeclared function" and told the
+            // user to check their spelling: the compiler blaming the user for its own
+            // missing header entry. A wrong diagnosis costs more than none, because
+            // it sends the reader to re-read a correct line.
+            //
+            // So ask the ONE authority first. wyn_namespace_method_declared() shares
+            // wyn_namespace_c_symbol() and the same declaration index as the
+            // check-time rule (#357), so this cannot drift from what the checker
+            // believes - writing a second lookup here is exactly the shape that
+            // produced the bug.
+            char csym[320] = "";
+            extern int wyn_namespace_method_declared(const char*, const char*, char*, size_t);
+            int declared = wyn_namespace_method_declared(ns, method, csym, sizeof(csym));
+            if (declared == 1) {
+                // Wyn HAS it. Do not send the user looking for a typo.
+                fprintf(stderr,
+                    "Error: internal: '%s.%s' is a function Wyn has, but this build could"
+                    " not compile a call to it\n", ns, method);
+                fprintf(stderr,
+                    "  \033[34mHelp:\033[0m this is a COMPILER BUG, not a mistake in your code."
+                    " '%s.%s' lowers to the C symbol '%s', which src/wyn_runtime.h declares"
+                    " but the header this build used does not.%s\n",
+                    ns, method, csym,
+                    from_linker ? " The symbol is missing from runtime/libwyn_rt.a."
+                                : " If you passed --release, src/wyn_runtime_slim.h is"
+                                  " missing its declaration; building without --release"
+                                  " is a workaround. Please report it.");
+            } else {
+                fprintf(stderr,
+                    "Error: unknown method '%s.%s' on namespace '%s'\n",
+                    ns, method, ns);
+                // The old wording ended "...namespace methods are not verified until
+                // the generated C is compiled, so a typo surfaces here rather than at
+                // the call site." #357 made that FALSE: a namespace method IS checked
+                // at check time now, and a typo is rejected there with a line and a
+                // caret. Reaching this branch therefore means the checker could not
+                // consult its declaration index at all, which is what the help should
+                // say - a stale explanation of a mechanism that no longer exists sends
+                // the reader looking in the wrong place.
+                fprintf(stderr,
+                    "  \033[34mHelp:\033[0m '%s' is not a function Wyn knows about. Check the spelling"
+                    " against the '%s' stdlib docs. (This surfaced at the C-compile step"
+                    " rather than at the call site, which means this build could not read"
+                    " its own runtime headers to check the name earlier.)\n", method, ns);
+            }
             reported = 1;
         }
     }
     fclose(f);
     return reported;
+}
+
+// ─── THE RUN CACHE MUST BE KEYED ON THE MODE, NOT ONLY ON MTIMES ─────────────
+//
+// `wyn run` caches its binary as <file>.wyn.out and reuses it while the mtimes say
+// it is fresh. The mode was NOT part of that decision, so:
+//
+//     wyn run c.wyn            -> compiles the DEBUG binary
+//     wyn run --release c.wyn  -> prints nothing, runs the DEBUG binary
+//
+// Measured on dev: byte-identical .out (md5 bff3f8d9…), 1,071,896 bytes, where a
+// release build of the same file in a fresh directory is 1,044,088. So the release
+// path was untestable in place, and anyone benchmarking `--release` that way was
+// timing the debug build. It is also how a slim-header regression reaches users: a
+// gate that runs `wyn run` before `wyn run --release` on one path compiles the slim
+// header exactly once - never - and reports green.
+//
+// The fix is a MODE KEY written beside the binary, not a separate output path:
+// <file>.wyn.out is an established artifact that tests, docs and the stdlib runner
+// all delete by name, and renaming it would break them silently. The sidecar is
+// advisory in the safe direction - if it is missing or unreadable the cache is
+// treated as STALE, so the worst case is an extra compile.
+//
+// Everything that changes the emitted artifact goes in the key. --release and --fast
+// pick the optimisation level; --shared/--python/--node change the artifact kind
+// entirely. --debug only decides whether the .c is kept, so it is deliberately not
+// keyed. Scans ALL of argv because --release is honoured after the file too
+// (see the `use_release` loops in the run block).
+static void wyn_run_mode_key(int argc, char** argv, char* out, size_t n)
+{
+    int rel = 0, fast = 0, lib = 0;
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "--release") == 0) rel = 1;
+        else if (strcmp(argv[i], "--fast") == 0) fast = 1;
+        else if (strcmp(argv[i], "--shared") == 0) lib = 1;
+        else if (strcmp(argv[i], "--python") == 0) lib = 2;
+        else if (strcmp(argv[i], "--node") == 0) lib = 3;
+    }
+    snprintf(out, n, "wyn-run-mode v1 rel=%d fast=%d lib=%d", rel, fast, lib);
+}
+
+// 1 when the cached binary at out_path was built in THIS mode. 0 when it was not, or
+// when we cannot tell - an unknown mode must read as stale, never as a hit.
+static int wyn_run_mode_matches(const char* out_path, const char* key)
+{
+    char p[600]; snprintf(p, sizeof(p), "%s.mode", out_path);
+    FILE* f = fopen(p, "r");
+    if (!f) return 0;
+    char line[256] = "";
+    if (!fgets(line, sizeof(line), f)) { fclose(f); return 0; }
+    fclose(f);
+    line[strcspn(line, "\r\n")] = '\0';
+    return strcmp(line, key) == 0;
+}
+
+static void wyn_run_mode_record(const char* out_path, const char* key)
+{
+    char p[600]; snprintf(p, sizeof(p), "%s.mode", out_path);
+    FILE* f = fopen(p, "w");
+    if (!f) return;                 // best effort: a missing file means "stale"
+    fprintf(f, "%s\n", key);
+    fclose(f);
 }
 
 // Detect available C backend: WYN_CC env > cc > gcc > clang
@@ -2802,9 +2908,26 @@ int main(int argc, char** argv) {
         // produced by `wyn build-runtime` would be missing wyn_https_request and every
         // subsequent build would fail on an undefined symbol - the archive built by
         // `make runtime` has them (RT_SRCS), so the two must not disagree.
+        //
+        // src/runtime_exports.c is appended for the same reason and with the same
+        // constraint. It is the ONLY translation unit that includes wyn_runtime.h, so
+        // it is where every function DEFINED in that header becomes a linkable symbol
+        // - 817 of them. `wyn run --release` emits wyn_runtime_slim.h (declarations
+        // only) and takes the definitions from this archive, so without it every
+        // --release build made from a `wyn build-runtime` archive dies at link
+        // (Math_pow, System_args, __wyn_argc, print_float_no_nl, ...). It is exactly
+        // the failure tests/errors/run_release_link_test.sh was written for, after the
+        // Makefile had the same omission in RT_SRCS.
+        //
+        // It CANNOT go into wyn_runtime_sources: src/tcc_backend.c's fallback path
+        // compiles that list TOGETHER WITH the program's own .c, which includes
+        // wyn_runtime.h itself and so already defines all 817 - adding this would make
+        // every TCC build a duplicate-symbol error. Two lists that must agree on
+        // everything except one entry, so the entry is named here with its reason
+        // rather than moved.
         snprintf(cmd, sizeof(cmd),
             "mkdir -p %s/runtime/obj && cd %s && "
-            "for f in %s src/wyn_tls.c src/wyn_https.c; do "
+            "for f in %s src/runtime_exports.c src/wyn_tls.c src/wyn_https.c; do "
             "gcc -std=c11 -O2 -w -DWYN_HAVE_TLS -I src -I vendor/minicoro "
             "-I vendor/mbedtls/include -c $f -o runtime/obj/$(basename $f .c).o 2>/dev/null; done && "
             "ar rcs runtime/libwyn_rt.a runtime/obj/*.o && "
@@ -3566,6 +3689,45 @@ int main(int argc, char** argv) {
         return rc;
     }
 
+    // INTERNAL. Prints every name the checker's builtin registry blesses, one per
+    // line. Not in `wyn help` and not a supported interface - it exists so
+    // tests/errors/run_release_slim_registry_test.sh can enumerate the registry
+    // from the REGISTRY ITSELF.
+    //
+    // The alternative was to scrape src/checker_builtins.c with grep, and that is
+    // provably incomplete: registration happens through FIVE shapes there
+    // (`add_symbol` directly, `reg_fn`, `reg_math_fns`, `reg_ptr_fns`,
+    // `reg_task_fns`, ...), and a scrape that knew only the table-literal shape
+    // missed Url_encode/Url_decode - two of the very symbols the gate has to find.
+    // A gate that silently enumerates a subset is worse than no gate, so ask the
+    // compiler instead of guessing what the compiler knows.
+    // Two sections, because the registry alone is NOT the whole reachable surface
+    // and a gate built on half of it passes while the bug is live - which is exactly
+    // what happened: `Base64.encode` compiled under `wyn run --release` only after
+    // the namespace list was added here, because Base64_encode is not a global
+    // symbol. A namespace call is legal when src/wyn_runtime.h declares
+    // <Ns>_<method> (that is the rule wyn_namespace_method_unknown() enforces at
+    // check time), so the namespaces are the second half of the enumeration.
+    //   SYMBOL <name>  - a name in the checker's global scope
+    //   NS <name>      - a builtin namespace
+    if (strcmp(command, "dump-builtins") == 0) {
+        init_checker();
+        SymbolTable* g = get_global_scope();
+        if (!g) return 1;
+        for (int i = 0; i < g->count; i++) {
+            Token nm = g->symbols[i].name;
+            if (!nm.start || nm.length <= 0) continue;
+            printf("SYMBOL %.*s\n", nm.length, nm.start);
+        }
+        extern const char* builtin_module_name_at(int index);
+        for (int i = 0; ; i++) {
+            const char* ns = builtin_module_name_at(i);
+            if (!ns) break;
+            printf("NS %s\n", ns);
+        }
+        return 0;
+    }
+
     if (strcmp(command, "check") == 0) {
         if (argc < 3) { fprintf(stderr, "Usage: wyn check <file.wyn>\n"); return 1; }
         char* file = argv[2];
@@ -3901,9 +4063,15 @@ int main(int argc, char** argv) {
                         fclose(_sf);
                     }
                 }
+                // …and on the MODE. Mtimes cannot tell a debug binary from a release
+                // one, so `wyn run` followed by `wyn run --release` on the same path
+                // silently re-ran the DEBUG binary - see wyn_run_mode_key().
+                char _mode_key[128];
+                wyn_run_mode_key(argc, argv, _mode_key, sizeof(_mode_key));
                 if (out_st.st_mtime > src_st.st_mtime &&
                     (imports_mtime == 0 || out_st.st_mtime > imports_mtime) &&
-                    (!compiler_ok || out_st.st_mtime > wyn_st.st_mtime)) {
+                    (!compiler_ok || out_st.st_mtime > wyn_st.st_mtime) &&
+                    wyn_run_mode_matches(out_path, _mode_key)) {
                     char run_cmd[2048];
                     if (out_path[0] == '/') {
                         snprintf(run_cmd, sizeof(run_cmd), "%s", out_path);
@@ -4251,6 +4419,14 @@ int main(int argc, char** argv) {
             clock_gettime(CLOCK_MONOTONIC, &_ts_end);
             double _ms = (_ts_end.tv_sec - _ts_start.tv_sec) * 1000.0 + (_ts_end.tv_nsec - _ts_start.tv_nsec) / 1e6;
             fprintf(stderr, "\033[2mCompiled in %.0fms\033[0m\n", _ms);
+            // Record WHICH MODE this binary is, so the cache check above cannot hand a
+            // debug build to `--release` (or the reverse). Written only on success:
+            // a failed compile leaves the previous binary and its previous key, which
+            // is correct - that pair still describes what is on disk.
+            char _mode_out[520], _mode_key2[128];
+            snprintf(_mode_out, sizeof(_mode_out), "%s.out", file);
+            wyn_run_mode_key(argc, argv, _mode_key2, sizeof(_mode_key2));
+            wyn_run_mode_record(_mode_out, _mode_key2);
         }
         if (result != 0) {
             // A misspelled namespace method (`Time.now_ms()`) is lowered to a

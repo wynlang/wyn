@@ -412,6 +412,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_run_cache_imports_test.sh
 	@echo "=== Running --release link/parity test ==="
 	@WYN=./wyn bash tests/errors/run_release_link_test.sh
+	@echo "=== Running --release slim-header registry coverage gate ==="
+	@WYN=./wyn bash tests/errors/run_release_slim_registry_test.sh
 	@echo "=== Running native app-bundle (wyn build --app) test ==="
 	@WYN=./wyn bash tests/errors/run_app_bundle_test.sh
 	@echo "=== Running assert_eq float-comparison test ==="
