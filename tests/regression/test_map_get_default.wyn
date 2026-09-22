@@ -9,8 +9,11 @@
 // EXPECT: fallback
 // EXPECT: 1.5
 // EXPECT: 9.5
-// EXPECT: 1
-// EXPECT: 0
+// The two bool-map rows now print true/false, not 1/0 (V-30: one bool-in-print
+// authority). Same reasoning as the float rows above: the whole point is that the
+// value type survives, so a bool has to come back looking like a bool.
+// EXPECT: true
+// EXPECT: false
 // EXPECT: hi
 // EXPECT: dflt
 // EXPECT: 0.5

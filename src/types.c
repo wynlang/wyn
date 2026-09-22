@@ -1178,6 +1178,20 @@ const char* lookup_module_fn_return_type(const char* fn_name) {
         {"Random_string", "string"}, {"Random_hex", "string"}, {"Random_uuid", "string"},
         {"Random_bool", "bool"}, {"Random_choice_str", "string"},
         {"Web_render", "string"},
+        // HashSet.contains is `bool` in the set RECEIVER table above
+        // ({"set","contains","bool"}), and `HashSet` is BOTH a namespace and a
+        // registered type - so the dotted spelling reads the receiver table and the
+        // `::` spelling reads this one. Without this entry `HashSet.contains(s,"a")`
+        // printed `true` and `HashSet::contains(s,"a")` printed `1`. (HashMap.has
+        // needs no entry: hashmap_has is declared `bool` in the runtime, so both
+        // spellings already agree. hashset_contains is declared `int`.)
+        {"HashSet_contains", "bool"},
+        // Same shape, and the reason it needs saying twice: hashmap_has IS declared
+        // `bool`, so the DIRECT call already printed true/false by accident of the C
+        // declaration - but the checker had no type for it, so `var v = HashMap.has(m,k)`
+        // declared a non-bool and printed `1`. Registering the type makes the accident
+        // into the rule, in both spellings and through a variable.
+        {"HashMap_has", "bool"},
         {NULL, NULL}
     };
     for (int i = 0; fns[i].name; i++) {

@@ -508,6 +508,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_var_type_scope_test.sh
 	@echo "=== Running bool-method formatting test ==="
 	@WYN=./wyn bash tests/errors/run_bool_method_format_test.sh
+	@echo "=== Running bool-in-print authority test (V-30, every spelling) ==="
+	@WYN=./wyn bash tests/errors/run_bool_in_print_test.sh
 	@echo "=== Running python/shared-library build test ==="
 	@WYN=./wyn bash tests/errors/run_python_lib_test.sh
 	@echo "=== Running pkg search test ==="

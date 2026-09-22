@@ -1374,7 +1374,14 @@ void init_checker() {
         {"Http_get_json", 1, builtin_int},
         {"Http_post_json", 2, builtin_int},
         {"Json_get_float", 2, builtin_float},
-        {"Json_get_bool", 2, builtin_int},
+        // `bool`, agreeing with the json RECEIVER table's {"json","get_bool","bool"}
+        // (types.c). While this said int, `Json.get_bool(d, "k")` and
+        // `d.get_bool("k")` were two types for one call: once codegen started
+        // rendering a bool-typed call as true/false from one authority
+        // (cg_expr_is_bool_typed), the receiver spelling printed `true` and the
+        // namespace spelling still printed `1`. Json.has stays int in BOTH tables on
+        // purpose - see the note beside it in types.c.
+        {"Json_get_bool", 2, builtin_bool},
         {"Json_get_array", 2, builtin_int},
         {"Json_get_object", 2, builtin_int},
         {"File_glob", 1, builtin_string},

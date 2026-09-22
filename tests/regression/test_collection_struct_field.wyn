@@ -25,7 +25,8 @@
 //
 // EXPECT: HashMap field: get=v2 len=1
 // EXPECT: two structs do not share one map: a=1 b=0
-// EXPECT: HashSet field: has_a=1 has_z=0
+// set.contains() now prints true/false, not 1/0 (V-30: one bool-in-print authority).
+// EXPECT: HashSet field: has_a=true has_z=false
 // EXPECT: Json field: {"n": "x"}
 // EXPECT: struct with a map field inside an array: v
 // EXPECT: nested struct, map on the inner: deep

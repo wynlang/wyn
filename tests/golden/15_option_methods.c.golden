@@ -13,11 +13,11 @@ long long wyn_main() {
 #line 3 "15_option_methods.wyn"
 OptionInt a = OptionInt_Some(42);
     ({ const char* __ps = to_string(OptionInt_unwrap(a)); println(__ps); wyn_rc_release(__ps); });
-    ({ const char* __ps = to_string(OptionInt_is_some(a)); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string((bool)(OptionInt_is_some(a))); println(__ps); wyn_rc_release(__ps); });
     /* 15_option_methods.wyn:6 */ 
 #line 6 "15_option_methods.wyn"
 OptionInt b = OptionInt_None();
-    ({ const char* __ps = to_string(OptionInt_is_none(b)); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string((bool)(OptionInt_is_none(b))); println(__ps); wyn_rc_release(__ps); });
     ({ const char* __ps = to_string(OptionInt_unwrap_or(b, 7)); println(__ps); wyn_rc_release(__ps); });
     return 0;
 }

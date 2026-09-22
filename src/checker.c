@@ -3525,6 +3525,29 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                             return _r;
                         }
                     }
+                    // Last stop before the int default: the SAME hardcoded stdlib
+                    // return-type table the DOTTED spelling falls back to
+                    // (check_expr's EXPR_METHOD_CALL arm). `Random::bool()` resolves
+                    // to no symbol, so it took the int default and printed `1` while
+                    // `Random.bool()` printed `true` - one registered `bool` return,
+                    // honoured on one of the two paths. Reading the one table from both
+                    // is what makes the spellings agree.
+                    {
+                        extern const char* lookup_module_fn_return_type(const char*);
+                        char _tname[264];
+                        snprintf(_tname, sizeof(_tname), "%s_%s", qual_module, qual_func);
+                        const char* _trt = lookup_module_fn_return_type(_tname);
+                        if (_trt) {
+                            Type* _r = strcmp(_trt, "bool") == 0   ? builtin_bool
+                                     : strcmp(_trt, "string") == 0 ? builtin_string
+                                     : strcmp(_trt, "float") == 0  ? builtin_float
+                                     : strcmp(_trt, "array") == 0  ? builtin_array
+                                     : builtin_int;
+                            expr->expr_type = _r;
+                            free(arg_types);
+                            return _r;
+                        }
+                    }
                     expr->expr_type = builtin_int;  // Default return type
                     free(arg_types);
                     return builtin_int;

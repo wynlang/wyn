@@ -199,8 +199,14 @@ fn main() {
     print("\${HashMap${SEP}has(m, "k")}|\${HashSet${SEP}contains(s, "a")}|\${String${SEP}from_chars([72, 105])}|\${Math${SEP}abs(-3)}")
 }
 EOF
+    # HashSet.contains is the second field, and it says `true` in BOTH spellings as of
+    # V-30. It used to be `1` here: `HashSet` is both a namespace and a registered type,
+    # so the dotted form read the set RECEIVER table (bool) and the `::` form read the
+    # namespace table (nothing -> int default), and the two printed differently. Both
+    # read the one registered `bool` now. Keeping one expected string for both spellings
+    # is deliberate - it is what made the split visible.
     check "[$tag] and still runs correctly" \
-        "$("$WYN_ABS" run good_run.wyn 2>/dev/null | tail -1)" "true|1|Hi|3"
+        "$("$WYN_ABS" run good_run.wyn 2>/dev/null | tail -1)" "true|true|Hi|3"
 
     # File:: moved from the file_ prefix to File_ when the two spellings were
     # consolidated. Every File_* is a same-arity wrapper over its file_* counterpart,
