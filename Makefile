@@ -448,6 +448,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_generic_enum_test.sh
 	@echo "=== Running unknown-method negative test ==="
 	@WYN=./wyn bash tests/errors/run_unknown_method_test.sh
+	@echo "=== Running Option/Result-predicate-on-a-scalar test (V-28) ==="
+	@WYN=./wyn bash tests/errors/run_scalar_option_method_test.sh
 	@echo "=== Running bug-batch-2 test ==="
 	@WYN=./wyn bash tests/errors/run_bug_batch2_test.sh
 	@echo "=== Running user test-runner test ==="

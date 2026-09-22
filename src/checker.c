@@ -2225,6 +2225,71 @@ static bool reject_unknown_namespace_method(const char* ns, const char* method,
     return true;
 }
 
+// V-28: an Option/Result predicate on an int / float / bool receiver. `x = 5;
+// x.is_err()` passed `wyn check` and died in the C compiler with "passing 'long long'
+// to parameter of incompatible type 'ResultInt'".
+//
+// The rejected set is not a taste judgement - it is transcribed from the ONE place
+// that creates the failure: codegen_expr.c's "Fallback: try Result/Option method
+// dispatch", which lowers exactly these names by ASSUMING the receiver is an
+// Option/Result struct (`ResultInt_is_err(recv)`, `OptionInt_is_some(recv)`) whenever
+// it has no better type for the receiver. On a numeric receiver that is always a C
+// type error, so rejecting here can only ever turn a guaranteed ICE into a message.
+// Measured before the rule was written: these 6 names x 8 receiver shapes the checker
+// types as a scalar = 48 combinations, 48 clean `wyn check`es, 48 build failures.
+//
+// `unwrap_or` is in that codegen list and is deliberately NOT here. It has a REAL
+// lowering ahead of the blind fallback - `m.get(k).unwrap_or(d)` becomes
+// hashmap_get_or_int - and so it does build on a receiver the checker typed int.
+// Re-stating that carve-out here would be a second copy of a codegen rule; leaving
+// the name out keeps this rule's promise (it never rejects something that builds)
+// with nothing to keep in sync.
+//
+// Why the rule is keyed on the METHOD NAME and not on the receiver: TYPE_INT is the
+// checker's fallback type for any expression it could not resolve, so "unknown method
+// on an int receiver" is not a usable rule - in this tree it would reject
+// `StringBuilder.new().append()`, `3.times(f)` (a real int method that is absent from
+// the signature table) and 1,038 `Test.assert_*` calls. Of 1,312 method calls on an
+// int/float/bool receiver in the corpus, 1,167 are namespace placeholders. The method
+// name is the only half of the pair that is certain, which is why a "real int receiver
+// type" is still owed before the receiver half can be checked strictly.
+//
+// `separator` is quoted back so the help shows the user's own spelling: `.` and `::`
+// lower to different C symbols (#369) and both reach this rule.
+static bool reject_option_method_on_scalar(const Type* receiver, const char* method,
+                                          const char* separator, int line) {
+    if (!receiver || !method || !*method) return false;
+    if (receiver->kind != TYPE_INT && receiver->kind != TYPE_FLOAT &&
+        receiver->kind != TYPE_BOOL) return false;
+
+    // Result-only, Option-only, and the one name both families share.
+    static const char* const result_only[] = {"is_ok", "is_err", "unwrap_err", NULL};
+    static const char* const option_only[] = {"is_some", "is_none", NULL};
+    const char* wants = NULL;
+    for (int i = 0; result_only[i]; i++)
+        if (strcmp(result_only[i], method) == 0) { wants = "a Result"; break; }
+    if (!wants)
+        for (int i = 0; option_only[i]; i++)
+            if (strcmp(option_only[i], method) == 0) { wants = "an Option"; break; }
+    if (!wants && strcmp(method, "unwrap") == 0) wants = "an Option or Result";
+    if (!wants) return false;
+
+    const char* kind = receiver->kind == TYPE_INT ? "int"
+                     : receiver->kind == TYPE_FLOAT ? "float" : "bool";
+    char headline[320], help[512];
+    snprintf(headline, sizeof(headline), "'%s()' needs %s receiver, not %s",
+             method, wants, kind);
+    snprintf(help, sizeof(help),
+             "Wyn lowers `%s%s()` by assuming the receiver is %s value, so it cannot"
+             " compile against %s. If the value really is a number, compare it instead;"
+             " if it was meant to be %s, annotate the thing that produced it so the"
+             " checker can see the type.",
+             separator, method, wants, kind, wants);
+    report_unknown_method(line, headline, NULL, help);
+    had_error = true;
+    return true;
+}
+
 Type* check_expr(Expr* expr, SymbolTable* scope) {
     if (!expr) return NULL;
 
@@ -3488,6 +3553,29 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         free(arg_types);
                         return builtin_int;
                     }
+                    // `x::is_err()` on a scalar variable, the `::` half of V-28. The
+                    // rule above cannot see it: its first guard is is_builtin_module(),
+                    // and `x` is not a namespace. Gated on the same three module tests
+                    // that rule uses, because an import registers the MODULE NAME as an
+                    // int-typed placeholder symbol - without them, a user module with a
+                    // `pub fn is_ok` would be rejected on its own name.
+                    {
+                        extern bool is_builtin_module(const char* name);
+                        extern bool is_module_loaded(const char* name);
+                        Token _rtok = {TOKEN_IDENT, qual_module, (int)strlen(qual_module),
+                                       expr->call.callee->token.line};
+                        Symbol* _rsym = find_symbol(scope, _rtok);
+                        if (_rsym && _rsym->type &&
+                            !is_builtin_module(qual_module) &&
+                            !is_module_loaded(qual_module) &&
+                            !checking_same_module(qual_module) &&
+                            reject_option_method_on_scalar(_rsym->type, qual_func, "::",
+                                                           expr->call.callee->token.line)) {
+                            expr->expr_type = builtin_int;
+                            free(arg_types);
+                            return builtin_int;
+                        }
+                    }
                     // Module-qualified function - check for known return types
                     if (strcmp(qual_module, "C_Parser") == 0) {
                         // C_Parser module functions
@@ -4693,6 +4781,16 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     expr->expr_type = builtin_int;
                     return builtin_int;
                 }
+            }
+
+            // An Option/Result predicate on an int/float/bool receiver: reject at check
+            // time (V-28). Sits beside the string/array rule below because the two are
+            // the same promise from opposite directions - that one knows the receiver
+            // exhaustively, this one knows the METHOD exhaustively.
+            if (reject_option_method_on_scalar(object_type, method_name, ".",
+                                               method.line)) {
+                expr->expr_type = builtin_int;
+                return builtin_int;
             }
 
             // Unknown method on a STRING or ARRAY receiver: reject at check time.
