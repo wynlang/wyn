@@ -1,4 +1,13 @@
-# Compiled artifacts
+# Compiled artifacts. `*.c` is here because `wyn build --debug` drops generated C
+# next to the .wyn source, and this tree is full of .wyn sources.
 *.c
 *.out
 *.o
+
+# ...but hand-written C test SOURCES have to be tracked. Without this, adding one
+# looks like it worked - `git add` says nothing, the suite passes locally off the
+# working copy - and the repo ends up with a gate whose test file does not exist.
+# tests/run_tests_parallel.sh is the cautionary tale: it reads a tests/test_list.txt
+# that was never committed, so it has always executed zero tests while showing a
+# green tick. Un-ignore per directory as C tests are added.
+!tls/*.c
