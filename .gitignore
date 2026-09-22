@@ -120,3 +120,9 @@ examples/*.wyn.c
 # Agent worktrees and session scratch - never part of the repo.
 .claude/
 fuzz_out/
+
+# Vendored mbedTLS: the SOURCES are committed, the build products are not.
+# (vendor/tcc/lib/libtcc.a IS committed - a prebuilt upstream binary - so this
+# has to name mbedtls specifically rather than ignoring vendor/*/lib.)
+vendor/mbedtls/obj/
+vendor/mbedtls/lib/

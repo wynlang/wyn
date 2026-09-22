@@ -87,10 +87,44 @@ ifeq ($(UNAME_S),Darwin)
 WEBVIEW_OBJ := src/wyn_webview.o
 endif
 
-all: wyn$(EXE_EXT) runtime $(WEBVIEW_OBJ)
+all: wyn$(EXE_EXT) runtime $(MBEDTLS_LIB) $(WEBVIEW_OBJ)
 
 src/wyn_webview.o: src/wyn_webview.m src/wyn_webview.h
 	$(CC) -ObjC -fobjc-arc -O2 -I src -c $< -o $@
+
+# --- Vendored mbedTLS (3.6 LTS) -----------------------------------------------
+# In-process TLS, so HTTPS stops shelling out to `openssl s_client` (an RCE: the
+# URL and POST body were spliced into a command string). One vendored library for
+# every target rather than three system-TLS backends - see internal-docs
+# ROADMAP "OWNER DECISIONS 2026-09-22".
+#
+# Compiled with the UPSTREAM DEFAULT config (vendor/mbedtls/include/mbedtls/
+# mbedtls_config.h, untouched): correctness first. Trimming the config is a
+# separate concern - nothing links the unused objects anyway, because this is a
+# static archive and the linker pulls members on demand.
+#
+# Built with `-w`: third-party code, and $(CFLAGS)'s -Wall -Wextra is our bar for
+# our code, not theirs. Nothing here is in CFLAGS' -D_GNU_SOURCE world either -
+# mbedTLS picks its own feature macros per platform.
+MBEDTLS_DIR  = vendor/mbedtls
+MBEDTLS_SRCS = $(wildcard $(MBEDTLS_DIR)/library/*.c)
+MBEDTLS_LIB  = $(MBEDTLS_DIR)/lib/libmbedtls_wyn.a
+
+mbedtls: $(MBEDTLS_LIB)
+
+$(MBEDTLS_LIB): $(MBEDTLS_SRCS) $(wildcard $(MBEDTLS_DIR)/library/*.h) $(wildcard $(MBEDTLS_DIR)/include/mbedtls/*.h)
+	@echo "Building vendored mbedTLS ($$(sed -n 's/.*MBEDTLS_VERSION_STRING  *"\(.*\)".*/\1/p' $(MBEDTLS_DIR)/include/mbedtls/build_info.h))..."
+	@mkdir -p $(MBEDTLS_DIR)/obj $(MBEDTLS_DIR)/lib
+	@set -e; for f in $(MBEDTLS_SRCS); do \
+		$(CC) -std=c11 -O2 -w -I $(MBEDTLS_DIR)/include -I $(MBEDTLS_DIR)/library \
+		-c $$f -o $(MBEDTLS_DIR)/obj/$$(basename $$f .c).o; \
+	done
+	@# `ar r` REPLACES members, it does not remove stale ones, and this archive is
+	@# regenerated whenever the vendored tree moves - same footgun documented on
+	@# runtime/libwyn_rt.a below. Delete, then create.
+	@rm -f $@
+	@ar rcs $@ $(MBEDTLS_DIR)/obj/*.o
+	@echo "Built $@ ($$(du -h $@ | cut -f1))"
 
 # Platform information
 platform-info:
@@ -942,9 +976,9 @@ runtime-tcc:
 
 clean:
 	rm -f wyn wyn.exe wyn-windows.exe wyn-linux wyn-macos tests/test_lexer tests/test_parser tests/test_checker tests/test_codegen tests/test_operators tests/test_default_parameters tests/test_function_overloading tests/test_generic_functions tests/test_parameter_validation tests/test_function_integration tests/test_syntax_design tests/test_system_integration tests/phase2_integration tests/phase2_integration_simple tests/test_wasm_support tests/test_self_compilation tests/test_documentation_system tests/test_container_support tests/test_lexer_rewrite tests/test_coroutine tools/formatter.wyn.out
-	rm -rf temp runtime/obj runtime/libwyn_rt.a
+	rm -rf temp runtime/obj runtime/libwyn_rt.a $(MBEDTLS_DIR)/obj $(MBEDTLS_DIR)/lib
 
-.PHONY: all test test_bdd clean container-build container-test container-deploy container-all fmt-tool platform-info wyn-windows wyn-linux wyn-macos
+.PHONY: all test test_bdd clean container-build container-test container-deploy container-all fmt-tool platform-info wyn-windows wyn-linux wyn-macos mbedtls
 
 # valgrind-test defined earlier in file (line ~125)
 
