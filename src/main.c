@@ -891,14 +891,50 @@ static int wyn_report_undeclared_namespace_call(const char* cc_err_path) {
         // existed, which an `extern fn` would have provided.
         if (from_linker && !is_builtin_module(ns)) continue;
         if (!reported) {
-            fprintf(stderr,
-                "Error: unknown method '%s.%s' on namespace '%s'\n",
-                ns, method, ns);
-            fprintf(stderr,
-                "  \033[34mHelp:\033[0m '%s' is not a function Wyn knows about. Check the spelling"
-                " against the '%s' stdlib docs - namespace methods are not"
-                " verified until the generated C is compiled, so a typo surfaces"
-                " here rather than at the call site.\n", method, ns);
+            // "CHECK THE SPELLING" IS ONLY HONEST IF WYN DOES NOT HAVE THE NAME.
+            //
+            // `Time.now_millis()` is a real function: it is in the checker's builtin
+            // registry, it is declared in src/wyn_runtime.h, and it compiles and runs
+            // under `wyn check`, `wyn run` and `wyn build --release`. It failed under
+            // `wyn run --release` alone - the only path that emits
+            // src/wyn_runtime_slim.h - because that header never declared it. This
+            // branch then caught clang's "call to undeclared function" and told the
+            // user to check their spelling: the compiler blaming the user for its own
+            // missing header entry. A wrong diagnosis costs more than none, because
+            // it sends the reader to re-read a correct line.
+            //
+            // So ask the ONE authority first. wyn_namespace_method_declared() shares
+            // wyn_namespace_c_symbol() and the same declaration index as the
+            // check-time rule (#357), so this cannot drift from what the checker
+            // believes - writing a second lookup here is exactly the shape that
+            // produced the bug.
+            char csym[320] = "";
+            extern int wyn_namespace_method_declared(const char*, const char*, char*, size_t);
+            int declared = wyn_namespace_method_declared(ns, method, csym, sizeof(csym));
+            if (declared == 1) {
+                // Wyn HAS it. Do not send the user looking for a typo.
+                fprintf(stderr,
+                    "Error: internal: '%s.%s' is a function Wyn has, but this build could"
+                    " not compile a call to it\n", ns, method);
+                fprintf(stderr,
+                    "  \033[34mHelp:\033[0m this is a COMPILER BUG, not a mistake in your code."
+                    " '%s.%s' lowers to the C symbol '%s', which src/wyn_runtime.h declares"
+                    " but the header this build used does not.%s\n",
+                    ns, method, csym,
+                    from_linker ? " The symbol is missing from runtime/libwyn_rt.a."
+                                : " If you passed --release, src/wyn_runtime_slim.h is"
+                                  " missing its declaration; building without --release"
+                                  " is a workaround. Please report it.");
+            } else {
+                fprintf(stderr,
+                    "Error: unknown method '%s.%s' on namespace '%s'\n",
+                    ns, method, ns);
+                fprintf(stderr,
+                    "  \033[34mHelp:\033[0m '%s' is not a function Wyn knows about. Check the spelling"
+                    " against the '%s' stdlib docs - namespace methods are not"
+                    " verified until the generated C is compiled, so a typo surfaces"
+                    " here rather than at the call site.\n", method, ns);
+            }
             reported = 1;
         }
     }
@@ -2802,9 +2838,26 @@ int main(int argc, char** argv) {
         // produced by `wyn build-runtime` would be missing wyn_https_request and every
         // subsequent build would fail on an undefined symbol - the archive built by
         // `make runtime` has them (RT_SRCS), so the two must not disagree.
+        //
+        // src/runtime_exports.c is appended for the same reason and with the same
+        // constraint. It is the ONLY translation unit that includes wyn_runtime.h, so
+        // it is where every function DEFINED in that header becomes a linkable symbol
+        // - 817 of them. `wyn run --release` emits wyn_runtime_slim.h (declarations
+        // only) and takes the definitions from this archive, so without it every
+        // --release build made from a `wyn build-runtime` archive dies at link
+        // (Math_pow, System_args, __wyn_argc, print_float_no_nl, ...). It is exactly
+        // the failure tests/errors/run_release_link_test.sh was written for, after the
+        // Makefile had the same omission in RT_SRCS.
+        //
+        // It CANNOT go into wyn_runtime_sources: src/tcc_backend.c's fallback path
+        // compiles that list TOGETHER WITH the program's own .c, which includes
+        // wyn_runtime.h itself and so already defines all 817 - adding this would make
+        // every TCC build a duplicate-symbol error. Two lists that must agree on
+        // everything except one entry, so the entry is named here with its reason
+        // rather than moved.
         snprintf(cmd, sizeof(cmd),
             "mkdir -p %s/runtime/obj && cd %s && "
-            "for f in %s src/wyn_tls.c src/wyn_https.c; do "
+            "for f in %s src/runtime_exports.c src/wyn_tls.c src/wyn_https.c; do "
             "gcc -std=c11 -O2 -w -DWYN_HAVE_TLS -I src -I vendor/minicoro "
             "-I vendor/mbedtls/include -c $f -o runtime/obj/$(basename $f .c).o 2>/dev/null; done && "
             "ar rcs runtime/libwyn_rt.a runtime/obj/*.o && "
@@ -3564,6 +3617,45 @@ int main(int argc, char** argv) {
         int rc = wyn_bindgen(header, detect_cc(), iflags, out);
         if (out != stdout) fclose(out);
         return rc;
+    }
+
+    // INTERNAL. Prints every name the checker's builtin registry blesses, one per
+    // line. Not in `wyn help` and not a supported interface - it exists so
+    // tests/errors/run_release_slim_registry_test.sh can enumerate the registry
+    // from the REGISTRY ITSELF.
+    //
+    // The alternative was to scrape src/checker_builtins.c with grep, and that is
+    // provably incomplete: registration happens through FIVE shapes there
+    // (`add_symbol` directly, `reg_fn`, `reg_math_fns`, `reg_ptr_fns`,
+    // `reg_task_fns`, ...), and a scrape that knew only the table-literal shape
+    // missed Url_encode/Url_decode - two of the very symbols the gate has to find.
+    // A gate that silently enumerates a subset is worse than no gate, so ask the
+    // compiler instead of guessing what the compiler knows.
+    // Two sections, because the registry alone is NOT the whole reachable surface
+    // and a gate built on half of it passes while the bug is live - which is exactly
+    // what happened: `Base64.encode` compiled under `wyn run --release` only after
+    // the namespace list was added here, because Base64_encode is not a global
+    // symbol. A namespace call is legal when src/wyn_runtime.h declares
+    // <Ns>_<method> (that is the rule wyn_namespace_method_unknown() enforces at
+    // check time), so the namespaces are the second half of the enumeration.
+    //   SYMBOL <name>  - a name in the checker's global scope
+    //   NS <name>      - a builtin namespace
+    if (strcmp(command, "dump-builtins") == 0) {
+        init_checker();
+        SymbolTable* g = get_global_scope();
+        if (!g) return 1;
+        for (int i = 0; i < g->count; i++) {
+            Token nm = g->symbols[i].name;
+            if (!nm.start || nm.length <= 0) continue;
+            printf("SYMBOL %.*s\n", nm.length, nm.start);
+        }
+        extern const char* builtin_module_name_at(int index);
+        for (int i = 0; ; i++) {
+            const char* ns = builtin_module_name_at(i);
+            if (!ns) break;
+            printf("NS %s\n", ns);
+        }
+        return 0;
     }
 
     if (strcmp(command, "check") == 0) {

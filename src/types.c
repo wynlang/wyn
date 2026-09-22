@@ -1336,6 +1336,28 @@ int wyn_namespace_method_unknown(const char* ns, const char* method) {
     return 1;
 }
 
+// Does the runtime header this compiler ships DECLARE the C symbol this namespace
+// call lowers to?  1 yes, 0 no, -1 the declaration index is unavailable.
+//
+// Same three primitives as wyn_namespace_method_unknown() above -
+// wyn_namespace_c_symbol() for the symbol, the shared index for the answer - so
+// there is no second lookup to drift out of step with the check-time rule.
+//
+// TRI-STATE, and the third state matters. It exists so a caller can tell the two
+// reasons a `call to undeclared function 'Time_now_millis'` can reach a user apart:
+//   0 -> Wyn genuinely does not have that function; the user misspelled something.
+//   1 -> Wyn HAS it and this compiler's --release header forgot to declare it,
+//        which is a compiler bug and must not be reported as a typo.
+//  -1 -> we cannot tell (unusual install, headers unreadable): say nothing new.
+// Fills sym_out with the C symbol when given, so the caller can name it.
+int wyn_namespace_method_declared(const char* ns, const char* method,
+                                  char* sym_out, size_t sym_sz) {
+    char sym[320];
+    if (!wyn_namespace_c_symbol(ns, method, sym, sizeof(sym))) return -1;
+    if (sym_out && sym_sz) snprintf(sym_out, sym_sz, "%s", sym);
+    return wyn_runtime_declares(sym);
+}
+
 // "Did you mean" for a rejected namespace method, spelled as the user would type
 // it (`DateTime.millis()`). Returns 1 when it filled `out`.
 //
