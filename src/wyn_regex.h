@@ -5,6 +5,11 @@
 //
 // Supports: . [] [^] ^ $ * + ? {n,m} () | \ escapes
 // Does NOT support: backreferences, lookahead/lookbehind, non-greedy (these are PCRE, not ERE)
+//
+// \d \w \s and \D \W \S are NOT handled here. They are expanded to plain bracket
+// expressions by wyn_regex_expand_escapes() before this engine is invoked, which
+// is what keeps this engine and the POSIX one from disagreeing about them - they
+// used to, and this engine was the one that was right. See wyn_regex_escapes.h.
 
 #ifndef WYN_REGEX_H
 #define WYN_REGEX_H
@@ -12,6 +17,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
+
+#include "wyn_regex_escapes.h"
 
 // --- NFA-based regex engine ---
 // We compile the pattern to an NFA (Thompson's construction), then simulate it.
@@ -81,11 +88,11 @@ static int wre_parse_class(struct wre_nfa* nfa, const char* p, int* advance) {
     if (p[i] == ']') { wre_cls_set(nfa->states[id].cls, ']'); i++; }
     while (p[i] && p[i] != ']') {
         if (p[i] == '\\' && p[i+1]) {
+            // Shorthands never reach here: wyn_regex_expand_escapes() has already
+            // turned them into explicit members. An escape left at this point is
+            // a quoted literal.
             i++;
-            if (p[i] == 'd') { for (int c = '0'; c <= '9'; c++) wre_cls_set(nfa->states[id].cls, c); }
-            else if (p[i] == 'w') { for (int c = 'a'; c <= 'z'; c++) wre_cls_set(nfa->states[id].cls, c); for (int c = 'A'; c <= 'Z'; c++) wre_cls_set(nfa->states[id].cls, c); for (int c = '0'; c <= '9'; c++) wre_cls_set(nfa->states[id].cls, c); wre_cls_set(nfa->states[id].cls, '_'); }
-            else if (p[i] == 's') { wre_cls_set(nfa->states[id].cls, ' '); wre_cls_set(nfa->states[id].cls, '\t'); wre_cls_set(nfa->states[id].cls, '\n'); wre_cls_set(nfa->states[id].cls, '\r'); }
-            else wre_cls_set(nfa->states[id].cls, (unsigned char)p[i]);
+            wre_cls_set(nfa->states[id].cls, (unsigned char)p[i]);
             i++;
         } else if (p[i+1] == '-' && p[i+2] && p[i+2] != ']') {
             for (int c = (unsigned char)p[i]; c <= (unsigned char)p[i+2]; c++)
@@ -101,8 +108,9 @@ static int wre_parse_class(struct wre_nfa* nfa, const char* p, int* advance) {
     return id;
 }
 
-// Compile pattern to NFA. Returns start state, or -1 on error.
-static bool wre_compile(struct wre_nfa* nfa, const char* pattern) {
+// Compile an ALREADY-EXPANDED pattern to an NFA. Callers go through
+// wre_compile(), which runs the shared shorthand expansion first.
+static bool wre_compile_expanded(struct wre_nfa* nfa, const char* pattern) {
     nfa->nstates = 0;
 
     // Fragment stack for building NFA
@@ -198,21 +206,12 @@ static bool wre_compile(struct wre_nfa* nfa, const char* pattern) {
             have_atom = true;
             p += adv;
         } else if (*p == '\\' && p[1]) {
+            // Shorthands never reach here - wyn_regex_expand_escapes() has
+            // already rewritten them as bracket expressions. Whatever is left is
+            // a quoted literal.
             p++;
-            int ch = (unsigned char)*p;
-            // Shorthand classes
-            if (*p == 'd' || *p == 'w' || *p == 's' || *p == 'D' || *p == 'W' || *p == 'S') {
-                bool neg = (*p >= 'A' && *p <= 'Z');
-                int id = wre_add(nfa, neg ? WRE_NCLASS : WRE_CLASS, 0);
-                char lower = neg ? (*p + 32) : *p;
-                if (lower == 'd') { for (int c = '0'; c <= '9'; c++) wre_cls_set(nfa->states[id].cls, c); }
-                else if (lower == 'w') { for (int c = 'a'; c <= 'z'; c++) wre_cls_set(nfa->states[id].cls, c); for (int c = 'A'; c <= 'Z'; c++) wre_cls_set(nfa->states[id].cls, c); for (int c = '0'; c <= '9'; c++) wre_cls_set(nfa->states[id].cls, c); wre_cls_set(nfa->states[id].cls, '_'); }
-                else if (lower == 's') { wre_cls_set(nfa->states[id].cls, ' '); wre_cls_set(nfa->states[id].cls, '\t'); wre_cls_set(nfa->states[id].cls, '\n'); wre_cls_set(nfa->states[id].cls, '\r'); }
-                frag = (wre_frag){id, id};
-            } else {
-                int id = wre_add(nfa, WRE_LITERAL, ch);
-                frag = (wre_frag){id, id};
-            }
+            int id = wre_add(nfa, WRE_LITERAL, (unsigned char)*p);
+            frag = (wre_frag){id, id};
             have_atom = true;
             p++;
         } else {
@@ -318,6 +317,19 @@ static bool wre_compile(struct wre_nfa* nfa, const char* pattern) {
     wre_patch(nfa, stack[0].end, match_id);
     nfa->start = stack[0].start;
     return true;
+}
+
+// The single point at which a pattern becomes an NFA on this platform. Every
+// entry point below (wre_match_full, wre_find) and every caller in
+// wyn_runtime.h reaches the engine through here, so the shorthand expansion
+// cannot be skipped by adding one more regex function.
+static bool wre_compile(struct wre_nfa* nfa, const char* pattern) {
+    char bad = 0;
+    char* expanded = wyn_regex_expand_escapes(pattern, &bad);
+    if (!expanded) { wyn_rx_reject(pattern, bad); return false; }
+    bool ok = wre_compile_expanded(nfa, expanded);
+    free(expanded);
+    return ok;
 }
 
 // --- NFA simulation (Thompson's algorithm) ---

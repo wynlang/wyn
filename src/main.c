@@ -57,6 +57,69 @@ const char* wyn_runtime_sources[] = {
     NULL
 };
 
+// --- TLS build wiring: ONE place decides whether a link can do HTTPS ---------
+//
+// runtime/libwyn_rt.a contains src/wyn_tls.c + src/wyn_https.c, and those members
+// reference mbedTLS. A linker only pulls an archive member in to resolve an
+// UNDEFINED symbol, so they are pulled only when the program's own translation unit
+// calls wyn_https_request - and it only does that when this function put
+// -DWYN_HAVE_TLS on its compile line (see wyn_runtime.h's https_* bodies). That is
+// the whole design: one flag, decided in one place, gates both the call and the
+// extra link input, so the two cannot drift apart. The alternative - editing a
+// dozen link strings and hoping - is how -lsqlite3 ended up on the wrong side of
+// GNU ld's archive ordering and broke Linux alone.
+//
+// When the vendored archive is absent (a stripped install layout, or a tree where
+// `make mbedtls` has not run) this reports NO TLS instead of emitting a link line
+// that dies on an undefined mbedtls symbol. Http.* over https:// then returns a
+// NAMED runtime error - "HTTPS unavailable: this binary was linked without the TLS
+// backend" - which is something a user of a language can actually act on.
+//
+// cflags belongs early on the command line; link_tail belongs at the END, AFTER
+// runtime/libwyn_rt.a, because GNU ld resolves an archive only against the objects
+// listed before it. Returns 1 when this build has TLS, 0 when it does not.
+int wyn_tls_build_flags(const char* wyn_root, char* cflags, size_t cflags_n,
+                        char* link_tail, size_t link_n) {
+    if (cflags && cflags_n) cflags[0] = '\0';
+    if (link_tail && link_n) link_tail[0] = '\0';
+    char lib[1024];
+    snprintf(lib, sizeof(lib), "%s/vendor/mbedtls/lib/libmbedtls_wyn.a", wyn_root);
+    if (access(lib, R_OK) != 0) return 0;
+    if (cflags && cflags_n) snprintf(cflags, cflags_n, "-DWYN_HAVE_TLS ");
+    if (link_tail && link_n) {
+#ifdef _WIN32
+        // Two Windows-only libraries, both MEASURED rather than guessed (mingw-w64
+        // gcc 12 cross-link of this exact archive):
+        //   -lcrypt32  the roots live in CryptoAPI's "ROOT" store, not in a PEM file,
+        //              so wyn_tls.c calls CertOpenSystemStoreA /
+        //              CertEnumCertificatesInStore / CertCloseStore there and nowhere
+        //              else - three undefined references without it;
+        //   -lbcrypt   mbedTLS's OWN entropy source (library/entropy_poll.c) calls
+        //              BCryptGenRandom on Windows. Linking with -lcrypt32 ALONE still
+        //              failed on that symbol, which is exactly the shape of
+        //              Windows-only breakage this repo keeps being surprised by, so it
+        //              is named here with the reason rather than discovered at a tag.
+        snprintf(link_tail, link_n, " %s -lcrypt32 -lbcrypt", lib);
+#else
+        snprintf(link_tail, link_n, " %s", lib);
+#endif
+    }
+    return 1;
+}
+
+// Does this source reach for HTTPS? Used only to steer AWAY from a backend that
+// cannot provide it (TCC cannot compile mbedTLS - it does not even get through
+// constant_time_impl.h's inline asm), so a false positive costs a slightly slower
+// compile with the system cc and a false negative costs a named runtime error. Same
+// shape as the existing strstr(source, "Gui.") / "Db." backend steering.
+int wyn_source_uses_https(const char* source) {
+    if (!source) return 0;
+    return strstr(source, "https://") != NULL || strstr(source, "Http.") != NULL ||
+           strstr(source, "https_get") != NULL || strstr(source, "https_post") != NULL ||
+           strstr(source, "http_get") != NULL || strstr(source, "http_post") != NULL ||
+           strstr(source, "http_put") != NULL || strstr(source, "http_delete") != NULL;
+}
+
 // Build a space-separated string of runtime sources with a prefix
 void build_source_list(char* buf, int bufsize, const char* prefix) {
     buf[0] = 0;
@@ -2344,6 +2407,12 @@ int main(int argc, char** argv) {
         char cmd[8192];   // must hold the link line + a multi-package ffi_tail
         int result = -1;
         char rt_lib[512]; snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
+        // Native HTTPS: one decision, used by the backend choice below AND by every
+        // link line in this function. See wyn_tls_build_flags.
+        char _tls_cflags[64], _tls_link[1152];
+        wyn_tls_build_flags(wyn_root, _tls_cflags, sizeof(_tls_cflags),
+                            _tls_link, sizeof(_tls_link));
+        const int _needs_https = wyn_source_uses_https(source);
 
         // Detect App module for webview linking
         const char* app_link = "";
@@ -2394,7 +2463,14 @@ int main(int argc, char** argv) {
         // this build needs.
         if (build_flag[0] == 0 && !build_release && gui_def[0] == 0 && access(rt_lib, R_OK) == 0) {
             // Skip TCC - use system cc + precompiled runtime
-        } else if (build_flag[0] == 0 && !build_release && !app_on && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0 && !strstr(source, "App.")) {
+        } else if (build_flag[0] == 0 && !build_release && !app_on && !_needs_https && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0 && !strstr(source, "App.")) {
+            // !_needs_https: TCC CANNOT compile mbedTLS - it fails inside
+            // vendor/mbedtls/library/constant_time_impl.h ("string constant expected",
+            // its inline-asm constraints) long before any of our code. A program built
+            // through this branch links no TLS, so every https:// call would return
+            // "HTTPS unavailable" while the identical program built with the system cc
+            // worked. Falling through to the system-cc path costs a slower compile and
+            // is the only honest option.
             // --app is excluded from the TCC path on purpose: TCC does not take
             // -mwindows, and this branch does not splice ffi_tail at all, so a
             // GUI app built through it would silently link as a console program
@@ -2484,7 +2560,11 @@ int main(int argc, char** argv) {
                 // -DWYN_GPU_METAL, so using it would silently freeze the
                 // header's GPU shim to the CPU-only stub.
                 extern int codegen_gpu_dispatch_count(void);
-                if (!build_release && sqlite_flags[0] == '\0' &&
+                // _tls_cflags[0]: runtime/wyn_runtime.pch is built with
+                // -DWYN_HAVE_TLS (see the Makefile). Including it from a compile that
+                // lacks the define is a clang hard error, so skip the cache in the
+                // no-TLS case rather than relying on the self-heal below.
+                if (!build_release && sqlite_flags[0] == '\0' && _tls_cflags[0] != '\0' &&
                     codegen_gpu_dispatch_count() == 0) {
                     char _pch_path[512], _hdr_path[512];
                     snprintf(_pch_path, sizeof(_pch_path), "%s/runtime/wyn_runtime.pch", wyn_root);
@@ -2497,14 +2577,16 @@ int main(int argc, char** argv) {
                     }
                 }
 #endif
+                // %s after -I %s/src is _tls_cflags (-DWYN_HAVE_TLS or nothing);
+                // _tls_link goes AFTER rt_lib, where GNU ld can still resolve it.
                 snprintf(cmd, sizeof(cmd),
 #ifdef _WIN32
                     // Windows captures the compiler's stderr too - it was the last
                     // branch still discarding it, so a failed build there printed
                     // "✗ Build failed" and nothing else.
-                    "%s -std=c11 %s -fwrapv -w -I %s/src -Wl,--allow-multiple-definition -o %s %s%s %s.c %s%s -lws2_32 -lpthread -lm 2>%s",
+                    "%s -std=c11 %s -fwrapv -w -I %s/src %s-Wl,--allow-multiple-definition -o %s %s%s %s.c %s%s%s -lws2_32 -lpthread -lm 2>%s",
 #elif defined(__APPLE__)
-                    "%s -std=c11 %s -fwrapv -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src %s-Wl,-dead_strip -o %s %s%s %s.c %s%s%s -lpthread -lm 2>%s",
+                    "%s -std=c11 %s -fwrapv -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src %s%s-Wl,-dead_strip -o %s %s%s %s.c %s%s%s%s -lpthread -lm 2>%s",
 #else
                     // Capture the C compiler's stderr, do NOT discard it. This
                     // branch used to end in `2>/dev/null`, while the __APPLE__
@@ -2513,12 +2595,12 @@ int main(int argc, char** argv) {
                     // the "Compiler output:" reader below found no file. That is
                     // exactly what a user (and a CI log) needs, and it was
                     // silently unavailable on the platform most CI runs on.
-                    "%s -std=c11 %s -fwrapv -w -ffunction-sections -fdata-sections -I %s/src -Wl,--allow-multiple-definition,--gc-sections -o %s %s%s %s.c %s%s -lpthread -lm 2>%s",
+                    "%s -std=c11 %s -fwrapv -w -ffunction-sections -fdata-sections -I %s/src %s-Wl,--allow-multiple-definition,--gc-sections -o %s %s%s %s.c %s%s%s -lpthread -lm 2>%s",
 #endif
 #ifdef __APPLE__
-                    cc, _opt, wyn_root, _pch_flag, bin_path, sqlite_flags, gui_def, entry, rt_lib, sqlite_src, app_link, cc_err_redir
+                    cc, _opt, wyn_root, _tls_cflags, _pch_flag, bin_path, sqlite_flags, gui_def, entry, rt_lib, _tls_link, sqlite_src, app_link, cc_err_redir
 #else
-                    cc, _opt, wyn_root, bin_path, sqlite_flags, gui_def, entry, rt_lib, sqlite_src, cc_err_redir
+                    cc, _opt, wyn_root, _tls_cflags, bin_path, sqlite_flags, gui_def, entry, rt_lib, _tls_link, sqlite_src, cc_err_redir
 #endif
                     );
                 // Splice FFI link flags in at the END of the link line (before any
@@ -2714,10 +2796,17 @@ int main(int argc, char** argv) {
         // Build for-loop command from unified source list
         char for_list[4096];
         build_source_list(for_list, sizeof(for_list), "");
+        // src/wyn_tls.c + src/wyn_https.c are appended explicitly rather than added to
+        // wyn_runtime_sources: that list is ALSO used by the TCC and cross-compile
+        // paths, which cannot build mbedTLS at all. Without them here, an archive
+        // produced by `wyn build-runtime` would be missing wyn_https_request and every
+        // subsequent build would fail on an undefined symbol - the archive built by
+        // `make runtime` has them (RT_SRCS), so the two must not disagree.
         snprintf(cmd, sizeof(cmd),
             "mkdir -p %s/runtime/obj && cd %s && "
-            "for f in %s; do "
-            "gcc -std=c11 -O2 -w -I src -I vendor/minicoro -c $f -o runtime/obj/$(basename $f .c).o 2>/dev/null; done && "
+            "for f in %s src/wyn_tls.c src/wyn_https.c; do "
+            "gcc -std=c11 -O2 -w -DWYN_HAVE_TLS -I src -I vendor/minicoro "
+            "-I vendor/mbedtls/include -c $f -o runtime/obj/$(basename $f .c).o 2>/dev/null; done && "
             "ar rcs runtime/libwyn_rt.a runtime/obj/*.o && "
             "echo 'Built runtime/libwyn_rt.a'",
             wyn_root, wyn_root, for_list);
@@ -3189,7 +3278,18 @@ int main(int argc, char** argv) {
 #endif
             }
         } else if (strcmp(target, "macos") == 0) {
-            snprintf(compile_cmd, sizeof(compile_cmd), "clang -std=c11 -O2 -w -arch %s -I %s/src -o %s.macos %s.c %s/runtime/libwyn_rt.a -lpthread -lm", arch, wyn_root, file, file, wyn_root);
+            // This branch links the HOST runtime/libwyn_rt.a, so TLS can ride along on
+            // exactly the same terms (and with the same pre-existing caveat: a build for
+            // a foreign -arch would already fail on the host-arch archive). The OTHER
+            // cross targets - linux via zig/gcc, windows via zig, ios, android - build
+            // their runtime from source for the target and have no cross-built mbedTLS,
+            // so they get NO -DWYN_HAVE_TLS and https:// returns the named
+            // "HTTPS unavailable: linked without the TLS backend" error rather than the
+            // link dying on an undefined mbedtls symbol.
+            char _x_tls_cflags[64], _x_tls_link[1152];
+            wyn_tls_build_flags(wyn_root, _x_tls_cflags, sizeof(_x_tls_cflags),
+                                _x_tls_link, sizeof(_x_tls_link));
+            snprintf(compile_cmd, sizeof(compile_cmd), "clang -std=c11 -O2 -w -arch %s -I %s/src %s-o %s.macos %s.c %s/runtime/libwyn_rt.a%s -lpthread -lm", arch, wyn_root, _x_tls_cflags, file, file, wyn_root, _x_tls_link);
             printf("Compiling for macOS (%s)...\n", arch);
         } else if (strcmp(target, "windows") == 0) {
             if (system("which zig >/dev/null 2>&1") != 0) {
@@ -4046,7 +4146,16 @@ int main(int argc, char** argv) {
         // System cc + precompiled libwyn_rt.a is faster (~300ms vs ~1800ms TCC)
         char rt_lib[512];
         snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
-        int _use_tcc = (!use_release && !shared_mode && wyn_tcc_available() && access(rt_lib, R_OK) != 0);
+        // Native HTTPS wiring, decided once - see wyn_tls_build_flags.
+        char _tls_cflags[64], _tls_link[1152];
+        wyn_tls_build_flags(wyn_root, _tls_cflags, sizeof(_tls_cflags),
+                            _tls_link, sizeof(_tls_link));
+        // TCC cannot compile mbedTLS (it dies in constant_time_impl.h's inline asm),
+        // so a program that wants HTTPS must not be built by it: the binary would link
+        // no TLS and refuse every https:// call, while the same program via the system
+        // cc worked. Slower compile, honest result.
+        int _use_tcc = (!use_release && !shared_mode && !wyn_source_uses_https(source) &&
+                        wyn_tcc_available() && access(rt_lib, R_OK) != 0);
         if (_use_tcc) {
             // Read the generated C source
             char* c_source = read_file(out_path);
@@ -4104,8 +4213,8 @@ int main(int argc, char** argv) {
         if (rt_check) {
             fclose(rt_check);
             snprintf(compile_cmd, sizeof(compile_cmd),
-                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/runtime/libwyn_rt.a %s 2>%s",
-                     cc, opt_level, wyn_root, file, file, wyn_root, platform_libs, _run_cc_redir);
+                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src %s-o %s.out %s.c %s/runtime/libwyn_rt.a%s %s 2>%s",
+                     cc, opt_level, wyn_root, _tls_cflags, file, file, wyn_root, _tls_link, platform_libs, _run_cc_redir);
         } else {
             // Fallback: compile from source using unified source list
             char src_list[4096];
