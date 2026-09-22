@@ -400,6 +400,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_recursive_struct_test.sh
 	@echo "=== Running nested-aggregate feature+gate test ==="
 	@WYN=./wyn bash tests/errors/run_nested_aggregate_test.sh
+	@echo "=== Running returned-aggregate string-lifetime test (V-1) ==="
+	@WYN=./wyn bash tests/errors/run_returned_aggregate_string_test.sh
 	@echo "=== Running generic-enum negative test ==="
 	@WYN=./wyn bash tests/errors/run_generic_enum_test.sh
 	@echo "=== Running unknown-method negative test ==="

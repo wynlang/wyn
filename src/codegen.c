@@ -1336,7 +1336,32 @@ int return_value_is_borrowed(Expr* ret) {
     }
 }
 
-// Liveness: check if a variable name appears in an expression
+// Liveness: check if a variable name appears in an expression.
+//
+// THIS IS A SAFETY QUERY, NOT AN OPTIMISATION. Its only caller that matters is
+// emit_string_releases_for_return(), where a "no" means "emit
+// wyn_rc_release(<local>) before the return". So a FALSE NEGATIVE frees a string
+// the return value is about to read - a use-after-free that prints as the EMPTY
+// STRING at exit 0, the worst failure class we have. A false POSITIVE only skips
+// a release (the leak-lean choice this file already makes deliberately for
+// unknown shapes; see return_value_is_borrowed's `default: return 1`).
+//
+// It used to end in `default: return 0`, i.e. DENY BY DEFAULT, while handling
+// only BINARY/CALL/METHOD_CALL/INDEX/INTERP/ASSIGN/AWAIT/SPAWN. Every AGGREGATE
+// kind therefore answered "not referenced": `return R { body: b }`,
+// `return Ok(b)`, `return Some(b)`, `return Err(b)`, `return [b]`,
+// `return c ? b : "x"` all released `b` one statement before the constructor
+// read it. That was V-1, the most damaging defect in the language, and it was
+// ONE missing rule rather than one bug per constructor - which is exactly why
+// the cure is to complete THIS walk instead of special-casing each shape at each
+// return site.
+//
+// So: every kind that CONTAINS a sub-expression is now walked, and the default
+// is CONSERVATIVE. A new ExprType added later gets "assume referenced" until
+// someone teaches the walk about it - it can leak, it cannot dangle.
+static int stmt_references_var(Stmt* s, const char* name);
+static int pattern_references_var(Pattern* p, const char* name);
+
 static int expr_references_var(Expr* e, const char* name) {
     if (!e) return 0;
     switch (e->type) {
@@ -1344,6 +1369,15 @@ static int expr_references_var(Expr* e, const char* name) {
             int nl = strlen(name);
             return (e->token.length == nl && memcmp(e->token.start, name, nl) == 0);
         }
+
+        // --- leaves: genuinely cannot mention a variable ---
+        case EXPR_INT: case EXPR_FLOAT: case EXPR_STRING: case EXPR_CHAR:
+        case EXPR_BOOL: case EXPR_NONE:
+        // type-position expressions carry no values
+        case EXPR_OPTIONAL_TYPE: case EXPR_UNION_TYPE: case EXPR_RESULT_TYPE:
+        case EXPR_FN_TYPE:
+            return 0;
+
         case EXPR_BINARY: return expr_references_var(e->binary.left, name) || expr_references_var(e->binary.right, name);
         case EXPR_UNARY: return expr_references_var(e->unary.operand, name);
         case EXPR_CALL:
@@ -1367,7 +1401,128 @@ static int expr_references_var(Expr* e, const char* name) {
             for (int i = 0; i < e->string_interp.count; i++)
                 if (expr_references_var(e->string_interp.expressions[i], name)) return 1;
             return 0;
-        default: return 0;
+
+        // --- aggregates: the V-1 hole ---
+        case EXPR_STRUCT_INIT:
+            for (int i = 0; i < e->struct_init.field_count; i++)
+                if (expr_references_var(e->struct_init.field_values[i], name)) return 1;
+            return 0;
+        // Some/Ok/Err all use the OptionExpr arm; their payload stores the
+        // pointer RAW, so releasing it before the return dangles the payload.
+        case EXPR_SOME: case EXPR_OK: case EXPR_ERR:
+            return expr_references_var(e->option.value, name);
+        // Array, hashset `{:a, b}` and hashmap `{"k": v}` literals all hang
+        // their sub-expressions off the SAME ArrayExpr arm (a hashmap stores key
+        // at even index, value at odd - see parser.c), so one walk covers all
+        // three.
+        case EXPR_ARRAY: case EXPR_HASHSET_LITERAL: case EXPR_HASHMAP_LITERAL:
+            for (int i = 0; i < e->array.count; i++)
+                if (expr_references_var(e->array.elements[i], name)) return 1;
+            return 0;
+        case EXPR_MAP:
+            for (int i = 0; i < e->map.count; i++) {
+                if (e->map.keys && expr_references_var(e->map.keys[i], name)) return 1;
+                if (e->map.values && expr_references_var(e->map.values[i], name)) return 1;
+            }
+            return 0;
+        case EXPR_TUPLE:
+            for (int i = 0; i < e->tuple.count; i++)
+                if (expr_references_var(e->tuple.elements[i], name)) return 1;
+            return 0;
+        case EXPR_TUPLE_INDEX: return expr_references_var(e->tuple_index.tuple, name);
+
+        // --- control-flow-shaped expressions ---
+        case EXPR_TERNARY:
+            return expr_references_var(e->ternary.condition, name) ||
+                   expr_references_var(e->ternary.then_expr, name) ||
+                   expr_references_var(e->ternary.else_expr, name);
+        case EXPR_IF_EXPR:
+            return expr_references_var(e->if_expr.condition, name) ||
+                   expr_references_var(e->if_expr.then_expr, name) ||
+                   expr_references_var(e->if_expr.else_expr, name);
+        case EXPR_MATCH:
+            if (expr_references_var(e->match.value, name)) return 1;
+            for (int i = 0; i < e->match.arm_count; i++) {
+                // A guard lives inside the PATTERN (PATTERN_GUARD), not beside
+                // it, so the arm's pattern has to be walked too.
+                if (pattern_references_var(e->match.arms[i].pattern, name)) return 1;
+                if (expr_references_var(e->match.arms[i].result, name)) return 1;
+            }
+            return 0;
+        case EXPR_BLOCK:
+            for (int i = 0; i < e->block.stmt_count; i++)
+                if (stmt_references_var(e->block.stmts[i], name)) return 1;
+            return expr_references_var(e->block.result, name);
+        case EXPR_LIST_COMP:
+            return expr_references_var(e->list_comp.body, name) ||
+                   expr_references_var(e->list_comp.iter_start, name) ||
+                   expr_references_var(e->list_comp.iter_end, name) ||
+                   expr_references_var(e->list_comp.condition, name);
+
+        // --- access / propagation / misc ---
+        case EXPR_FIELD_ACCESS: return expr_references_var(e->field_access.object, name);
+        case EXPR_OPT_CHAIN: return expr_references_var(e->opt_chain.object, name);
+        case EXPR_TRY: return expr_references_var(e->try_expr.value, name);
+        case EXPR_RANGE:
+            return expr_references_var(e->range.start, name) || expr_references_var(e->range.end, name);
+        case EXPR_INDEX_ASSIGN:
+            return expr_references_var(e->index_assign.object, name) ||
+                   expr_references_var(e->index_assign.index, name) ||
+                   expr_references_var(e->index_assign.value, name);
+        case EXPR_FIELD_ASSIGN:
+            return expr_references_var(e->field_assign.object, name) ||
+                   expr_references_var(e->field_assign.value, name);
+        case EXPR_CHANNEL: return expr_references_var(e->channel.capacity, name);
+        case EXPR_LAMBDA:
+            // A captured string must outlive the closure, so a capture counts as
+            // a reference even when the body never mentions the name directly.
+            for (int i = 0; i < e->lambda.captured_count; i++) {
+                int nl = (int)strlen(name);
+                if (e->lambda.captured_vars[i].length == nl &&
+                    memcmp(e->lambda.captured_vars[i].start, name, (size_t)nl) == 0) return 1;
+            }
+            for (int i = 0; i < e->lambda.body_stmt_count; i++)
+                if (stmt_references_var(e->lambda.body_stmts[i], name)) return 1;
+            return expr_references_var(e->lambda.body, name);
+
+        // EXPR_DESTRUCTURE / EXPR_SPREAD / EXPR_PATTERN are never constructed by
+        // the parser today; they fall through to the conservative default with
+        // every future kind.
+        default: return 1;
+    }
+}
+
+// Guards are the only place a pattern can read an outer variable.
+static int pattern_references_var(Pattern* p, const char* name) {
+    if (!p) return 0;
+    switch (p->type) {
+        case PATTERN_GUARD:
+            return expr_references_var(p->guard.guard, name) ||
+                   pattern_references_var(p->guard.pattern, name);
+        case PATTERN_OR:
+            for (int i = 0; i < p->or_pat.pattern_count; i++)
+                if (pattern_references_var(p->or_pat.patterns[i], name)) return 1;
+            return 0;
+        case PATTERN_STRUCT:
+            for (int i = 0; i < p->struct_pat.field_count; i++)
+                if (pattern_references_var(p->struct_pat.field_patterns[i], name)) return 1;
+            return 0;
+        case PATTERN_ARRAY:
+            for (int i = 0; i < p->array.element_count; i++)
+                if (pattern_references_var(p->array.elements[i], name)) return 1;
+            return 0;
+        case PATTERN_TUPLE:
+            for (int i = 0; i < p->tuple.element_count; i++)
+                if (pattern_references_var(p->tuple.elements[i], name)) return 1;
+            return 0;
+        case PATTERN_OPTION:
+            if (pattern_references_var(p->option.inner, name)) return 1;
+            for (int i = 0; i < p->option.inner_count; i++)
+                if (pattern_references_var(p->option.inners[i], name)) return 1;
+            return 0;
+        case PATTERN_RANGE:
+            return expr_references_var(p->range.start, name) || expr_references_var(p->range.end, name);
+        default: return 0;  // literal / ident / wildcard bind, they do not read
     }
 }
 
