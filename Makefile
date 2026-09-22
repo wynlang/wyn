@@ -552,6 +552,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_await_all_type_test.sh
 	@echo "=== Running crucible-P0 (fatal-by-default) test ==="
 	@WYN=./wyn bash tests/errors/run_crucible_p0_test.sh
+	@echo "=== Running checked string->number parse gate (V-18) ==="
+	@WYN=./wyn bash tests/errors/run_parse_checked_test.sh
 	@echo "=== Running CLI DX test ==="
 	@WYN=./wyn bash tests/errors/run_cli_dx_test.sh
 	@echo "=== Running wyn-run orphan-child test ==="

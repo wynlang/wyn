@@ -3019,23 +3019,54 @@ char* str_center(const char* s, int width) { int len = strlen(s); if(len >= widt
 char** str_lines(const char* s) { char** lines = wyn_malloc(sizeof(char*)); lines[0] = wyn_malloc(strlen(s) + 1); strcpy(lines[0], s); return lines; }
 char** str_words(const char* s) { char** words = wyn_malloc(sizeof(char*)); words[0] = wyn_malloc(strlen(s) + 1); strcpy(words[0], s); return words; }
 void str_free(char* s) { if(s) free(s); }
-// Fatal-by-default parse (Python int() raises ValueError; Go strconv returns
-// an error). Garbage ("abc"), trailing junk ("12x"), empty, and overflow all
-// panic with the offending value - silently returning 0 hid all four.
-// WYN_LENIENT=1 restores the old return-0 behavior.
-long long str_parse_int(const char* s) {
+// THE string->int acceptance rule, in one place.
+//
+// `to_int` (str_parse_int) panics on rejection and `to_int_checked`
+// (str_to_int_checked) returns an Err, but they MUST accept exactly the same
+// strings, or `is_int()` and the predicate/parse pairing become two rules that
+// drift. Both call this; neither re-implements it, and the message text lives in
+// the two macros below so the panic and the Err payload cannot say different
+// things about the same input.
+//
+// Returns WYN_PARSE_OK / _BAD / _OVERFLOW. On OK, *out holds the value.
+#define WYN_PARSE_OK        0
+#define WYN_PARSE_BAD       1
+#define WYN_PARSE_OVERFLOW  2
+#define WYN_PARSE_INT_BAD_FMT  "to_int parse error: \"%s\" is not a valid integer"
+#define WYN_PARSE_INT_OVF_FMT  "to_int overflow: \"%s\" does not fit in a 64-bit int"
+#define WYN_PARSE_FLOAT_BAD_FMT "to_float parse error: \"%s\" is not a valid number"
+int wyn_parse_int_core(const char* s, long long* out) {
     const char* raw = s ? s : "";
     char* end;
     errno = 0;
     long long val = strtoll(raw, &end, 10);
-    if (errno == ERANGE) {
-        fprintf(stderr, "panic: to_int overflow: \"%s\" does not fit in a 64-bit int\n", raw);
-        if (!wyn_lenient_mode()) exit(1);
-        return 0;
-    }
+    if (errno == ERANGE) return WYN_PARSE_OVERFLOW;
+    // "Did strtoll consume anything?" MUST be asked before trailing blanks are
+    // skipped. Asking after let a whitespace-only string through: strtoll leaves
+    // end AT the start having read no digits, the skip loop then walks end to the
+    // NUL, and `end == raw` is no longer true - so `"   ".to_int()` returned 0 at
+    // exit 0, the silent wrong answer this parse exists to prevent. (`""` was
+    // rejected correctly, which is why it was never noticed.)
+    if (end == raw) return WYN_PARSE_BAD;
     while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') end++;
-    if (end == raw || *end != '\0') {
-        fprintf(stderr, "panic: to_int parse error: \"%s\" is not a valid integer\n", raw);
+    if (*end != '\0') return WYN_PARSE_BAD;
+    if (out) *out = val;
+    return WYN_PARSE_OK;
+}
+// Fatal-by-default parse (Python int() raises ValueError; Go strconv returns
+// an error). Garbage ("abc"), trailing junk ("12x"), empty, and overflow all
+// panic with the offending value - silently returning 0 hid all four.
+// WYN_LENIENT=1 restores the old return-0 behavior.
+// The catchable sibling is `.to_int_checked()` -> Result<int, string>.
+long long str_parse_int(const char* s) {
+    const char* raw = s ? s : "";
+    long long val = 0;
+    int st = wyn_parse_int_core(raw, &val);
+    if (st != WYN_PARSE_OK) {
+        fprintf(stderr, "panic: ");
+        fprintf(stderr, st == WYN_PARSE_OVERFLOW ? WYN_PARSE_INT_OVF_FMT
+                                                 : WYN_PARSE_INT_BAD_FMT, raw);
+        fprintf(stderr, "\n");
         if (!wyn_lenient_mode()) exit(1);
         return 0;
     }
@@ -3051,16 +3082,33 @@ extern void hashmap_insert_string(WynHashMap* map, const char* key, const char* 
 int str_parse_int_failed(int result) {
     return result == 0;
 }
-// Same fatal-by-default posture as str_parse_int (used by .to_float()).
-// strtod handles inf/nan/scientific; garbage and trailing junk panic.
-double str_parse_float(const char* s) {
+// THE string->float acceptance rule, shared by `to_float` (panics) and
+// `to_float_checked` (Err) for the same reason as the int pair above.
+// strtod's acceptance set is inherited verbatim, which includes scientific
+// notation, "inf"/"nan" AND C99 hex ("0x10" -> 16.0). Both entry points accept
+// exactly that set; tests/errors/run_parse_checked_test.sh asserts it so the
+// two can never diverge.
+int wyn_parse_float_core(const char* s, double* out) {
     const char* raw = s ? s : "";
     char* end;
     errno = 0;
     double val = strtod(raw, &end);
+    if (end == raw) return WYN_PARSE_BAD;   // same ordering trap as the int core
     while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') end++;
-    if (end == raw || *end != '\0') {
-        fprintf(stderr, "panic: to_float parse error: \"%s\" is not a valid number\n", raw);
+    if (*end != '\0') return WYN_PARSE_BAD;
+    if (out) *out = val;
+    return WYN_PARSE_OK;
+}
+// Same fatal-by-default posture as str_parse_int (used by .to_float()).
+// strtod handles inf/nan/scientific; garbage and trailing junk panic.
+// The catchable sibling is `.to_float_checked()` -> Result<float, string>.
+double str_parse_float(const char* s) {
+    const char* raw = s ? s : "";
+    double val = 0.0;
+    if (wyn_parse_float_core(raw, &val) != WYN_PARSE_OK) {
+        fprintf(stderr, "panic: ");
+        fprintf(stderr, WYN_PARSE_FLOAT_BAD_FMT, raw);
+        fprintf(stderr, "\n");
         if (!wyn_lenient_mode()) exit(1);
         return 0.0;
     }
@@ -4885,14 +4933,19 @@ int bit_count(int x) { int c = 0; while(x) { c += x & 1; x >>= 1; } return c; }
 // ARC functions are provided by arc_runtime.c
 
 // Result type implementations
-typedef struct { int tag; union { int ok_value; const char* err_value; } data; } ResultInt;
+// The Ok payload is `long long`, NOT `int`: Wyn's `int` IS a 64-bit long long
+// everywhere else, so a 32-bit slot here silently truncated every Ok above 2^31
+// (`Ok(3000000000)` unwrapped to -1294967296 at exit 0). A string->int parse
+// that returns Result must be able to carry every value the non-Result parse
+// can, or the safe path is the wrong-answer path.
+typedef struct { int tag; union { long long ok_value; const char* err_value; } data; } ResultInt;
 typedef struct { int tag; union { const char* ok_value; const char* err_value; } data; } ResultString;
 
-ResultInt ResultInt_Ok(int value) { ResultInt r; r.tag = 0; r.data.ok_value = value; return r; }
+ResultInt ResultInt_Ok(long long value) { ResultInt r; r.tag = 0; r.data.ok_value = value; return r; }
 ResultInt ResultInt_Err(const char* msg) { ResultInt r; r.tag = 1; r.data.err_value = msg; return r; }
 bool ResultInt_is_ok(ResultInt r) { return r.tag == 0; }
 bool ResultInt_is_err(ResultInt r) { return r.tag == 1; }
-int ResultInt_unwrap(ResultInt r) { if (r.tag == 1) { fprintf(stderr, "Error: unwrap() called on Err: %s\n", r.data.err_value); exit(1); } return r.data.ok_value; }
+long long ResultInt_unwrap(ResultInt r) { if (r.tag == 1) { fprintf(stderr, "Error: unwrap() called on Err: %s\n", r.data.err_value); exit(1); } return r.data.ok_value; }
 const char* ResultInt_unwrap_err(ResultInt r) { if (r.tag == 0) { fprintf(stderr, "Error: unwrap_err() called on Ok\n"); exit(1); } return r.data.err_value; }
 long long ResultInt_unwrap_or(ResultInt r, long long def) { return r.tag == 0 ? r.data.ok_value : def; }
 // ResultInt_to_string lives with the other seven renderers further down - see
@@ -4957,6 +5010,41 @@ bool ResultBool_is_err(ResultBool r) { return r.tag == 1; }
 bool ResultBool_unwrap(ResultBool r) { if (r.tag == 1) { fprintf(stderr, "Error: unwrap() called on Err: %s\n", r.data.err_value); exit(1); } return r.data.ok_value; }
 const char* ResultBool_unwrap_err(ResultBool r) { if (r.tag == 0) { fprintf(stderr, "Error: unwrap_err() called on Ok\n"); exit(1); } return r.data.err_value; }
 bool ResultBool_unwrap_or(ResultBool r, bool def) { return r.tag == 0 ? r.data.ok_value : def; }
+
+// ---------------------------------------------------------------------------
+// The CATCHABLE half of string->number (PLAN_v1.22 V-18).
+//
+//   s.to_int_checked()   -> Result<int, string>
+//   s.to_float_checked() -> Result<float, string>
+//   s.is_int()           -> bool, defined AS to_int_checked().is_ok()
+//
+// Before these, `"notanumber".to_int()` aborted the process with no line number
+// and nothing to catch, so no Wyn CLI could read untrusted input. The
+// acceptance rule and the message text are the SAME ones the panicking parse
+// uses (wyn_parse_int_core / the WYN_PARSE_*_FMT macros above) - deliberately,
+// because a second copy of "what counts as a number" is how a predicate ends up
+// disagreeing with the parse it is supposed to describe.
+//
+// is_int() is here rather than next to is_numeric() for the same reason: it is
+// not a new hand-written character test, it is the parse. (is_numeric() keeps
+// its own, looser "looks like a decimal number" meaning - "1.5".is_numeric() is
+// true because 1.5 IS a number, while "1.5".is_int() is false.)
+char* wyn_rc_sprintf(const char* fmt, ...);   // defined with the Result renderers below
+ResultInt str_to_int_checked(const char* s) {
+    const char* raw = s ? s : "";
+    long long val = 0;
+    int st = wyn_parse_int_core(raw, &val);
+    if (st == WYN_PARSE_OK) return ResultInt_Ok(val);
+    return ResultInt_Err(wyn_rc_sprintf(st == WYN_PARSE_OVERFLOW ? WYN_PARSE_INT_OVF_FMT
+                                                                 : WYN_PARSE_INT_BAD_FMT, raw));
+}
+ResultFloat str_to_float_checked(const char* s) {
+    const char* raw = s ? s : "";
+    double val = 0.0;
+    if (wyn_parse_float_core(raw, &val) == WYN_PARSE_OK) return ResultFloat_Ok(val);
+    return ResultFloat_Err(wyn_rc_sprintf(WYN_PARSE_FLOAT_BAD_FMT, raw));
+}
+bool str_is_int(const char* s) { return wyn_parse_int_core(s ? s : "", NULL) == WYN_PARSE_OK; }
 
 // ---------------------------------------------------------------------------
 // Option / Result rendering.
