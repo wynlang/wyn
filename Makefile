@@ -528,6 +528,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_struct_field_test.sh
 	@echo "=== Running map missing-key panic test ==="
 	@WYN=./wyn bash tests/errors/run_map_missing_key_test.sh
+	@echo "=== Running map-literal value-type test (V-2) ==="
+	@WYN=./wyn bash tests/errors/run_map_literal_value_type_test.sh
 	@echo "=== Running nesting-depth guard test ==="
 	@WYN=./wyn bash tests/errors/run_nesting_depth_test.sh
 	@echo "=== Running empty-radix-literal test ==="
