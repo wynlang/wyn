@@ -225,18 +225,15 @@ const char* wyn_string_concat_safe(const char* left, const char* right) {
     // would be released twice (use-after-free) and, for the old in-place grow path,
     // would also mutate a live caller-owned string. Do not reintroduce aliasing
     // "optimizations" here; they were the source of a heap-use-after-free.
-    extern int wyn_rc_is_heap(const void*);
     size_t l2 = strlen(right);
-    size_t l1;
-    // Mirror of WynRcHeaderFull (wyn_rc.c) - must stay byte-identical. magic2 is
-    // the complement sentinel appended last so the leading fields keep their offsets.
-    typedef struct { unsigned int magic; _Atomic int refcount; unsigned int capacity; unsigned int length; unsigned int magic2; } RcHdr;
-    if (wyn_rc_is_heap(left)) {
-        RcHdr* left_hdr = (RcHdr*)((char*)left - sizeof(RcHdr));
-        l1 = left_hdr->length ? left_hdr->length : strlen(left);
-    } else {
-        l1 = strlen(left);
-    }
+    // The length cache is read and written through wyn_rc_get_length /
+    // wyn_rc_set_length, NOT through a local mirror of the RC header. This used to
+    // re-declare WynRcHeaderFull by hand ("must stay byte-identical") and inline
+    // the cached-length-or-strlen rule a second time; that is the same duplication
+    // that left 36 constructors without a length at all. Cost is unchanged - the
+    // accessors do the wyn_rc_is_heap() check this code was calling anyway.
+    size_t l1 = wyn_rc_get_length(left);
+    if (l1 == 0) l1 = strlen(left);
     // Allocate new buffer with power-of-2 over-allocation
     size_t alloc_size = l1 + l2 + 1;
     if (alloc_size < 64) alloc_size = 64;
@@ -245,11 +242,8 @@ const char* wyn_string_concat_safe(const char* left, const char* right) {
     memcpy(r, left, l1);
     memcpy(r + l1, right, l2);
     r[l1 + l2] = 0;
-    // Cache length on new string
-    if (wyn_rc_is_heap(r)) {
-        RcHdr* rh = (RcHdr*)((char*)r - sizeof(RcHdr));
-        rh->length = (unsigned int)(l1 + l2);
-    }
+    // Cache length on the new string
+    wyn_rc_set_length(r, (unsigned int)(l1 + l2));
     return r;
 }
 
@@ -334,6 +328,11 @@ void json_set_int(WynJson* json, const char* key, int value);
 char* json_stringify(WynJson* json);
 
 // Regex module - portable regex
+//
+// \d \w \s (and \D \W \S) are expanded to plain ERE by wyn_regex_expand_escapes
+// BEFORE either engine sees the pattern - see src/wyn_regex_escapes.h for why
+// that pass is upstream of both engines rather than inside each of them.
+#include "wyn_regex_escapes.h"
 #ifdef _WIN32
 #include "wyn_regex.h"
 bool regex_match(const char* str, const char* pattern) { return wre_match_full(str, pattern); }
@@ -421,16 +420,29 @@ char* regex_split(const char* str, const char* pattern) {
 }
 #else
 #include <regex.h>
+// The single point at which a pattern becomes a compiled regex on this platform.
+// Shorthand expansion lives HERE and not at the call sites: regex_match,
+// regex_replace, regex_find, regex_find_all, regex_split and Regex_find each
+// call regcomp() themselves, and a fix applied to one of them is not a fix - the
+// other five kept answering with the letter instead of the class.
+static inline int wyn_regcomp(regex_t* re, const char* pattern, int flags) {
+    char bad = 0;
+    char* expanded = wyn_regex_expand_escapes(pattern, &bad);
+    if (!expanded) { wyn_rx_reject(pattern, bad); return REG_BADPAT; }
+    int rc = regcomp(re, expanded, flags);
+    free(expanded);
+    return rc;
+}
 bool regex_match(const char* str, const char* pattern) {
     regex_t re;
-    if (regcomp(&re, pattern, REG_EXTENDED | REG_NOSUB) != 0) return false;
+    if (wyn_regcomp(&re, pattern, REG_EXTENDED | REG_NOSUB) != 0) return false;
     bool result = regexec(&re, str, 0, NULL, 0) == 0;
     regfree(&re);
     return result;
 }
 char* regex_replace(const char* str, const char* pattern, const char* replacement) {
     regex_t re;
-    if (regcomp(&re, pattern, REG_EXTENDED) != 0) return wyn_strdup(str);
+    if (wyn_regcomp(&re, pattern, REG_EXTENDED) != 0) return wyn_strdup(str);
     int rlen = strlen(replacement);
     size_t cap = strlen(str) + rlen * 4 + 64;
     char* result = wyn_str_alloc(cap);
@@ -1383,11 +1395,39 @@ WynRange wyn_range(int start, int end) {
 bool range_has_next(WynRange* r) { return r->current < r->end; }
 int range_next(WynRange* r) { return r->current++; }
 
+// `.len()` for every string in the language, and the internal length source for
+// substring/replace/pad/... below.
+//
+// THE CACHE IS FILLED HERE, ON A MISS, AND THAT IS THE POINT.
+// The RC header carries a cached length, which is why .len() is advertised O(1) -
+// but it is only populated by the constructors that remember to call
+// wyn_rc_set_length(). 36 of the runtime's string constructors do not, so their
+// results fell through to strlen() on EVERY call:
+//
+//     "y".repeat(100000).len()     ->    5 ns/call   (cached at construction)
+//     sb_of(100000).len()          -> 2560 ns/call   (O(n), ~500x slower)
+//     sb_of(10000).len()           ->  270 ns/call   ... linear in length
+//
+// and it was never only StringBuilder.to_string(): .trim(), .replace(),
+// .capitalize() and string interpolation all measured ~2500ns at n=100000 while
+// repeat/upper/substring/join measured 5ns.
+//
+// Filling the cache at each of those 36 sites would be 36 copies of one rule, and
+// the 37th constructor would be written without it - this codebase's most
+// expensive recurring defect shape. Filling it HERE makes the cache unconditional
+// for every constructor, present and future, in one place.
+//
+// Safe to memoize because an RC string is immutable once returned: nothing in the
+// runtime grows or edits one in place (wyn_rc_set_capacity has zero callers - the
+// realloc paths allocate a NEW buffer and release the old). A length of 0 doubles
+// as "not yet known", which costs nothing: strlen("") is free.
 int string_length(const char* str) {
     if (!str) return 0;
     unsigned int cached = wyn_rc_get_length(str);
     if (cached > 0) return (int)cached;
-    return strlen(str);
+    size_t n = strlen(str);
+    wyn_rc_set_length(str, (unsigned int)n);  // no-op for literals / non-RC pointers
+    return (int)n;
 }
 char* string_substring(const char* str, int start, int end) {
     if (!str) return wyn_strdup("");
@@ -2150,73 +2190,94 @@ char* http_request(const char* method, const char* url, const char* body) {
     return response;
 }
 
-char* https_get(const char* url) {
-    // POSIX HTTPS via openssl s_client (no curl dependency)
-    char hostname[256], path[1024];
-    const char* p = url + 8; // skip "https://"
-    const char* slash = strchr(p, '/');
-    if (slash) {
-        int hlen = slash - p; if (hlen > 255) hlen = 255;
-        memcpy(hostname, p, hlen); hostname[hlen] = 0;
-        strncpy(path, slash, 1023); path[1023] = 0;
-    } else {
-        strncpy(hostname, p, 255); hostname[255] = 0;
-        strcpy(path, "/");
+// ---------------------------------------------------------------------------
+// HTTPS. One native transport for all four verbs.
+//
+// What was here until 2026-09 was four copies of a popen'd shell pipeline -
+//
+//   printf 'GET <url> HTTP/1.1...<body>' | openssl s_client -connect <host>:443
+//
+// i.e. the caller's URL and POST body interpolated into a shell command: a REMOTE
+// CODE EXECUTION bug, live in a shipped release. All four copies also shared a hard
+// 128 KB response cap (wyn_malloc(131072) + fread(..., 131071) - a real 1.3 MB
+// response came back as 126 KB), no chunked decoding (so chunk-length lines landed
+// INSIDE the body), and they cut the headers off at \r\n\r\n and threw them away, so
+// the status code was unreachable and a 500 was indistinguishable from a 200.
+//
+// Four copies of one routine is why all four had all four bugs, so the replacement
+// is ONE call site: src/wyn_https.c (transport) on top of src/wyn_tls.c (TLS, which
+// verifies the chain and the hostname and fails closed). Gated by
+// tests/https/run_https_test.sh.
+//
+// WYN_HAVE_TLS is added by the build wherever the vendored mbedTLS can be linked -
+// see wyn_tls_build_flags() in src/main.c, which is the single place that decides.
+// Where it cannot (a cross-compiled target with no cross-built mbedTLS, the TCC
+// backend, a -fPIC shared library), these functions return a NAMED error instead,
+// because "your binary does not link an mbedtls symbol" is not a thing a user of a
+// language can act on.
+#ifdef WYN_HAVE_TLS
+#include "wyn_https.h"
+
+// http_set_header() accumulates "Name: value" lines; the transport wants one block
+// of CRLF-terminated lines. Returns NULL when no headers are set, so the transport
+// can skip the block entirely.
+static const char* wyn_http_header_block(void) {
+    static char block[32 * 544];
+    if (http_header_count <= 0) return NULL;
+    size_t at = 0;
+    for (int i = 0; i < http_header_count; i++) {
+        if (!http_headers[i]) continue;
+        int n = snprintf(block + at, sizeof(block) - at, "%s\r\n", http_headers[i]);
+        if (n < 0 || (size_t)n >= sizeof(block) - at) break;
+        at += (size_t)n;
     }
-    char cmd[4096];
-    snprintf(cmd, sizeof(cmd),
-        "printf 'GET %s HTTP/1.1\\r\\nHost: %s\\r\\nConnection: close\\r\\n\\r\\n' | "
-        "openssl s_client -quiet -connect %s:443 2>/dev/null",
-        path, hostname, hostname);
-    FILE* fp = popen(cmd, "r");
-    if (!fp) return "";
-    char* response = wyn_malloc(131072);
-    size_t len = fread(response, 1, 131071, fp);
-    response[len] = 0;
-    pclose(fp);
-    // Skip HTTP headers - find \r\n\r\n
-    char* body = strstr(response, "\r\n\r\n");
-    if (body) {
-        body += 4;
-        char* result = wyn_strdup(body);
-        free(response);
-        return result;
-    }
-    return response;
+    block[at] = '\0';
+    return at ? block : NULL;
 }
-char* https_post(const char* url, const char* data) {
-    char hostname[256], path[1024];
-    const char* p = url + 8;
-    const char* slash = strchr(p, '/');
-    if (slash) {
-        int hlen = slash - p; if (hlen > 255) hlen = 255;
-        memcpy(hostname, p, hlen); hostname[hlen] = 0;
-        strncpy(path, slash, 1023); path[1023] = 0;
-    } else {
-        strncpy(hostname, p, 255); hostname[255] = 0;
-        strcpy(path, "/");
+#endif
+
+// The one HTTPS call site. Returns the BODY as an RC-managed string (release it,
+// never free() it - same class as File_read_line), or "" on failure with
+// http_error() / http_status() carrying the reason. Keeping the char*-returning
+// signature is deliberate: the typed Result<HttpResponse, HttpError> surface is a
+// separate change, and this one must not move the language surface.
+static char* wyn_https_body(const char* method, const char* url, const char* data) {
+#ifdef WYN_HAVE_TLS
+    WynHttpResponse r;
+    char err[320];
+    if (wyn_https_request(method, url, data, wyn_http_header_block(), &r,
+                          err, sizeof(err)) != 0) {
+        http_last_status = 0;
+        snprintf(http_last_error, sizeof(http_last_error), "%s", err);
+        return "";
     }
-    int dlen = data ? (int)strlen(data) : 0;
-    char cmd[8192];
-    snprintf(cmd, sizeof(cmd),
-        "printf 'POST %s HTTP/1.1\\r\\nHost: %s\\r\\nContent-Length: %d\\r\\nContent-Type: application/x-www-form-urlencoded\\r\\nConnection: close\\r\\n\\r\\n%s' | "
-        "openssl s_client -quiet -connect %s:443 2>/dev/null",
-        path, hostname, dlen, data ? data : "", hostname);
-    FILE* fp = popen(cmd, "r");
-    if (!fp) return "";
-    char* response = wyn_malloc(131072);
-    size_t len = fread(response, 1, 131071, fp);
-    response[len] = 0;
-    pclose(fp);
-    char* body = strstr(response, "\r\n\r\n");
-    if (body) {
-        body += 4;
-        char* result = wyn_strdup(body);
-        free(response);
-        return result;
+    // The status is now REACHABLE - through the existing http_status() builtin, so
+    // this adds no new Wyn-visible surface. It was unreachable for every HTTPS call
+    // in every release before this one.
+    http_last_status = r.status;
+    http_last_error[0] = '\0';
+    char* out = wyn_str_alloc(r.body_len);
+    if (out) {
+        if (r.body_len) memcpy(out, r.body, r.body_len);
+        out[r.body_len] = '\0';
+        wyn_rc_set_length(out, (unsigned int)r.body_len);
     }
-    return response;
+    wyn_https_response_free(&r);
+    return out ? out : "";
+#else
+    (void)method; (void)url; (void)data;
+    http_last_status = 0;
+    snprintf(http_last_error, sizeof(http_last_error),
+             "HTTPS unavailable: this binary was linked without the TLS backend "
+             "(vendored mbedTLS). Cross-compiled targets, the TCC backend and "
+             "--shared/--python/--node libraries are built this way; build natively "
+             "with the system C compiler for HTTPS.");
+    return "";
+#endif
 }
+
+char* https_get(const char* url) { return wyn_https_body("GET", url, NULL); }
+char* https_post(const char* url, const char* data) { return wyn_https_body("POST", url, data); }
 
 char* http_get(const char* url) {
     char* result;
@@ -2231,48 +2292,12 @@ char* http_post(const char* url, const char* data) {
     return result ? result : "";
 }
 char* http_put(const char* url, const char* data) {
-    if (strncmp(url, "https://", 8) == 0) {
-        // POSIX HTTPS PUT via openssl
-        char hostname[256], path[1024];
-        const char* p = url + 8;
-        const char* slash = strchr(p, '/');
-        if (slash) { int h = slash-p; if(h>255)h=255; memcpy(hostname,p,h); hostname[h]=0; strncpy(path,slash,1023); path[1023]=0; }
-        else { strncpy(hostname,p,255); hostname[255]=0; strcpy(path,"/"); }
-        int dlen = data ? (int)strlen(data) : 0;
-        char cmd[8192];
-        snprintf(cmd, sizeof(cmd),
-            "printf 'PUT %s HTTP/1.1\\r\\nHost: %s\\r\\nContent-Length: %d\\r\\nConnection: close\\r\\n\\r\\n%s' | openssl s_client -quiet -connect %s:443 2>/dev/null",
-            path, hostname, dlen, data?data:"", hostname);
-        FILE* fp = popen(cmd, "r"); if (!fp) return "";
-        char* resp = wyn_str_alloc(131072); size_t len = fread(resp,1,131071,fp); resp[len]=0; pclose(fp);
-        wyn_rc_set_length(resp, (unsigned int)len);
-        char* body = strstr(resp, "\r\n\r\n");
-        // RC-offset pointer: release, never free() (same class as File_read_line).
-        if (body) { body+=4; char* r=wyn_strdup(body); wyn_rc_release(resp); return r; }
-        return resp;
-    }
+    if (strncmp(url, "https://", 8) == 0) return wyn_https_body("PUT", url, data);
     char* result = http_request("PUT", url, data);
     return result ? result : "";
 }
 char* http_delete(const char* url) {
-    if (strncmp(url, "https://", 8) == 0) {
-        char hostname[256], path[1024];
-        const char* p = url + 8;
-        const char* slash = strchr(p, '/');
-        if (slash) { int h = slash-p; if(h>255)h=255; memcpy(hostname,p,h); hostname[h]=0; strncpy(path,slash,1023); path[1023]=0; }
-        else { strncpy(hostname,p,255); hostname[255]=0; strcpy(path,"/"); }
-        char cmd[4096];
-        snprintf(cmd, sizeof(cmd),
-            "printf 'DELETE %s HTTP/1.1\\r\\nHost: %s\\r\\nConnection: close\\r\\n\\r\\n' | openssl s_client -quiet -connect %s:443 2>/dev/null",
-            path, hostname, hostname);
-        FILE* fp = popen(cmd, "r"); if (!fp) return "";
-        char* resp = wyn_str_alloc(131072); size_t len = fread(resp,1,131071,fp); resp[len]=0; pclose(fp);
-        wyn_rc_set_length(resp, (unsigned int)len);
-        char* body = strstr(resp, "\r\n\r\n");
-        // RC-offset pointer: release, never free() (same class as File_read_line).
-        if (body) { body+=4; char* r=wyn_strdup(body); wyn_rc_release(resp); return r; }
-        return resp;
-    }
+    if (strncmp(url, "https://", 8) == 0) return wyn_https_body("DELETE", url, NULL);
     char* result = http_request("DELETE", url, NULL);
     return result ? result : "";
 }
@@ -4041,7 +4066,7 @@ char* regex_split(const char* str, const char* pattern);
 #ifndef _WIN32
 bool Regex_match(const char* s, const char* p) { return regex_match(s, p); }
 char* Regex_replace(const char* s, const char* p, const char* r) { return regex_replace(s, p, r); }
-int Regex_find(const char* s, const char* p) { regex_t re; if (regcomp(&re, p, REG_EXTENDED) != 0) return -1; regmatch_t m; int r2 = regexec(&re, s, 1, &m, 0) == 0 ? m.rm_so : -1; regfree(&re); return r2; }
+int Regex_find(const char* s, const char* p) { regex_t re; if (wyn_regcomp(&re, p, REG_EXTENDED) != 0) return -1; regmatch_t m; int r2 = regexec(&re, s, 1, &m, 0) == 0 ? m.rm_so : -1; regfree(&re); return r2; }
 char* Regex_find_all(const char* s, const char* p) { return regex_find_all(s, p); }
 char* Regex_split(const char* s, const char* p) { return regex_split(s, p); }
 #endif
@@ -6261,7 +6286,7 @@ char* DateTime_to_iso(long long timestamp) {
 #ifndef _WIN32
 long long regex_find(const char* str, const char* pattern) {
     regex_t re;
-    if (regcomp(&re, pattern, REG_EXTENDED) != 0) return -1;
+    if (wyn_regcomp(&re, pattern, REG_EXTENDED) != 0) return -1;
     regmatch_t match;
     int result = regexec(&re, str, 1, &match, 0) == 0 ? match.rm_so : -1;
     regfree(&re);
@@ -6270,7 +6295,7 @@ long long regex_find(const char* str, const char* pattern) {
 
 char* regex_find_all(const char* str, const char* pattern) {
     regex_t re;
-    if (regcomp(&re, pattern, REG_EXTENDED) != 0) return "";
+    if (wyn_regcomp(&re, pattern, REG_EXTENDED) != 0) return "";
     size_t cap = 1024, rlen = 0;
     char* result = wyn_str_alloc(cap);
     const char* p = str;
@@ -6546,7 +6571,7 @@ long long DateTime_second(long long timestamp) { time_t t = (time_t)timestamp; s
 #ifndef _WIN32
 char* regex_split(const char* str, const char* pattern) {
     regex_t re;
-    if (regcomp(&re, pattern, REG_EXTENDED) != 0) return wyn_strdup(str);
+    if (wyn_regcomp(&re, pattern, REG_EXTENDED) != 0) return wyn_strdup(str);
     char* result = wyn_malloc(strlen(str) + 256); result[0] = 0;
     const char* p = str;
     regmatch_t match;

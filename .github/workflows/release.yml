@@ -129,6 +129,19 @@ jobs:
           cp -r vendor/tcc dist/vendor/
           make runtime
           cp runtime/libwyn_rt.a dist/runtime/
+          # The vendored TLS library is a LINK INPUT, not an optional extra:
+          # runtime/libwyn_rt.a contains wyn_tls.o + wyn_https.o, so every program
+          # calling Http.* over https:// links libmbedtls_wyn.a too. Ship it, plus the
+          # headers (wyn build-runtime compiles src/wyn_tls.c) and the LICENSE (mbedTLS
+          # is statically linked - Apache-2.0 §4 requires the license text to travel
+          # with the distribution). Omitting the .a does not break builds - the
+          # compiler detects it and programs get a named "HTTPS unavailable" error -
+          # but it does silently remove HTTPS, which tests/errors/
+          # run_install_layout_test.sh gates on every PR.
+          mkdir -p dist/vendor/mbedtls/lib dist/vendor/mbedtls/include
+          cp vendor/mbedtls/lib/libmbedtls_wyn.a dist/vendor/mbedtls/lib/
+          cp -r vendor/mbedtls/include/. dist/vendor/mbedtls/include/
+          cp vendor/mbedtls/LICENSE vendor/mbedtls/README.wyn.md dist/vendor/mbedtls/
           tar czf ${{ matrix.artifact }}.tar.gz -C dist .
 
       - name: Verify artifact layout (Unix)
@@ -145,6 +158,12 @@ jobs:
           # Fail the release rather than distribute without them.
           test -f /tmp/verify/THIRD-PARTY-NOTICES.md
           test -f /tmp/verify/vendor/tcc/COPYING
+          # mbedTLS is statically linked into every HTTPS-using program built by this
+          # compiler, so its license text must ship (Apache-2.0 §4) and its library
+          # must be present or the installed compiler has no HTTPS at all.
+          test -f /tmp/verify/vendor/mbedtls/LICENSE
+          test -f /tmp/verify/vendor/mbedtls/lib/libmbedtls_wyn.a
+          test -f /tmp/verify/vendor/mbedtls/include/mbedtls/ssl.h
           # TCC must be bundled so "no external deps" is TRUE (site claim).
           test -x /tmp/verify/vendor/tcc/bin/tcc
           test -f /tmp/verify/vendor/tcc/lib/libwyn_rt_tcc.a
@@ -153,6 +172,18 @@ jobs:
           cd /tmp && echo 'fn main() { println("install-ok") }' > hello.wyn
           /tmp/verify/bin/wyn run hello.wyn | grep -q "install-ok"
           /tmp/verify/bin/wyn version | grep -vq "1.10.0"
+          # HTTPS from the PACKAGED layout. Asserted negatively, because a missing TLS
+          # library still builds and still runs - it just makes every https:// call
+          # return "HTTPS unavailable". .invalid can never resolve (RFC 2606), so no
+          # network is needed. Mirrors tests/errors/run_install_layout_test.sh arm 4.
+          printf 'fn main() {\n  var b = http_get("https://wyn-release-canary.invalid/x")\n  println("len=${b.len()} err=${http_error()}")\n}\n' > tlscheck.wyn
+          /tmp/verify/bin/wyn run tlscheck.wyn > tlscheck.out 2>&1 || { cat tlscheck.out; exit 1; }
+          if grep -q "HTTPS unavailable" tlscheck.out; then
+            cat tlscheck.out
+            echo "::error::the packaged compiler links no TLS backend - vendor/mbedtls/lib is missing from the artifact"
+            exit 1
+          fi
+          echo "✅ packaged compiler links the TLS backend"
           # App.* (desktop GUI) links this prebuilt Objective-C object on macOS.
           # Nothing in the tree built it before, so it shipped in NO release: every
           # App program failed at the link step with
@@ -187,6 +218,13 @@ jobs:
           [ -d vendor/tcc ] && cp -r vendor/tcc dist/vendor/
           make runtime
           cp runtime/libwyn_rt.a dist/runtime/
+          # Same link-input reasoning as the Unix job. Windows additionally links
+          # -lcrypt32 (the trust store is CryptoAPI's "ROOT", not a PEM file), which is
+          # in the Makefile's PLATFORM_LIBS and in wyn_tls_build_flags.
+          mkdir -p dist/vendor/mbedtls/lib dist/vendor/mbedtls/include
+          cp vendor/mbedtls/lib/libmbedtls_wyn.a dist/vendor/mbedtls/lib/
+          cp -r vendor/mbedtls/include/. dist/vendor/mbedtls/include/
+          cp vendor/mbedtls/LICENSE vendor/mbedtls/README.wyn.md dist/vendor/mbedtls/
           powershell -Command "Compress-Archive -Path dist\* -DestinationPath ${{ matrix.artifact }}.zip"
         shell: bash
 
@@ -208,6 +246,8 @@ jobs:
           # License-compliance gate (see the Unix job for rationale).
           test -f verify_out/THIRD-PARTY-NOTICES.md
           test -f verify_out/vendor/tcc/COPYING
+          test -f verify_out/vendor/mbedtls/LICENSE
+          test -f verify_out/vendor/mbedtls/lib/libmbedtls_wyn.a
           echo "artifact layout verified (Windows)"
         shell: bash
 

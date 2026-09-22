@@ -7,7 +7,17 @@ ifeq ($(OS),Windows_NT)
     PLATFORM := windows
     CC := gcc
     EXE_EXT := .exe
-    PLATFORM_LIBS := -lws2_32 -lpthread -lm
+    # -lcrypt32 / -lbcrypt: needed by anything that links src/wyn_tls.c or the
+    # vendored mbedTLS, and MEASURED, not guessed (mingw-w64 gcc 12 cross-link):
+    #   crypt32  the Windows trust store is CryptoAPI's "ROOT", not a PEM file, so
+    #            wyn_tls.c calls CertOpenSystemStoreA / CertEnumCertificatesInStore /
+    #            CertCloseStore there and nowhere else;
+    #   bcrypt   mbedTLS's own entropy_poll.c calls BCryptGenRandom on Windows - a
+    #            link with crypt32 ALONE still failed on that symbol.
+    # The same pair is added to the link line of every COMPILED PROGRAM by
+    # wyn_tls_build_flags() in src/main.c; this assignment covers the compiler binary
+    # and the sanitizer test links.
+    PLATFORM_LIBS := -lws2_32 -lcrypt32 -lbcrypt -lpthread -lm
     # -include forces src/mingw_unistd_fix.h to the top of EVERY translation unit,
     # before any #include can pull in <unistd.h>. 21 of our .c files include
     # <unistd.h>, and mingw defines ftruncate there as a __CRT_INLINE body calling
@@ -87,7 +97,17 @@ ifeq ($(UNAME_S),Darwin)
 WEBVIEW_OBJ := src/wyn_webview.o
 endif
 
-all: wyn$(EXE_EXT) runtime $(MBEDTLS_LIB) $(WEBVIEW_OBJ)
+# Same rule as WEBVIEW_OBJ above, and it was already broken: MBEDTLS_LIB was
+# defined ~20 lines BELOW `all:`, so `$(MBEDTLS_LIB)` in the prerequisite list
+# expanded to NOTHING and a plain `make` never built the TLS library. `make test`
+# did (its own rule sits after the assignment), which is exactly why nobody
+# noticed. Now that the runtime links wyn_tls.c, a missing library is a link
+# failure for every compiled program, so the definition moves up here.
+MBEDTLS_DIR  = vendor/mbedtls
+MBEDTLS_SRCS = $(wildcard $(MBEDTLS_DIR)/library/*.c)
+MBEDTLS_LIB  = $(MBEDTLS_DIR)/lib/libmbedtls_wyn.a
+
+all: wyn$(EXE_EXT) $(MBEDTLS_LIB) runtime $(WEBVIEW_OBJ)
 
 src/wyn_webview.o: src/wyn_webview.m src/wyn_webview.h
 	$(CC) -ObjC -fobjc-arc -O2 -I src -c $< -o $@
@@ -106,9 +126,8 @@ src/wyn_webview.o: src/wyn_webview.m src/wyn_webview.h
 # Built with `-w`: third-party code, and $(CFLAGS)'s -Wall -Wextra is our bar for
 # our code, not theirs. Nothing here is in CFLAGS' -D_GNU_SOURCE world either -
 # mbedTLS picks its own feature macros per platform.
-MBEDTLS_DIR  = vendor/mbedtls
-MBEDTLS_SRCS = $(wildcard $(MBEDTLS_DIR)/library/*.c)
-MBEDTLS_LIB  = $(MBEDTLS_DIR)/lib/libmbedtls_wyn.a
+# (MBEDTLS_DIR / MBEDTLS_SRCS / MBEDTLS_LIB are assigned above `all:` - make
+# expands a rule's prerequisites when the rule is READ, so they cannot live here.)
 
 mbedtls: $(MBEDTLS_LIB)
 
@@ -120,6 +139,9 @@ test-tls-seam: $(MBEDTLS_LIB)
 # Needs no `wyn` binary: it links src/wyn_schema.c directly.
 test-schema:
 	@bash tests/schema/run_schema_test.sh
+# The native HTTPS transport on its own, for the edit loop. `make test` runs it too.
+test-https: $(MBEDTLS_LIB) runtime
+	@bash tests/https/run_https_test.sh
 
 $(MBEDTLS_LIB): $(MBEDTLS_SRCS) $(wildcard $(MBEDTLS_DIR)/library/*.h) $(wildcard $(MBEDTLS_DIR)/include/mbedtls/*.h)
 	@echo "Building vendored mbedTLS ($$(sed -n 's/.*MBEDTLS_VERSION_STRING  *"\(.*\)".*/\1/p' $(MBEDTLS_DIR)/include/mbedtls/build_info.h))..."
@@ -340,6 +362,8 @@ test: wyn $(MBEDTLS_LIB)
 	@bash tests/tls/run_tls_seam_test.sh
 	@echo "=== Running JSON Schema derivation test ==="
 	@bash tests/schema/run_schema_test.sh
+	@echo "=== Running native HTTPS transport test (+ no-openssl tripwire) ==="
+	@bash tests/https/run_https_test.sh
 	@echo "=== Running golden-C snapshot tests ==="
 	@WYN=./wyn bash tests/golden/run_golden_tests.sh
 	@echo "=== Running GPU transparent-dispatch test ==="
@@ -510,6 +534,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_collection_type_test.sh
 	@echo "=== Running silent-wrong-answer test ==="
 	@WYN=./wyn bash tests/errors/run_silent_wrong_test.sh
+	@echo "=== Running regex shorthand-class gate (\\d \\w \\s) ==="
+	@WYN=./wyn bash tests/errors/run_regex_escape_test.sh
 	@echo "=== Running diagnostic-location + panic-path test ==="
 	@WYN=./wyn bash tests/errors/run_diagnostic_location_test.sh
 	@echo "=== Running checker-soundness gate (K5-K11) test ==="
@@ -536,6 +562,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_unused_shadow_test.sh
 	@echo "=== Running StringBuilder aliasing test ==="
 	@WYN=./wyn bash tests/errors/run_stringbuilder_test.sh
+	@echo "=== Running .len() O(1) length-cache gate ==="
+	@WYN=./wyn bash tests/errors/run_len_cache_test.sh
 	@echo "=== Running Task.select diagnostic gate ==="
 	@WYN=./wyn bash tests/errors/run_task_select_diagnostic_test.sh
 	@echo "=== Running HTTP server concurrent-load gate ==="
@@ -819,7 +847,16 @@ tools/formatter.wyn.out: tools/formatter.wyn wyn
 # in to resolve an undefined symbol, and the program's own object already defines
 # all of them; see tests/regression/test_release_link.sh, which guards both paths.
 # Additional .c files provide functions NOT in the header
+#
+# src/wyn_tls.c + src/wyn_https.c are the native HTTPS transport. Until 2026-09
+# wyn_tls.c was compiled by NOTHING - it existed, had a passing gate of its own, and
+# was in no library, so nothing could call it. Both live here now, which is what makes
+# `Http.get("https://...")` reach mbedTLS instead of `popen("... openssl s_client")`.
+# Consequence to know: every link line that pulls a member referencing wyn_tls_*
+# also needs $(MBEDTLS_LIB) - see wyn_tls_build_flags() in src/main.c, which is the
+# one place that decides.
 RT_SRCS = src/wyn_arena.c src/wyn_rc.c src/runtime_exports.c src/wyn_wrapper.c \
+          src/wyn_tls.c src/wyn_https.c \
           src/wyn_interface.c src/coroutine.c src/spawn_fast.c src/spawn.c src/future.c \
           src/io.c src/io_loop.c src/optional.c src/result.c \
           src/arc_runtime.c src/concurrency.c src/async_runtime.c \
@@ -836,11 +873,16 @@ RT_SRCS = src/wyn_arena.c src/wyn_rc.c src/runtime_exports.c src/wyn_wrapper.c \
 # programs silently link a stale libwyn_rt.a. Depend on the sources + headers so
 # `make` detects the change instead of reporting "Nothing to be done".
 runtime: runtime/libwyn_rt.a
-runtime/libwyn_rt.a: $(RT_SRCS) $(wildcard src/*.h) | wyn$(EXE_EXT)
+runtime/libwyn_rt.a: $(RT_SRCS) $(wildcard src/*.h) | wyn$(EXE_EXT) $(MBEDTLS_LIB)
 	@echo "Building runtime library..."
 	@mkdir -p runtime/obj
+	@# -DWYN_HAVE_TLS is what makes runtime_exports.c's https_get use the native
+	@# transport rather than the "no TLS in this build" stub. It matters for
+	@# `wyn run --release`, which emits wyn_runtime_slim.h (declarations only) and
+	@# therefore takes https_get from THIS archive, not from the program's own TU.
 	@set -e; for f in $(RT_SRCS); do \
-		$(CC) -std=c11 -O2 -w -D_GNU_SOURCE -I src -I vendor/minicoro \
+		$(CC) -std=c11 -O2 -w -D_GNU_SOURCE -DWYN_HAVE_TLS \
+		-I src -I vendor/minicoro -I $(MBEDTLS_DIR)/include \
 		-c $$f -o runtime/obj/$$(basename $$f .c).o; \
 	done
 	@# `ar r` REPLACES members in an existing archive. If a stale runtime/obj/
@@ -860,12 +902,14 @@ runtime/libwyn_rt.a: $(RT_SRCS) $(wildcard src/*.h) | wyn$(EXE_EXT)
 # the compiler, so this is the check that has caught every real UAF. Used by
 # the sanitizer CI job; run locally with `make asan-runtime-test`.
 runtime-asan: runtime/libwyn_rt_asan.a
-runtime/libwyn_rt_asan.a: $(RT_SRCS) $(wildcard src/*.h)
+runtime/libwyn_rt_asan.a: $(RT_SRCS) $(wildcard src/*.h) | $(MBEDTLS_LIB)
 	@echo "Building ASan runtime library..."
 	@mkdir -p runtime/obj_asan
+	@# -I $(MBEDTLS_DIR)/include is REQUIRED, not optional: RT_SRCS now contains
+	@# src/wyn_tls.c, which includes <mbedtls/ssl.h>. Same for the TSan lib below.
 	@set -e; for f in $(RT_SRCS); do \
 		$(CC) -std=c11 -O1 -g -w -fsanitize=address -fno-omit-frame-pointer \
-		-D_GNU_SOURCE -I src -I vendor/minicoro \
+		-D_GNU_SOURCE -DWYN_HAVE_TLS -I src -I vendor/minicoro -I $(MBEDTLS_DIR)/include \
 		-c $$f -o runtime/obj_asan/$$(basename $$f .c).o; \
 	done
 	@ar rcs runtime/libwyn_rt_asan.a runtime/obj_asan/*.o
@@ -898,13 +942,13 @@ ASAN_TESTS = tests/expect/test_string_utf8.wyn \
              tests/regression/test_retain_on_return.wyn \
              tests/regression/test_rc_stage2_reconcile.wyn
 
-asan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_asan.a
+asan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_asan.a $(MBEDTLS_LIB)
 	@echo "=== ASan runtime test (representative set) ==="
 	@set -e; for t in $(ASAN_TESTS); do \
 		[ -f $$t ] || continue; \
 		./wyn build $$t --debug >/dev/null 2>&1 || { echo "  skip (build) $$t"; continue; }; \
 		$(CC) -std=c11 -O0 -g -w -fsanitize=address -fno-omit-frame-pointer \
-			-I src -o $${t%.wyn}.asan $$t.c runtime/libwyn_rt_asan.a $(PLATFORM_LIBS); \
+			-I src -o $${t%.wyn}.asan $$t.c runtime/libwyn_rt_asan.a $(MBEDTLS_LIB) $(PLATFORM_LIBS); \
 		ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 ./$${t%.wyn}.asan >/dev/null 2>$${t%.wyn}.asan.log \
 			|| { echo "  ASAN FAIL: $$t"; cat $${t%.wyn}.asan.log; exit 1; }; \
 		echo "  ok    $$t"; \
@@ -918,12 +962,12 @@ asan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_asan.a
 # so every test runs under BOTH configs. Used by the sanitizer CI job; run
 # locally with `make tsan-runtime-test`.
 runtime-tsan: runtime/libwyn_rt_tsan.a
-runtime/libwyn_rt_tsan.a: $(RT_SRCS) $(wildcard src/*.h)
+runtime/libwyn_rt_tsan.a: $(RT_SRCS) $(wildcard src/*.h) | $(MBEDTLS_LIB)
 	@echo "Building TSan runtime library..."
 	@mkdir -p runtime/obj_tsan
 	@set -e; for f in $(RT_SRCS); do \
 		$(CC) -std=c11 -O1 -g -w -fsanitize=thread -fno-omit-frame-pointer \
-		-D_GNU_SOURCE -I src -I vendor/minicoro \
+		-D_GNU_SOURCE -DWYN_HAVE_TLS -I src -I vendor/minicoro -I $(MBEDTLS_DIR)/include \
 		-c $$f -o runtime/obj_tsan/$$(basename $$f .c).o; \
 	done
 	@ar rcs runtime/libwyn_rt_tsan.a runtime/obj_tsan/*.o
@@ -943,13 +987,13 @@ TSAN_TESTS = tests/expect/test_channels.wyn \
              tests/expect/test_select_arms.wyn \
              tests/regression/test_channel_many_senders_race.wyn
 
-tsan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_tsan.a
+tsan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_tsan.a $(MBEDTLS_LIB)
 	@echo "=== TSan runtime test (both executor configs) ==="
 	@set -e; for t in $(TSAN_TESTS); do \
 		[ -f $$t ] || continue; \
 		./wyn build $$t --debug >/dev/null 2>&1 || { echo "  skip (build) $$t"; continue; }; \
 		$(CC) -std=c11 -O0 -g -w -fsanitize=thread -fno-omit-frame-pointer \
-			-I src -o $${t%.wyn}.tsan $$t.c runtime/libwyn_rt_tsan.a $(PLATFORM_LIBS); \
+			-I src -o $${t%.wyn}.tsan $$t.c runtime/libwyn_rt_tsan.a $(MBEDTLS_LIB) $(PLATFORM_LIBS); \
 		for pool in "" "WYN_ASYNC_POOL=1"; do \
 			env $$pool TSAN_OPTIONS=halt_on_error=1:abort_on_error=1 \
 				./$${t%.wyn}.tsan >/dev/null 2>$${t%.wyn}.tsan.log \
@@ -976,7 +1020,11 @@ runtime/wyn_runtime.pch: src/wyn_runtime.h Makefile
 	@# INCLUDES this pch. clang hard-errors on a mismatch ("signed integer
 	@# overflow handling differs in precompiled file"), so adding -fwrapv to the
 	@# build without adding it here breaks every macOS dev-loop build.
-	@$(CC) -x c-header -std=c11 -O0 -fwrapv -w -Wno-int-conversion -ffunction-sections -fdata-sections -I src \
+	@# -DWYN_HAVE_TLS is part of that flag set now: wyn_runtime.h's https_* bodies
+	@# are behind it, so a pch built without it and included by a compile WITH it is
+	@# a clang hard error ("definition of macro ... differs"). main.c only injects the
+	@# pch on the path that also passes the define; see wyn_tls_build_flags.
+	@$(CC) -x c-header -std=c11 -O0 -fwrapv -w -Wno-int-conversion -ffunction-sections -fdata-sections -DWYN_HAVE_TLS -I src \
 		src/wyn_runtime.h -o runtime/wyn_runtime.pch 2>/dev/null && \
 		echo "Built runtime/wyn_runtime.pch ($$(du -h runtime/wyn_runtime.pch | cut -f1))" || true
 endif
@@ -996,7 +1044,7 @@ clean:
 	rm -f wyn wyn.exe wyn-windows.exe wyn-linux wyn-macos tests/test_lexer tests/test_parser tests/test_checker tests/test_codegen tests/test_operators tests/test_default_parameters tests/test_function_overloading tests/test_generic_functions tests/test_parameter_validation tests/test_function_integration tests/test_syntax_design tests/test_system_integration tests/phase2_integration tests/phase2_integration_simple tests/test_wasm_support tests/test_self_compilation tests/test_documentation_system tests/test_container_support tests/test_lexer_rewrite tests/test_coroutine tools/formatter.wyn.out
 	rm -rf temp runtime/obj runtime/libwyn_rt.a $(MBEDTLS_DIR)/obj $(MBEDTLS_DIR)/lib
 
-.PHONY: all test test_bdd test-tls-seam clean container-build container-test container-deploy container-all fmt-tool platform-info wyn-windows wyn-linux wyn-macos mbedtls
+.PHONY: all test test_bdd test-tls-seam test-https clean container-build container-test container-deploy container-all fmt-tool platform-info wyn-windows wyn-linux wyn-macos mbedtls
 
 # valgrind-test defined earlier in file (line ~125)
 
