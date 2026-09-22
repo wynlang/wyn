@@ -122,6 +122,18 @@ accept "run --release <file>"    0 "$WYN" run --release "$SRC"
 accept "run <file>"              0 "$WYN" run "$SRC"
 accept "check <file>"            0 "$WYN" check "$SRC"
 accept "fmt <file> --check"      0 "$WYN" fmt "$SRC" --check
+# EVERY SPELLING THE CORPUS ALREADY USES. `build --debug` was missing from the table
+# on the first cut and took all 30 golden-C snapshots red - the corpus sweep that was
+# supposed to catch it used a regex that stopped at `>`, and the invocation is
+# `"$WYN" build "$work" --debug > log`. These arms are the cheap version of that
+# sweep: a row that goes short here fails in seconds instead of 12 minutes into
+# `make test`.
+accept "build <file> --debug"    1 "$WYN" build "$SRC" --debug
+accept "build <file> --app-plan" 0 "$WYN" build "$SRC" --app-plan
+accept "run <file> --debug"      0 "$WYN" run --debug "$SRC"
+accept "fix <file> --check"      0 "$WYN" fix "$SRC" --check
+accept "ui --list-commands"      0 "$WYN" ui --list-commands
+accept "tui --list-commands"     0 "$WYN" tui --list-commands
 
 echo "  -- flags AFTER the path belong to the PROGRAM for wyn run (deliberate) --"
 cat > "$TMP/args.wyn" <<'WYN'

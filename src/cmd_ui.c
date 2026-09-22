@@ -111,6 +111,13 @@ static const UiCmd CMDS[] = {
      NULL, NULL, 0, 0,
      {{"--release", NULL, "Full optimizations (-O3), stripped"},
       {"--fast", NULL, "Skip optimizations (fastest compile)"},
+      // --debug is documented for `build` ("keeps the generated .wyn.c") and used by
+      // tests/golden/run_golden_tests.sh and the Makefile, so it MUST be accepted -
+      // omitting it here turned all 30 golden-C snapshots red. Measured while adding
+      // it: `wyn build` keeps the .c UNCONDITIONALLY, so the flag is currently a
+      // no-op for this command. Accepted, not silently ignored: refusing a documented
+      // spelling would be a worse lie than a redundant one.
+      {"--debug", NULL, "Keep the generated .wyn.c (build keeps it either way today)"},
       {"--shared", NULL, "Build a C shared library"},
       {"--python", NULL, "Build a Python extension module"},
       {"--node", NULL, "Build a Node native addon"},
