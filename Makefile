@@ -404,6 +404,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_namespace_typo_message_test.sh
 	@echo "=== Running namespace unknown-method check-time rejection test ==="
 	@WYN=./wyn bash tests/errors/run_namespace_unknown_method_test.sh
+	@echo "=== Running spawn-on-a-closure rejection test ==="
+	@WYN=./wyn bash tests/errors/run_spawn_closure_test.sh
 	@echo "=== Running for-in-string check-time rejection test ==="
 	@WYN=./wyn bash tests/errors/run_for_in_string_test.sh
 	@echo "=== Running run-cache import-staleness test ==="
@@ -440,6 +442,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_recursive_struct_test.sh
 	@echo "=== Running nested-aggregate feature+gate test ==="
 	@WYN=./wyn bash tests/errors/run_nested_aggregate_test.sh
+	@echo "=== Running returned-aggregate string-lifetime test (V-1) ==="
+	@WYN=./wyn bash tests/errors/run_returned_aggregate_string_test.sh
 	@echo "=== Running generic-enum negative test ==="
 	@WYN=./wyn bash tests/errors/run_generic_enum_test.sh
 	@echo "=== Running unknown-method negative test ==="
@@ -464,6 +468,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_interp_method_test.sh
 	@echo "=== Running UTF-8 padding test ==="
 	@WYN=./wyn bash tests/errors/run_pad_utf8_test.sh
+	@echo "=== Running Json one-model test ==="
+	@WYN=./wyn bash tests/errors/run_json_model_test.sh
 	@echo "=== Running struct string-field ownership test ==="
 	@WYN=./wyn bash tests/errors/run_struct_string_field_test.sh
 	@echo "=== Running parenthesized-condition test ==="
@@ -536,6 +542,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_channel_deadlock_test.sh
 	@echo "=== Running collection type-safety test ==="
 	@WYN=./wyn bash tests/errors/run_collection_type_test.sh
+	@echo "=== Running sort_by comparator gate (V-19) ==="
+	@WYN=./wyn bash tests/errors/run_sort_by_cmp_test.sh
 	@echo "=== Running silent-wrong-answer test ==="
 	@WYN=./wyn bash tests/errors/run_silent_wrong_test.sh
 	@echo "=== Running regex shorthand-class gate (\\d \\w \\s) ==="
@@ -548,6 +556,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_await_all_type_test.sh
 	@echo "=== Running crucible-P0 (fatal-by-default) test ==="
 	@WYN=./wyn bash tests/errors/run_crucible_p0_test.sh
+	@echo "=== Running checked string->number parse gate (V-18) ==="
+	@WYN=./wyn bash tests/errors/run_parse_checked_test.sh
 	@echo "=== Running CLI DX test ==="
 	@WYN=./wyn bash tests/errors/run_cli_dx_test.sh
 	@echo "=== Running wyn-run orphan-child test ==="
@@ -572,6 +582,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_task_select_diagnostic_test.sh
 	@echo "=== Running HTTP server concurrent-load gate ==="
 	@WYN=./wyn bash tests/errors/run_http_server_load_test.sh
+	@echo "=== Running test-port hygiene gate (no test may bind a fixed port) ==="
+	@WYN=./wyn bash tests/errors/run_test_port_hygiene_test.sh
 	@echo "=== Running v1.21 ACCEPTANCE gate (PLAN_v1.21 §10) ==="
 	@# The release's own exit criterion: ONE realistic CLI tool that reads stdin,
 	@# parses JSON, formats numbers, propagates errors across DIFFERENT Result
@@ -944,7 +956,10 @@ ASAN_TESTS = tests/expect/test_string_utf8.wyn \
              tests/regression/test_await_all_float_results.wyn \
              tests/regression/test_await_all_struct_results.wyn \
              tests/regression/test_retain_on_return.wyn \
-             tests/regression/test_rc_stage2_reconcile.wyn
+             tests/regression/test_rc_stage2_reconcile.wyn \
+             tests/regression/test_json_escaping.wyn \
+             tests/regression/test_json_multiple_docs.wyn \
+             tests/regression/test_json_parse_malformed.wyn
 
 asan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_asan.a $(MBEDTLS_LIB)
 	@echo "=== ASan runtime test (representative set) ==="

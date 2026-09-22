@@ -624,6 +624,11 @@ struct Stmt {
         } test_stmt;
         struct {  // Spawn statement
             Expr* call;
+            // Line of the `spawn` keyword. A Stmt carries no location of its own,
+            // and a lambda Expr's token is all-zero (which is why the codegen
+            // registry's complaint reads "lambda at line 0"), so a diagnostic about
+            // a fire-and-forget `spawn (() => ...)` has nothing else to point at.
+            int line;
         } spawn;
         struct {  // Select statement: multiplex over channel receives
             Expr* channels[16];   // channel expression per arm

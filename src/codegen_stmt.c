@@ -1287,7 +1287,7 @@ void codegen_stmt(Stmt* stmt) {
                                 c_type = "WynHashSet*";
                                 break;
                             case TYPE_JSON:
-                                c_type = "WynJson*";
+                                c_type = "long long";   // a Json value is its arena handle
                                 break;
                             case TYPE_STRUCT: {
                                 static char method_struct_buf[256];
@@ -1388,7 +1388,7 @@ void codegen_stmt(Stmt* stmt) {
                             } else if (strcmp(return_type, "void") == 0) {
                                 c_type = "void";
                             } else if (strcmp(return_type, "json") == 0) {
-                                c_type = "WynJson*";
+                                c_type = "long long";   // a Json value is its arena handle
                             } else if (strcmp(return_type, "map") == 0) {
                                 c_type = "WynHashMap*";  // group_by result
                             }

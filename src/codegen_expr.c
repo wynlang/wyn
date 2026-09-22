@@ -3315,13 +3315,28 @@ void codegen_expr(Expr* expr) {
                     emit(")");
                     break;
                 }
-                // arr.sort_by(...): two forms.
-                //   1. key-fn lambda (Python sorted(key=), Kotlin sortedBy):
+                // arr.sort_by(...): two forms, ONE mechanism each.
+                //   1. key fn, ONE parameter (Python sorted(key=), Kotlin sortedBy):
                 //      xs.sort_by((p) => p.age) - monomorphized inline insertion
                 //      sort, key type from the lambda's return type. No void*
                 //      boxing: params/returns keep their native C ABI.
-                //   2. legacy 2-arg comparator fn name: xs.sort_by(cmp) where
-                //      fn cmp(a, b) - kept for back-compat (wyn_array_sort_by).
+                //   2. comparator, TWO parameters (C qsort / JS Array.sort order):
+                //      xs.sort_by((a, b) => b.n - a.n), or a named `fn cmp(a, b)`.
+                //      Monomorphized the same way, for the same reason.
+                //
+                // Form 2 used to be routed to wyn_array_sort_by(WynArray*,
+                // long long(*)(long long, long long)), which compares the int slot
+                // of a WynValue and so could only ever work for an int array - a
+                // struct array was a C type error, i.e. "internal codegen error"
+                // (PLAN_v1.22 V-19). It is now the SAME monomorphized sort as form
+                // 1, so there is one comparator mechanism rather than an int-only
+                // runtime helper plus a broken lambda path. wyn_array_sort_by stays
+                // exported for ABI reasons; nothing in codegen emits it any more.
+                //
+                // Both sorts are STABLE: the shift loop runs only while the key or
+                // comparator says strictly greater, so equal elements keep their
+                // input order. Sorting a report by one column then another depends
+                // on that.
                 if (method.length == 7 && memcmp(method.start, "sort_by", 7) == 0 && expr->method_call.arg_count == 1) {
                     Expr* _kf = expr->method_call.args[0];
                     bool _is_keyfn = _kf->type == EXPR_LAMBDA && _kf->lambda.param_count == 1;
@@ -3384,15 +3399,62 @@ void codegen_expr(Expr* expr) {
                         emit("__sa->data[__j + 1] = __tmp; } *__sa; })");
                         break;
                     }
-                    // Legacy comparator form: sort_by(cmp(a, b))
-                    emit("({ wyn_array_sort_by(&(");
-                    codegen_expr(expr->method_call.object);
-                    emit("), ");
-                    codegen_expr(expr->method_call.args[0]);
-                    emit("); ");
-                    codegen_expr(expr->method_call.object);
-                    emit("; })");
-                    break;
+                    // COMPARATOR form: sort_by((a, b) => ...) or sort_by(named_cmp).
+                    // Same monomorphized stable insertion sort as the key form
+                    // above; the only difference is that the comparator takes two
+                    // elements and its sign decides the order, so DESCENDING is
+                    // expressible (a key fn has no direction - that is why this
+                    // form has to exist and not just be a nicer spelling).
+                    {
+                        Type* _elem_t = object_type->array_type.element_type;
+                        char _ec[128]; const char* _ecp = _elem_t ? codegen_c_type_from_type(_elem_t) : NULL;
+                        snprintf(_ec, sizeof(_ec), "%s", _ecp ? _ecp : "long long");
+                        // The comparator's own RETURN type, not an assumed int: a
+                        // float-field comparator naturally returns the difference
+                        // (`(p, q) => p.price - q.price`), which is a double. A
+                        // hardcoded `long long (*)(...)` would be an incompatible
+                        // function-pointer assignment, i.e. a hard C error on
+                        // clang 16+.
+                        Type* _cret = NULL;
+                        if (_kf->expr_type && _kf->expr_type->kind == TYPE_FUNCTION)
+                            _cret = _kf->expr_type->fn_type.return_type;
+                        char _cc[128]; const char* _ccp = _cret ? codegen_c_type_from_type(_cret) : NULL;
+                        snprintf(_cc, sizeof(_cc), "%s", _ccp ? _ccp : "long long");
+                        bool _elem_is_struct = _elem_t && _elem_t->kind == TYPE_STRUCT;
+                        // A named var sorts in place (like .sort()); any other
+                        // receiver (literal, chain result) is not an lvalue, so
+                        // sort a temp copy and yield it.
+                        bool _sb_lvalue = expr->method_call.object->type == EXPR_IDENT;
+                        if (_sb_lvalue) {
+                            emit("({ WynArray* __sa = &(");
+                            codegen_expr(expr->method_call.object);
+                            emit("); ");
+                        } else {
+                            emit("({ WynArray __sc = ");
+                            codegen_expr(expr->method_call.object);
+                            emit("; WynArray* __sa = &__sc; ");
+                        }
+                        emit("%s (*__cmp)(%s, %s) = ", _cc, _ec, _ec);
+                        codegen_expr(_kf);
+                        emit("; for (int __i = 1; __i < __sa->count; __i++) { WynValue __tmp = __sa->data[__i]; int __j = __i - 1; ");
+                        // The element value carried in a WynValue slot, per kind -
+                        // same slot map the key form uses.
+                        char _cur[256], _key[256];
+                        if (_elem_is_struct) {
+                            snprintf(_cur, sizeof(_cur), "*(%s*)__sa->data[__j].data.struct_val", _ec);
+                            snprintf(_key, sizeof(_key), "*(%s*)__tmp.data.struct_val", _ec);
+                        } else {
+                            const char* _f =
+                                (_elem_t && _elem_t->kind == TYPE_STRING) ? "string_val"
+                                : (_elem_t && _elem_t->kind == TYPE_FLOAT) ? "float_val"
+                                : "int_val";
+                            snprintf(_cur, sizeof(_cur), "__sa->data[__j].data.%s", _f);
+                            snprintf(_key, sizeof(_key), "__tmp.data.%s", _f);
+                        }
+                        emit("while (__j >= 0 && __cmp(%s, %s) > 0) { __sa->data[__j + 1] = __sa->data[__j]; __j--; } ", _cur, _key);
+                        emit("__sa->data[__j + 1] = __tmp; } *__sa; })");
+                        break;
+                    }
                 }
                 // arr.max_by(f) / arr.min_by(f): element with the largest /
                 // smallest key (Kotlin maxBy, Rust max_by_key). Monomorphized

@@ -232,6 +232,51 @@ static bool had_error = false;
 static Type* current_function_return_type = NULL;
 static Type* current_self_type = NULL; // receiver type for extension methods
 
+// `spawn` on a closure: reject it, here, rather than let it return 0.
+//
+//     var n = 5
+//     g = (() => n * 2)
+//     print(g())               // 10 - the closure itself is fine
+//     f = spawn (() => n * 2)
+//     print(await f)           // 0  - check clean, build clean, exit 0, WRONG
+//
+// The worst class of bug there is: nothing anywhere told the programmer. `spawn`
+// hands the scheduler a function POINTER, and a closure's captured environment is
+// not carried across the task boundary, so the task reads zeroes.
+//
+// Deliberately NOT conditional on captured_count: measured on dev, a
+// non-capturing `spawn (() => 42)` returns 0 as well, and so does the
+// immediately-invoked `spawn (() => n * 2)()`, whose target is a CALL whose callee
+// is the lambda. The fire-and-forget statement form died with
+// "Internal codegen error: lambda at line 0 was never registered" - loud, but no
+// more use to the reader - and now gets this message too.
+//
+// Making closures genuinely spawnable is a larger piece (the captured env has to
+// be boxed and refcounted across the boundary) and is out of scope for v1.22 per
+// internal-docs/PLAN_v1.22.md §5. This is the clean error and the workaround.
+//
+// One function, called from BOTH spawn forms (the EXPR_SPAWN expression and the
+// STMT_SPAWN statement), because the same rule emitted twice is how the two
+// spellings of a construct come to disagree.
+static bool reject_spawned_closure(Expr* target, int line) {
+    if (!target) return false;
+    bool is_closure = target->type == EXPR_LAMBDA ||
+                      (target->type == EXPR_CALL && target->call.callee &&
+                       target->call.callee->type == EXPR_LAMBDA);
+    if (!is_closure) return false;
+    fprintf(stderr, "\nError at line %d: `spawn` cannot run a closure\n", line);
+    show_source_line(line);
+    fprintf(stderr,
+        "  \033[34mHelp:\033[0m spawn needs a function pointer, and a closure's captured\n"
+        "        variables are not carried across the task boundary - the task reads\n"
+        "        zeroes, which is why this used to build and then answer 0. Pass the\n"
+        "        captured values as parameters to a named function and spawn that:\n"
+        "          \033[1mfn work(n: int) -> int { return n * 2 }\033[0m\n"
+        "          \033[1mf = spawn work(n)\033[0m\n");
+    had_error = true;
+    return true;
+}
+
 // Module visibility tracking
 static char current_module_name[256] = "";
 
@@ -1117,11 +1162,31 @@ static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
 }
 
 
+// A Json value IS a `long long` handle: an index into the runtime's node arena.
+// codegen lowers TYPE_JSON to `long long` (codegen_stmt.c, wyn_collection_c_type),
+// so json and int are ONE representation with two spellings, exactly as enum and int
+// are. Json.parse carries the named type - that is what gives `doc.get_string(k)` a
+// receiver to dispatch on, which used to emit nothing at all - and this pair of
+// predicates is what keeps every program that holds a handle in a plain `int`
+// checking exactly as before.
+//
+// Stated ONCE and used at all four sites that must know: call-argument
+// compatibility, overload conversion, comparison families, assignment. bool, enum
+// and channel each restate the same idea inline at a DIFFERENT subset of those sites
+// (which is why a channel still cannot be compared to an int); folding all of them
+// behind one predicate is logged, not done in a JSON change.
+static bool type_is_int_handle(const Type* t) {
+    return t && (t->kind == TYPE_INT || t->kind == TYPE_JSON);
+}
+static bool json_int_alias(const Type* a, const Type* b) {
+    return a && b && a->kind != b->kind && type_is_int_handle(a) && type_is_int_handle(b);
+}
+
 static bool wyn_is_type_compatible(Type* expected, Type* actual) {
     if (!expected || !actual) {
         return false;
     }
-    
+
     // Exact type match
     if (expected->kind == actual->kind) {
         return true;
@@ -1185,6 +1250,11 @@ static bool wyn_is_type_compatible(Type* expected, Type* actual) {
     // through int-typed function params - e.g. fn produce(ch: int, ...)).
     if ((expected->kind == TYPE_CHANNEL && actual->kind == TYPE_INT) ||
         (expected->kind == TYPE_INT && actual->kind == TYPE_CHANNEL)) {
+        return true;
+    }
+
+    // Allow json <-> int, for exactly the channel reason above - see json_int_alias.
+    if (json_int_alias(expected, actual)) {
         return true;
     }
 
@@ -1990,7 +2060,10 @@ static bool can_convert_type(Type* from, Type* to) {
     // Allow enum <-> int (enums are represented as ints)
     if ((from->kind == TYPE_ENUM && to->kind == TYPE_INT) ||
         (from->kind == TYPE_INT && to->kind == TYPE_ENUM)) return true;
-    
+
+    // Allow json <-> int, for the same reason - see json_int_alias.
+    if (json_int_alias(from, to)) return true;
+
     return false;
 }
 
@@ -2488,9 +2561,12 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 //   - generic type params (T): unknown, stay permissive so
                 //     `a == b` inside a generic fn still checks
                 // struct == struct and struct ordering are handled above.
-                bool left_num  = left->kind == TYPE_INT || left->kind == TYPE_FLOAT ||
+                // type_is_int_handle covers int AND json: a Json value is an arena
+                // index, so `a == b` on two handles (do these documents alias?) and
+                // `h > 500` are the same C comparison an int gets.
+                bool left_num  = type_is_int_handle(left) || left->kind == TYPE_FLOAT ||
                                  left->kind == TYPE_BOOL || left->kind == TYPE_ENUM;
-                bool right_num = right->kind == TYPE_INT || right->kind == TYPE_FLOAT ||
+                bool right_num = type_is_int_handle(right) || right->kind == TYPE_FLOAT ||
                                  right->kind == TYPE_BOOL || right->kind == TYPE_ENUM;
                 bool types_compatible =
                     (left_num && right_num) ||
@@ -3575,24 +3651,34 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // of the int default that S2 patched after the fact.
             // The week-one key-fn methods (sort_by/max_by/min_by/group_by) take
             // the same element-typed single-param lambda, so they share the seed.
+            // sort_by ALSO takes a two-parameter COMPARATOR lambda
+            // (`xs.sort_by((a, b) => b.n - a.n)`), and BOTH of its parameters are
+            // the element type. The seed used to require param_count == 1, so the
+            // comparator's parameters fell back to the `int` default and every
+            // field access on them died in the C compiler ("member reference base
+            // type 'long long' is not a structure or union") - reported as a bare
+            // "internal codegen error". PLAN_v1.22 V-19.
             if (object_type && object_type->kind == TYPE_ARRAY &&
                 object_type->array_type.element_type &&
                 expr->method_call.arg_count == 1 &&
-                expr->method_call.args[0]->type == EXPR_LAMBDA &&
-                expr->method_call.args[0]->lambda.param_count == 1 &&
-                ((expr->method_call.method.length == 3 &&
-                  memcmp(expr->method_call.method.start, "map", 3) == 0) ||
-                 (expr->method_call.method.length == 6 &&
-                  memcmp(expr->method_call.method.start, "filter", 6) == 0) ||
-                 (expr->method_call.method.length == 7 &&
-                  memcmp(expr->method_call.method.start, "sort_by", 7) == 0) ||
-                 (expr->method_call.method.length == 6 &&
-                  memcmp(expr->method_call.method.start, "max_by", 6) == 0) ||
-                 (expr->method_call.method.length == 6 &&
-                  memcmp(expr->method_call.method.start, "min_by", 6) == 0) ||
-                 (expr->method_call.method.length == 8 &&
-                  memcmp(expr->method_call.method.start, "group_by", 8) == 0))) {
-                lambda_ctx_param_seed = object_type->array_type.element_type;
+                expr->method_call.args[0]->type == EXPR_LAMBDA) {
+                int _pc = expr->method_call.args[0]->lambda.param_count;
+                bool _is_sort_by = (expr->method_call.method.length == 7 &&
+                                    memcmp(expr->method_call.method.start, "sort_by", 7) == 0);
+                bool _one_param_elem_fn = _pc == 1 &&
+                    (_is_sort_by ||
+                     (expr->method_call.method.length == 3 &&
+                      memcmp(expr->method_call.method.start, "map", 3) == 0) ||
+                     (expr->method_call.method.length == 6 &&
+                      memcmp(expr->method_call.method.start, "filter", 6) == 0) ||
+                     (expr->method_call.method.length == 6 &&
+                      memcmp(expr->method_call.method.start, "max_by", 6) == 0) ||
+                     (expr->method_call.method.length == 6 &&
+                      memcmp(expr->method_call.method.start, "min_by", 6) == 0) ||
+                     (expr->method_call.method.length == 8 &&
+                      memcmp(expr->method_call.method.start, "group_by", 8) == 0));
+                if (_one_param_elem_fn || (_pc == 2 && _is_sort_by))
+                    lambda_ctx_param_seed = object_type->array_type.element_type;
             }
             for (int i = 0; i < expr->method_call.arg_count; i++) {
                 check_expr(expr->method_call.args[i], scope);
@@ -4330,6 +4416,21 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     } else if (strcmp(return_type_str, "bool") == 0) {
                         expr->expr_type = builtin_bool;
                         return builtin_bool;
+                    } else if (return_type_str[0] >= 'A' && return_type_str[0] <= 'Z') {
+                        // A NAMED type in the signature table (ResultInt,
+                        // ResultFloat, …): resolve it from the global scope,
+                        // where checker_builtins registered the family. One rule
+                        // for every builtin-struct-returning method instead of a
+                        // per-name branch that the next one has to remember to
+                        // add. Falls through to the generic paths if the name is
+                        // not registered, rather than inventing a type.
+                        Token named = {TOKEN_IDENT, return_type_str,
+                                       (int)strlen(return_type_str), method.line};
+                        Symbol* ns = find_symbol(global_scope, named);
+                        if (ns && ns->type) {
+                            expr->expr_type = ns->type;
+                            return ns->type;
+                        }
                     } else if (strcmp(return_type_str, "array") == 0) {
                         // Check if this is a method that returns string array
                         if (object_type && object_type->kind == TYPE_STRING) {
@@ -4783,7 +4884,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     }
                 }
                 if (sym_inner->kind != val_inner->kind &&
-                    sym_inner->kind != TYPE_STRUCT) {
+                    sym_inner->kind != TYPE_STRUCT &&
+                    // json and int are one representation - see json_int_alias. An
+                    // `int`-declared variable holding a Json.parse handle (or the
+                    // reverse) is the long-standing spelling and stays legal.
+                    !json_int_alias(sym_inner, val_inner)) {
                     fprintf(stderr, "\033[31m\033[1mError:\033[0m Type mismatch in assignment to '%.*s' (line %d)\n",
                             expr->assign.name.length, expr->assign.name.start, expr->assign.name.line);
                     fprintf(stderr, "  \033[1mExpected:\033[0m %s\n", type_to_string(sym_inner));
@@ -4874,6 +4979,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return builtin_int;
         case EXPR_SPAWN:
             if (expr->spawn.call) {
+                reject_spawned_closure(expr->spawn.call, expr->token.line);
                 Type* call_type = check_expr(expr->spawn.call, scope);
                 // The spawn returns a future wrapping the call's return type
                 // Store the inner type for await to use
@@ -6321,7 +6427,10 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             // array_get_int regardless of element type (string elements arrived
             // as NULL, float elements truncated) - and never marked the arg
             // identifiers used, so the arrays were falsely warned "unused".
-            if (stmt->spawn.call) check_expr(stmt->spawn.call, scope);
+            if (stmt->spawn.call) {
+                reject_spawned_closure(stmt->spawn.call, stmt->spawn.line);
+                check_expr(stmt->spawn.call, scope);
+            }
             break;
         case STMT_RETURN:
             if (stmt->ret.value) {
@@ -9502,6 +9611,7 @@ bool types_equal(Type* a, Type* b) {
         case TYPE_MAP:
         case TYPE_OPTIONAL:
         case TYPE_UNION:
+        case TYPE_JSON:
             // For now, just compare kinds - more detailed comparison can be added later
             return true;
         default:
@@ -9525,6 +9635,11 @@ const char* type_to_string(Type* type) {
         case TYPE_MAP: return "map";
         case TYPE_OPTIONAL: return "optional";
         case TYPE_UNION: return "union";
+        // Without this a Json argument mismatch read "Expected: unknown (unknown)",
+        // which names nothing the programmer wrote. (TYPE_SET and TYPE_CHANNEL are
+        // still missing here; same one-line shape, logged rather than fixed in a
+        // JSON change.)
+        case TYPE_JSON: return "json";
         default: return "unknown";
     }
 }

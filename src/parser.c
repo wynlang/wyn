@@ -440,6 +440,11 @@ static Expr* primary() {
     if (match(TOKEN_SPAWN)) {
         Expr* expr = alloc_expr();
         expr->type = EXPR_SPAWN;
+        // Keep the `spawn` keyword token, the same way EXPR_CHANNEL keeps its own:
+        // the checker rejects `spawn <closure>` and the spawned expression may be a
+        // lambda, whose token is all-zero, so without this the diagnostic has no
+        // line to report.
+        expr->token = parser.previous;
         expr->spawn.call = call();  // Parse call expression
         return expr;
     }
@@ -2438,6 +2443,7 @@ static Stmt* statement_impl() {
     if (match(TOKEN_SPAWN)) {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_SPAWN;
+        stmt->spawn.line = parser.previous.line;
         stmt->spawn.call = expression();
         match(TOKEN_SEMI);
         return stmt;

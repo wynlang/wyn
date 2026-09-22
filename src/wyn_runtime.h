@@ -319,13 +319,17 @@ char* wyn_string_reverse(const char* str);
 char* wyn_string_pad_left(const char* str, int width, const char* pad_char);
 char* wyn_string_pad_right(const char* str, int width, const char* pad_char);
 
-// Json module - simple key-value JSON using parallel arrays
-// Implementation in json.c, declarations in json.h
-#include "json.h"
-WynJson* json_new();
-void json_set_string(WynJson* json, const char* key, const char* value);
-void json_set_int(WynJson* json, const char* key, int value);
-char* json_stringify(WynJson* json);
+// Json module - ONE object model, defined in the "=== JSON Parsing ===" section
+// further down this file: a node arena (json_nodes[]) addressed by a `long long`
+// handle. Every Wyn-visible spelling lowers to it.
+//
+// There used to be a SECOND model here: src/json.c's `WynJson*` struct holding a
+// flat pairs[] array, which `Json.new`/`Json.set_*`/`Json.stringify` used while
+// `Json.parse`/`Json.get_*` used the arena. The checker could not tell them apart
+// (both are TYPE_JSON), so `Json.stringify(Json.parse(s))` handed an integer index
+// to a function that dereferenced it as a pointer and the process died of SIGSEGV;
+// anything built with `Json.new()` could not be read back; and the pairs model
+// could not represent nesting, floats, bools or null at all. It is gone.
 
 // Regex module - portable regex
 //
@@ -3015,23 +3019,54 @@ char* str_center(const char* s, int width) { int len = strlen(s); if(len >= widt
 char** str_lines(const char* s) { char** lines = wyn_malloc(sizeof(char*)); lines[0] = wyn_malloc(strlen(s) + 1); strcpy(lines[0], s); return lines; }
 char** str_words(const char* s) { char** words = wyn_malloc(sizeof(char*)); words[0] = wyn_malloc(strlen(s) + 1); strcpy(words[0], s); return words; }
 void str_free(char* s) { if(s) free(s); }
-// Fatal-by-default parse (Python int() raises ValueError; Go strconv returns
-// an error). Garbage ("abc"), trailing junk ("12x"), empty, and overflow all
-// panic with the offending value - silently returning 0 hid all four.
-// WYN_LENIENT=1 restores the old return-0 behavior.
-long long str_parse_int(const char* s) {
+// THE string->int acceptance rule, in one place.
+//
+// `to_int` (str_parse_int) panics on rejection and `to_int_checked`
+// (str_to_int_checked) returns an Err, but they MUST accept exactly the same
+// strings, or `is_int()` and the predicate/parse pairing become two rules that
+// drift. Both call this; neither re-implements it, and the message text lives in
+// the two macros below so the panic and the Err payload cannot say different
+// things about the same input.
+//
+// Returns WYN_PARSE_OK / _BAD / _OVERFLOW. On OK, *out holds the value.
+#define WYN_PARSE_OK        0
+#define WYN_PARSE_BAD       1
+#define WYN_PARSE_OVERFLOW  2
+#define WYN_PARSE_INT_BAD_FMT  "to_int parse error: \"%s\" is not a valid integer"
+#define WYN_PARSE_INT_OVF_FMT  "to_int overflow: \"%s\" does not fit in a 64-bit int"
+#define WYN_PARSE_FLOAT_BAD_FMT "to_float parse error: \"%s\" is not a valid number"
+int wyn_parse_int_core(const char* s, long long* out) {
     const char* raw = s ? s : "";
     char* end;
     errno = 0;
     long long val = strtoll(raw, &end, 10);
-    if (errno == ERANGE) {
-        fprintf(stderr, "panic: to_int overflow: \"%s\" does not fit in a 64-bit int\n", raw);
-        if (!wyn_lenient_mode()) exit(1);
-        return 0;
-    }
+    if (errno == ERANGE) return WYN_PARSE_OVERFLOW;
+    // "Did strtoll consume anything?" MUST be asked before trailing blanks are
+    // skipped. Asking after let a whitespace-only string through: strtoll leaves
+    // end AT the start having read no digits, the skip loop then walks end to the
+    // NUL, and `end == raw` is no longer true - so `"   ".to_int()` returned 0 at
+    // exit 0, the silent wrong answer this parse exists to prevent. (`""` was
+    // rejected correctly, which is why it was never noticed.)
+    if (end == raw) return WYN_PARSE_BAD;
     while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') end++;
-    if (end == raw || *end != '\0') {
-        fprintf(stderr, "panic: to_int parse error: \"%s\" is not a valid integer\n", raw);
+    if (*end != '\0') return WYN_PARSE_BAD;
+    if (out) *out = val;
+    return WYN_PARSE_OK;
+}
+// Fatal-by-default parse (Python int() raises ValueError; Go strconv returns
+// an error). Garbage ("abc"), trailing junk ("12x"), empty, and overflow all
+// panic with the offending value - silently returning 0 hid all four.
+// WYN_LENIENT=1 restores the old return-0 behavior.
+// The catchable sibling is `.to_int_checked()` -> Result<int, string>.
+long long str_parse_int(const char* s) {
+    const char* raw = s ? s : "";
+    long long val = 0;
+    int st = wyn_parse_int_core(raw, &val);
+    if (st != WYN_PARSE_OK) {
+        fprintf(stderr, "panic: ");
+        fprintf(stderr, st == WYN_PARSE_OVERFLOW ? WYN_PARSE_INT_OVF_FMT
+                                                 : WYN_PARSE_INT_BAD_FMT, raw);
+        fprintf(stderr, "\n");
         if (!wyn_lenient_mode()) exit(1);
         return 0;
     }
@@ -3047,16 +3082,33 @@ extern void hashmap_insert_string(WynHashMap* map, const char* key, const char* 
 int str_parse_int_failed(int result) {
     return result == 0;
 }
-// Same fatal-by-default posture as str_parse_int (used by .to_float()).
-// strtod handles inf/nan/scientific; garbage and trailing junk panic.
-double str_parse_float(const char* s) {
+// THE string->float acceptance rule, shared by `to_float` (panics) and
+// `to_float_checked` (Err) for the same reason as the int pair above.
+// strtod's acceptance set is inherited verbatim, which includes scientific
+// notation, "inf"/"nan" AND C99 hex ("0x10" -> 16.0). Both entry points accept
+// exactly that set; tests/errors/run_parse_checked_test.sh asserts it so the
+// two can never diverge.
+int wyn_parse_float_core(const char* s, double* out) {
     const char* raw = s ? s : "";
     char* end;
     errno = 0;
     double val = strtod(raw, &end);
+    if (end == raw) return WYN_PARSE_BAD;   // same ordering trap as the int core
     while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') end++;
-    if (end == raw || *end != '\0') {
-        fprintf(stderr, "panic: to_float parse error: \"%s\" is not a valid number\n", raw);
+    if (*end != '\0') return WYN_PARSE_BAD;
+    if (out) *out = val;
+    return WYN_PARSE_OK;
+}
+// Same fatal-by-default posture as str_parse_int (used by .to_float()).
+// strtod handles inf/nan/scientific; garbage and trailing junk panic.
+// The catchable sibling is `.to_float_checked()` -> Result<float, string>.
+double str_parse_float(const char* s) {
+    const char* raw = s ? s : "";
+    double val = 0.0;
+    if (wyn_parse_float_core(raw, &val) != WYN_PARSE_OK) {
+        fprintf(stderr, "panic: ");
+        fprintf(stderr, WYN_PARSE_FLOAT_BAD_FMT, raw);
+        fprintf(stderr, "\n");
         if (!wyn_lenient_mode()) exit(1);
         return 0.0;
     }
@@ -3912,13 +3964,11 @@ void wyn_array_sort_by(WynArray* arr, long long (*cmp)(long long, long long)) {
 // HashSet namespace: HashSet.new() -> hashset_new()
 WynHashSet* HashSet_new() { return hashset_new(); }
 
-// Json namespace: Json.new() -> Json_new(), j.set_string() -> json_set_string()
-// Note: Json_get_string/Json_get_int defined in json_runtime.c
-WynJson* Json_new() { return json_new(); }
-void Json_set(WynJson* j, const char* k, const char* v) { json_set_string(j, k, v); }
-void Json_set_string(WynJson* j, const char* k, const char* v) { json_set_string(j, k, v); }
-void Json_set_int(WynJson* j, const char* k, int v) { json_set_int(j, k, v); }
-void Json_set_bool(WynJson* j, const char* k, int v) { json_set_int(j, k, v ? 1 : 0); }char* Json_stringify(WynJson* j) { return json_stringify(j); }
+// Json namespace: Json_new / Json_set_* / Json_stringify live with the rest of the
+// Json module in the "=== JSON Parsing ===" section below, because they write into
+// the same json_nodes[] arena the reader walks. They used to sit HERE, operating on
+// a different (WynJson*) representation - which is exactly why what you built could
+// not be read back.
 
 // Terminal module: POSIX terminal control
 #ifdef _WIN32
@@ -4883,14 +4933,19 @@ int bit_count(int x) { int c = 0; while(x) { c += x & 1; x >>= 1; } return c; }
 // ARC functions are provided by arc_runtime.c
 
 // Result type implementations
-typedef struct { int tag; union { int ok_value; const char* err_value; } data; } ResultInt;
+// The Ok payload is `long long`, NOT `int`: Wyn's `int` IS a 64-bit long long
+// everywhere else, so a 32-bit slot here silently truncated every Ok above 2^31
+// (`Ok(3000000000)` unwrapped to -1294967296 at exit 0). A string->int parse
+// that returns Result must be able to carry every value the non-Result parse
+// can, or the safe path is the wrong-answer path.
+typedef struct { int tag; union { long long ok_value; const char* err_value; } data; } ResultInt;
 typedef struct { int tag; union { const char* ok_value; const char* err_value; } data; } ResultString;
 
-ResultInt ResultInt_Ok(int value) { ResultInt r; r.tag = 0; r.data.ok_value = value; return r; }
+ResultInt ResultInt_Ok(long long value) { ResultInt r; r.tag = 0; r.data.ok_value = value; return r; }
 ResultInt ResultInt_Err(const char* msg) { ResultInt r; r.tag = 1; r.data.err_value = msg; return r; }
 bool ResultInt_is_ok(ResultInt r) { return r.tag == 0; }
 bool ResultInt_is_err(ResultInt r) { return r.tag == 1; }
-int ResultInt_unwrap(ResultInt r) { if (r.tag == 1) { fprintf(stderr, "Error: unwrap() called on Err: %s\n", r.data.err_value); exit(1); } return r.data.ok_value; }
+long long ResultInt_unwrap(ResultInt r) { if (r.tag == 1) { fprintf(stderr, "Error: unwrap() called on Err: %s\n", r.data.err_value); exit(1); } return r.data.ok_value; }
 const char* ResultInt_unwrap_err(ResultInt r) { if (r.tag == 0) { fprintf(stderr, "Error: unwrap_err() called on Ok\n"); exit(1); } return r.data.err_value; }
 long long ResultInt_unwrap_or(ResultInt r, long long def) { return r.tag == 0 ? r.data.ok_value : def; }
 // ResultInt_to_string lives with the other seven renderers further down - see
@@ -4955,6 +5010,41 @@ bool ResultBool_is_err(ResultBool r) { return r.tag == 1; }
 bool ResultBool_unwrap(ResultBool r) { if (r.tag == 1) { fprintf(stderr, "Error: unwrap() called on Err: %s\n", r.data.err_value); exit(1); } return r.data.ok_value; }
 const char* ResultBool_unwrap_err(ResultBool r) { if (r.tag == 0) { fprintf(stderr, "Error: unwrap_err() called on Ok\n"); exit(1); } return r.data.err_value; }
 bool ResultBool_unwrap_or(ResultBool r, bool def) { return r.tag == 0 ? r.data.ok_value : def; }
+
+// ---------------------------------------------------------------------------
+// The CATCHABLE half of string->number (PLAN_v1.22 V-18).
+//
+//   s.to_int_checked()   -> Result<int, string>
+//   s.to_float_checked() -> Result<float, string>
+//   s.is_int()           -> bool, defined AS to_int_checked().is_ok()
+//
+// Before these, `"notanumber".to_int()` aborted the process with no line number
+// and nothing to catch, so no Wyn CLI could read untrusted input. The
+// acceptance rule and the message text are the SAME ones the panicking parse
+// uses (wyn_parse_int_core / the WYN_PARSE_*_FMT macros above) - deliberately,
+// because a second copy of "what counts as a number" is how a predicate ends up
+// disagreeing with the parse it is supposed to describe.
+//
+// is_int() is here rather than next to is_numeric() for the same reason: it is
+// not a new hand-written character test, it is the parse. (is_numeric() keeps
+// its own, looser "looks like a decimal number" meaning - "1.5".is_numeric() is
+// true because 1.5 IS a number, while "1.5".is_int() is false.)
+char* wyn_rc_sprintf(const char* fmt, ...);   // defined with the Result renderers below
+ResultInt str_to_int_checked(const char* s) {
+    const char* raw = s ? s : "";
+    long long val = 0;
+    int st = wyn_parse_int_core(raw, &val);
+    if (st == WYN_PARSE_OK) return ResultInt_Ok(val);
+    return ResultInt_Err(wyn_rc_sprintf(st == WYN_PARSE_OVERFLOW ? WYN_PARSE_INT_OVF_FMT
+                                                                 : WYN_PARSE_INT_BAD_FMT, raw));
+}
+ResultFloat str_to_float_checked(const char* s) {
+    const char* raw = s ? s : "";
+    double val = 0.0;
+    if (wyn_parse_float_core(raw, &val) == WYN_PARSE_OK) return ResultFloat_Ok(val);
+    return ResultFloat_Err(wyn_rc_sprintf(WYN_PARSE_FLOAT_BAD_FMT, raw));
+}
+bool str_is_int(const char* s) { return wyn_parse_int_core(s ? s : "", NULL) == WYN_PARSE_OK; }
 
 // ---------------------------------------------------------------------------
 // Option / Result rendering.
@@ -5694,6 +5784,15 @@ static JsonNode* json_nodes = NULL;
 static int json_node_count = 0;
 static int json_node_cap = 0;
 
+// Set by any malformed construct the parser meets. Json_parse reads it and returns
+// -1, which is the ONLY way a caller can learn that a parse failed: the handle is an
+// arena index, so 0 is a perfectly good document (it is the first one a program
+// parses) and there is no in-band value left to mean "error". Before this the parse
+// of garbage returned whatever the counter happened to be -- 0 for the first parse --
+// so `if j == 0` was wrong in both directions: it rejected the first valid document
+// and accepted every failure after it.
+static int json_parse_failed = 0;
+
 static int json_alloc_node() {
     if (json_node_count >= json_node_cap) {
         int ncap = json_node_cap ? json_node_cap * 2 : 256;
@@ -5711,7 +5810,7 @@ static const char* json_skip_ws(const char* p) { while (*p == ' ' || *p == '\t' 
 static const char* json_parse_value(const char* p, int parent);
 
 static const char* json_parse_string_raw(const char* p, char** out) {
-    if (*p != '"') return p;
+    if (*p != '"') { json_parse_failed = 1; return p; }
     p++;
     const char* start = p;
     while (*p && *p != '"') { if (*p == '\\') p++; p++; }
@@ -5771,7 +5870,7 @@ static const char* json_parse_string_raw(const char* p, char** out) {
     }
     dst[w] = 0;
     *out = dst;
-    if (*p == '"') p++;
+    if (*p == '"') p++; else json_parse_failed = 1;   // unterminated string
     return p;
 }
 
@@ -5799,9 +5898,11 @@ static const char* json_parse_value(const char* p, int parent) {
             const char* iter_start = p;
             p = json_skip_ws(p);
             char* key = NULL;
+            if (*p != '"') { json_parse_failed = 1; break; }
             p = json_parse_string_raw(p, &key);
             p = json_skip_ws(p);
-            if (*p == ':') p++;
+            if (*p != ':') { json_parse_failed = 1; break; }
+            p++;
             int before = json_node_count;
             p = json_parse_value(p, node);
             if (before < json_node_count) {
@@ -5811,10 +5912,17 @@ static const char* json_parse_value(const char* p, int parent) {
                 last_child = before;
             }
             p = json_skip_ws(p);
-            if (*p == ',') p++;
-            if (p == iter_start) break;
+            // After a member, exactly one of ',' (another member must follow) or '}'
+            // is legal. Accepting anything else is what let `{"a":1} trailing` and
+            // `{"a":1,}` look like documents.
+            if (*p == ',') {
+                p++;
+                p = json_skip_ws(p);
+                if (*p == '}') { json_parse_failed = 1; break; }
+            } else if (*p != '}') { json_parse_failed = 1; break; }
+            if (p == iter_start) { json_parse_failed = 1; break; }
         }
-        if (*p == '}') p++;
+        if (*p == '}') p++; else json_parse_failed = 1;
     } else if (*p == '[') {
         json_nodes[node].type = 'a';
         p++;
@@ -5831,14 +5939,31 @@ static const char* json_parse_value(const char* p, int parent) {
                 last_child = before;
             }
             p = json_skip_ws(p);
-            if (*p == ',') p++;
-            if (p == iter_start) break;
+            if (*p == ',') {
+                p++;
+                p = json_skip_ws(p);
+                if (*p == ']') { json_parse_failed = 1; break; }
+            } else if (*p != ']') { json_parse_failed = 1; break; }
+            if (p == iter_start) { json_parse_failed = 1; break; }
         }
-        if (*p == ']') p++;
-    } else if (*p == 't') { json_nodes[node].type = 'b'; json_nodes[node].num_val = 1; p += 4; }
-    else if (*p == 'f') { json_nodes[node].type = 'b'; json_nodes[node].num_val = 0; p += 5; }
-    else if (*p == 'n') { json_nodes[node].type = 'x'; p += 4; }
-    else { json_nodes[node].type = 'n'; json_nodes[node].num_val = strtod(p, (char**)&p); }
+        if (*p == ']') p++; else json_parse_failed = 1;
+    }
+    // The three literals must match EXACTLY. `*p == 't'` accepted anything starting
+    // with t, so `{"a":tru}` parsed as the boolean true and `not json at all` parsed
+    // as null followed by (previously ignored) trailing bytes.
+    else if (strncmp(p, "true", 4) == 0)  { json_nodes[node].type = 'b'; json_nodes[node].num_val = 1; p += 4; }
+    else if (strncmp(p, "false", 5) == 0) { json_nodes[node].type = 'b'; json_nodes[node].num_val = 0; p += 5; }
+    else if (strncmp(p, "null", 4) == 0)  { json_nodes[node].type = 'x'; p += 4; }
+    else {
+        // A number, or nothing we recognise. strtod not advancing is the signal;
+        // the old code took its 0.0 and called the result a number.
+        char* endp = NULL;
+        double d = strtod(p, &endp);
+        if (!endp || endp == p) { json_nodes[node].type = 'x'; json_parse_failed = 1; return p; }
+        json_nodes[node].type = 'n';
+        json_nodes[node].num_val = d;
+        p = endp;
+    }
     return p;
 }
 
@@ -5846,9 +5971,40 @@ long long Json_parse(const char* text) {
     // The root is wherever this document STARTS in the shared arena -- not always 0. It was
     // `json_node_count = 0; ...; return 0;`, which threw away every previously parsed
     // document and handed back a handle that aliased it.
+    //
+    // Returns -1, never a valid index, when the text is not JSON. Use Json_is_valid()
+    // (Wyn: `Json.is_valid(j)`) to test it; comparing against 0 is wrong, because 0 is
+    // the handle of the FIRST document a program parses.
     int root = json_node_count;
-    json_parse_value(text, -1);
+    json_parse_failed = 0;
+    if (!text) return -1;
+    const char* end = json_skip_ws(text);
+    if (!*end) {
+        json_parse_failed = 1;   // empty / whitespace-only input is not a document
+    } else {
+        end = json_parse_value(text, -1);
+        end = json_skip_ws(end);
+        if (*end) json_parse_failed = 1;   // trailing content after the top-level value
+    }
+    if (json_parse_failed) {
+        // Roll the arena back to where this document started and release its strings.
+        // Nothing can hold a handle into a failed parse (we return -1), and NOT doing
+        // this would let a stream of malformed bodies grow the arena without bound --
+        // the same untrusted-input surface #293 closed for the spin loop.
+        for (int i = root; i < json_node_count; i++) {
+            if (json_nodes[i].key) free(json_nodes[i].key);
+            if (json_nodes[i].str_val) free(json_nodes[i].str_val);
+        }
+        json_node_count = root;
+        return -1;
+    }
     return root;
+}
+
+// Is this handle a document? Handles are arena indices, so 0 is valid and -1 is the
+// single failure value Json_parse returns.
+long long Json_is_valid(long long handle) {
+    return (handle >= 0 && handle < json_node_count) ? 1 : 0;
 }
 
 static int json_find_child(int parent, const char* key) {
@@ -5934,6 +6090,229 @@ WynArray Json_keys(long long root) {
     }
     return arr;
 }
+
+// === JSON writers: the SAME arena the readers walk =========================
+//
+// This is the half that used to be a second object model (src/json.c's WynJson*
+// pairs[] array). Because the writers wrote there and the readers read here,
+// `Json.new(); Json.set_string(j,"k","v"); Json.get_string(j,"k")` returned "" and
+// `Json.keys(j)` returned nothing -- and mixing a handle with a WynJson* segfaulted.
+// Writing into the arena removes both, and gives the writers the types the pairs
+// model never had: floats, real booleans, null, nesting.
+
+// Keys and string values in the arena are plain malloc'd (json_parse_string_raw uses
+// wyn_malloc), so writer-allocated ones must match or Json_parse's rollback free()s
+// the wrong kind of pointer.
+static char* json_dup_cstr(const char* s) {
+    if (!s) s = "";
+    size_t n = strlen(s) + 1;
+    char* d = (char*)wyn_malloc(n);
+    memcpy(d, s, n);
+    return d;
+}
+
+// The value node for `key` on object `obj`, created and appended if absent.
+// Returns -1 if the handle is not a live object. REPLACES an existing key rather
+// than appending a second pair with the same name, which the pairs writer did.
+static int json_member_slot(long long obj, const char* key) {
+    int o = (int)obj;
+    if (o < 0 || o >= json_node_count || json_nodes[o].type != 'o') return -1;
+    int existing = json_find_child(o, key);
+    if (existing >= 0) {
+        if (json_nodes[existing].str_val) { free(json_nodes[existing].str_val); json_nodes[existing].str_val = NULL; }
+        json_nodes[existing].num_val = 0;
+        json_nodes[existing].first_child = -1;
+        return existing;
+    }
+    // json_alloc_node() may realloc json_nodes, so it must run BEFORE anything
+    // indexes the object again - never cache a JsonNode* across it.
+    int n = json_alloc_node();
+    json_nodes[n].parent = o;
+    json_nodes[n].key = json_dup_cstr(key);
+    int c = json_nodes[o].first_child;
+    if (c < 0) {
+        json_nodes[o].first_child = n;
+    } else {
+        while (json_nodes[c].next_sibling >= 0) c = json_nodes[c].next_sibling;
+        json_nodes[c].next_sibling = n;
+    }
+    return n;
+}
+
+long long Json_new(void) {
+    int n = json_alloc_node();
+    json_nodes[n].type = 'o';
+    return n;
+}
+
+void Json_set_string(long long j, const char* key, const char* val) {
+    int n = json_member_slot(j, key);
+    if (n < 0) return;
+    json_nodes[n].type = 's';
+    json_nodes[n].str_val = json_dup_cstr(val);
+}
+
+void Json_set_int(long long j, const char* key, long long val) {
+    int n = json_member_slot(j, key);
+    if (n < 0) return;
+    json_nodes[n].type = 'n';
+    json_nodes[n].num_val = (double)val;
+}
+
+void Json_set_float(long long j, const char* key, double val) {
+    int n = json_member_slot(j, key);
+    if (n < 0) return;
+    json_nodes[n].type = 'n';
+    json_nodes[n].num_val = val;
+}
+
+// A real JSON boolean. This used to call json_set_int, so Json.set_bool(j,"b",true)
+// serialised `"b": 1` and the document lost the type.
+void Json_set_bool(long long j, const char* key, long long val) {
+    int n = json_member_slot(j, key);
+    if (n < 0) return;
+    json_nodes[n].type = 'b';
+    json_nodes[n].num_val = val ? 1 : 0;
+}
+
+void Json_set_null(long long j, const char* key) {
+    int n = json_member_slot(j, key);
+    if (n < 0) return;
+    json_nodes[n].type = 'x';
+}
+
+void Json_set(long long j, const char* key, const char* val) { Json_set_string(j, key, val); }
+
+// Nodes belong to the arena and stay valid for the program's life (that is what lets
+// a server hand handles around). Kept so `Json.free(j)` / `json_free(j)` in existing
+// programs still compile and mean "I am done with this", and so that a future
+// arena-reclaiming scheme has a hook.
+void Json_free(long long j) { (void)j; }
+
+// --- serializer ------------------------------------------------------------
+typedef struct { char* data; size_t len, cap; } JsonOut;
+
+static int json_out_reserve(JsonOut* o, size_t extra) {
+    if (o->len + extra + 1 <= o->cap) return 1;
+    size_t ncap = o->cap ? o->cap : 256;
+    while (ncap < o->len + extra + 1) ncap *= 2;
+    char* nd = (char*)realloc(o->data, ncap);
+    if (!nd) return 0;
+    o->data = nd;
+    o->cap = ncap;
+    return 1;
+}
+
+static void json_out_raw(JsonOut* o, const char* s) {
+    size_t n = strlen(s);
+    if (!json_out_reserve(o, n)) return;
+    memcpy(o->data + o->len, s, n);
+    o->len += n;
+    o->data[o->len] = 0;
+}
+
+// Emit a JSON string literal with the escapes RFC 8259 requires. Without this, any
+// value containing a quote produced invalid JSON: Json.set(j,"name","a\"b") became
+// {"name": "a"b"}, which let a caller-supplied value inject arbitrary keys
+// ("role":"admin") and which this library's own parser then choked on. Control
+// characters below 0x20 must be escaped too or the output is not parseable at all.
+static void json_out_quoted(JsonOut* o, const char* s) {
+    if (!s) s = "";
+    json_out_raw(o, "\"");
+    for (const unsigned char* p = (const unsigned char*)s; *p; p++) {
+        switch (*p) {
+            case '"':  json_out_raw(o, "\\\""); break;
+            case '\\': json_out_raw(o, "\\\\"); break;
+            case '\n': json_out_raw(o, "\\n");  break;
+            case '\r': json_out_raw(o, "\\r");  break;
+            case '\t': json_out_raw(o, "\\t");  break;
+            case '\b': json_out_raw(o, "\\b");  break;
+            case '\f': json_out_raw(o, "\\f");  break;
+            default:
+                if (*p < 0x20) {
+                    char esc[8];
+                    snprintf(esc, sizeof(esc), "\\u%04x", (unsigned)*p);
+                    json_out_raw(o, esc);
+                } else {
+                    char one[2] = {(char)*p, 0};
+                    json_out_raw(o, one);
+                }
+        }
+    }
+    json_out_raw(o, "\"");
+}
+
+static void json_out_node(JsonOut* o, int n) {
+    if (n < 0 || n >= json_node_count) { json_out_raw(o, "null"); return; }
+    switch (json_nodes[n].type) {
+        case 'o': {
+            json_out_raw(o, "{");
+            int first = 1;
+            for (int c = json_nodes[n].first_child; c >= 0; c = json_nodes[c].next_sibling) {
+                if (!first) json_out_raw(o, ", ");
+                first = 0;
+                json_out_quoted(o, json_nodes[c].key ? json_nodes[c].key : "");
+                json_out_raw(o, ": ");
+                json_out_node(o, c);
+            }
+            json_out_raw(o, "}");
+            break;
+        }
+        case 'a': {
+            json_out_raw(o, "[");
+            int first = 1;
+            for (int c = json_nodes[n].first_child; c >= 0; c = json_nodes[c].next_sibling) {
+                if (!first) json_out_raw(o, ", ");
+                first = 0;
+                json_out_node(o, c);
+            }
+            json_out_raw(o, "]");
+            break;
+        }
+        case 's': json_out_quoted(o, json_nodes[n].str_val); break;
+        case 'b': json_out_raw(o, json_nodes[n].num_val ? "true" : "false"); break;
+        case 'x': json_out_raw(o, "null"); break;
+        default: {
+            // Shortest ROUND-TRIP text, so a parsed 0.30000000000000004 stringifies
+            // back to itself and an integral 1 stringifies as "1", not "1.0".
+            char num[40];
+            int bn = wyn_format_double_shortest(num, sizeof(num), json_nodes[n].num_val);
+            if (bn <= 0) { num[0] = '0'; num[1] = 0; }
+            json_out_raw(o, num);
+            break;
+        }
+    }
+}
+
+// Serializes ANY node, not just a top-level object: nesting round-trips because the
+// writer and the reader are now the same tree. An invalid handle gives "null".
+char* Json_stringify(long long j) {
+    JsonOut o = {0};
+    json_out_node(&o, (int)j);
+    const char* src = o.data ? o.data : "{}";
+    size_t n = strlen(src);
+    // Hand back an RC-managed string like every other string-returning runtime
+    // entry point, and free the scratch buffer rather than leaking it.
+    char* out = wyn_str_alloc(n + 1);
+    memcpy(out, src, n + 1);
+    wyn_rc_set_length(out, (unsigned int)n);
+    free(o.data);
+    return out;
+}
+
+// --- the lowercase spellings are ALIASES, not a second implementation -------
+// `json_parse(s)` / `json_get_string(d,k)` etc. are the free-function spelling Wyn
+// programs can call (examples/09_json.wyn uses it). They used to be src/json.c's
+// separate pairs[] model, so a document parsed with json_parse could not be read
+// with Json.get_* and vice versa. One line each, one model.
+long long json_parse(const char* text) { return Json_parse(text); }
+long long json_new(void) { return Json_new(); }
+char* json_get_string(long long j, const char* key) { return Json_get_string(j, key); }
+long long json_get_int(long long j, const char* key) { return Json_get_int(j, key); }
+void json_set_string(long long j, const char* key, const char* val) { Json_set_string(j, key, val); }
+void json_set_int(long long j, const char* key, long long val) { Json_set_int(j, key, val); }
+char* json_stringify(long long j) { return Json_stringify(j); }
+void json_free(long long j) { Json_free(j); }
 
 // === Base64 ===
 static const char b64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -6728,8 +7107,8 @@ void Http_set_timeout(long long seconds) { _wyn_http_timeout = (int)seconds; }
 long long Http_timeout() { return _wyn_http_timeout; }
 
 // Json pretty print
-char* Json_to_pretty_string(WynJson* j) {
-    char* raw = json_stringify(j);
+char* Json_to_pretty_string(long long j) {
+    char* raw = Json_stringify(j);
     if (!raw) return wyn_strdup("{}");
     int rlen = strlen(raw);
     char* out = wyn_malloc(rlen * 4 + 1);
@@ -6788,6 +7167,7 @@ char* Json_to_pretty_string(WynJson* j) {
         }
     }
     out[o] = 0;
+    wyn_rc_release(raw);   // Json_stringify hands back an RC string; don't leak it
     return out;
 }
 

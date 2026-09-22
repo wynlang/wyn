@@ -44,8 +44,20 @@ static const MethodSignature method_signatures[] = {
     {"string", "char_at", "string", 1},      // Get char at index
     {"string", "equals", "bool", 1},         // String equality
     {"string", "count", "int", 1},           // Count occurrences
+    // is_numeric means "looks like a DECIMAL number, int or float" - so
+    // "1.5".is_numeric() is true and that is correct, 1.5 IS a number. It is
+    // NOT the predicate that tells you `.to_int()` is safe; that one is
+    // is_int(), which is literally to_int_checked().is_ok(). Gating a to_int on
+    // is_numeric() was the V-18 trap: the true answer still panicked.
     {"string", "is_numeric", "bool", 0},     // Check if numeric (int or float)
-    {"string", "to_int", "int", 0},          // Parse string to int
+    {"string", "is_int", "bool", 0},         // to_int_checked().is_ok() - the predicate that gates to_int
+    {"string", "to_int", "int", 0},          // Parse string to int (PANICS on garbage)
+    // The catchable parses. PLAN_v1.22 V-18: before these there was no
+    // string->number that could not abort the process, so no CLI could read
+    // untrusted input. Uppercase return types are resolved as builtin types by
+    // name in checker.c's table mapper, so no per-name special case is needed.
+    {"string", "to_int_checked", "ResultInt", 0},      // -> Result<int, string>
+    {"string", "to_float_checked", "ResultFloat", 0},  // -> Result<float, string>
     {"string", "ascii", "int", 0},           // ASCII value of first char
     {"string", "to_float", "float", 0},      // Parse string to float
     {"string", "parse_int", "int", 0},       // Parse string to int (alias)
@@ -67,9 +79,29 @@ static const MethodSignature method_signatures[] = {
     // matching entries in dispatch_method for the C functions.
     {"json", "set_string", "void", 2},       // Set string value by key
     {"json", "set_int", "void", 2},          // Set int value by key
+    {"json", "set_float", "void", 2},        // Set float value by key
     {"json", "set_bool", "void", 2},         // Set bool value by key
+    {"json", "set_null", "void", 1},         // Set an explicit JSON null
+    {"json", "set", "void", 2},              // Alias of set_string
     {"json", "stringify", "string", 0},      // Serialize to JSON text
-    
+    {"json", "to_pretty_string", "string", 0},
+    // Reachable now that Json has ONE representation. These were namespace-only
+    // because Json_has/Json_keys/Json_array_* took a handle while a json RECEIVER
+    // was a WynJson*, so wiring them up would have traded a missing call for a type
+    // confusion. Both halves are handles now.
+    {"json", "get", "string", 1},            // Any scalar value as text
+    {"json", "get_array", "json", 1},        // Child array node handle
+    {"json", "get_object", "json", 1},       // Child object node handle
+    // `int`, not `bool`: the namespace spelling Json.has is registered int-typed and
+    // existing tests compare it to 0 (`Json.has(d, "k") == 0`). The two spellings must
+    // agree, and changing the shipped 1/0 output is a separate decision.
+    {"json", "has", "int", 1},
+    {"json", "keys", "array", 0},
+    {"json", "array_len", "int", 0},
+    {"json", "array_get", "json", 1},
+    {"json", "node_str", "string", 0},
+    {"json", "is_valid", "bool", 0},
+
     // HTTP methods (URL is a string)
     {"string", "http_get", "string", 0},     // GET request, returns response body
     {"string", "http_post", "string", 1},    // POST request with body
@@ -349,6 +381,53 @@ const char* get_receiver_type_string(const Type* type) {
     }
 }
 
+// The ONE table for methods on a json receiver: `doc.get_string(k)` must lower to
+// exactly what the namespace spelling `Json.get_string(doc, k)` lowers to. Every
+// entry is a capital-J handle function, because Json has one representation - a
+// long long index into the runtime's node arena.
+//
+// This is deliberately a single function called from both dispatch sites. There were
+// two separate json tables in this file with DIFFERENT contents, one of them wired to
+// the retired WynJson* pairs model, and the readers-vs-writers split between them is
+// how `a.set_int(..)` came to emit nothing (#312) while `doc.get_string(..)`
+// dereferenced an integer handle. Add a method here and both spellings get it.
+static bool wyn_json_method_c_function(const char* method_name, int arg_count, MethodDispatch* out) {
+    struct { const char* m; int argc; const char* fn; } json_methods[] = {
+        // readers
+        {"get",              1, "Json_get"},
+        {"get_string",       1, "Json_get_string"},
+        {"get_int",          1, "Json_get_int"},
+        {"get_float",        1, "Json_get_float"},
+        {"get_bool",         1, "Json_get_bool"},
+        {"get_array",        1, "Json_get_array"},
+        {"get_object",       1, "Json_get_object"},
+        {"has",              1, "Json_has"},
+        {"keys",             0, "Json_keys"},
+        {"array_len",        0, "Json_array_len"},
+        {"array_get",        1, "Json_array_get"},
+        {"node_str",         0, "Json_node_str"},
+        {"is_valid",         0, "Json_is_valid"},
+        // writers
+        {"set",              2, "Json_set_string"},
+        {"set_string",       2, "Json_set_string"},
+        {"set_int",          2, "Json_set_int"},
+        {"set_float",        2, "Json_set_float"},
+        {"set_bool",         2, "Json_set_bool"},
+        {"set_null",         1, "Json_set_null"},
+        // whole-document
+        {"stringify",        0, "Json_stringify"},
+        {"to_pretty_string", 0, "Json_to_pretty_string"},
+        {"free",             0, "Json_free"},
+    };
+    for (size_t i = 0; i < sizeof(json_methods) / sizeof(json_methods[0]); i++) {
+        if (strcmp(method_name, json_methods[i].m) == 0 && arg_count == json_methods[i].argc) {
+            out->c_function = json_methods[i].fn;
+            return true;
+        }
+    }
+    return false;
+}
+
 // Dispatch method call based on receiver type and method name
 // Returns true if method was found, false otherwise
 bool dispatch_method(const char* receiver_type, const char* method_name, int arg_count, MethodDispatch* out) {
@@ -475,6 +554,15 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "is_numeric") == 0 && arg_count == 0) {
             out->c_function = "string_is_numeric"; return true;
         }
+        if (strcmp(method_name, "is_int") == 0 && arg_count == 0) {
+            out->c_function = "str_is_int"; return true;
+        }
+        if (strcmp(method_name, "to_int_checked") == 0 && arg_count == 0) {
+            out->c_function = "str_to_int_checked"; return true;
+        }
+        if (strcmp(method_name, "to_float_checked") == 0 && arg_count == 0) {
+            out->c_function = "str_to_float_checked"; return true;
+        }
         if (strcmp(method_name, "parse_int") == 0 && arg_count == 0) {
             out->c_function = "str_parse_int"; return true;
         }
@@ -490,9 +578,12 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "to_float") == 0 && arg_count == 0) {
             out->c_function = "str_parse_float"; return true;
         }
-        // JSON parsing method
+        // JSON parsing method. Json_parse, not the retired json.c entry point:
+        // `"...".parse_json()` yields TYPE_JSON, and every reader on a TYPE_JSON
+        // receiver is a handle function, so producing a WynJson* here handed a
+        // pointer to code that treated it as an index.
         if (strcmp(method_name, "parse_json") == 0 && arg_count == 0) {
-            out->c_function = "json_parse"; return true;
+            out->c_function = "Json_parse"; return true;
         }
         // HTTP methods (URL is a string)
         if (strcmp(method_name, "http_get") == 0 && arg_count == 0) {
@@ -543,44 +634,7 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
     }
     
     if (strcmp(receiver_type, "json") == 0) {
-        // JSON object methods
-        if (strcmp(method_name, "get_string") == 0 && arg_count == 1) {
-            out->c_function = "json_get_string"; return true;
-        }
-        if (strcmp(method_name, "get_int") == 0 && arg_count == 1) {
-            out->c_function = "json_get_int"; return true;
-        }
-        if (strcmp(method_name, "get_float") == 0 && arg_count == 1) {
-            out->c_function = "json_get_float"; return true;
-        }
-        if (strcmp(method_name, "get_bool") == 0 && arg_count == 1) {
-            out->c_function = "json_get_bool"; return true;
-        }
-        if (strcmp(method_name, "free") == 0 && arg_count == 0) {
-            out->c_function = "json_free"; return true;
-        }
-        // The writers. Capital-J `Json_set_*` / `Json_stringify` are the wrappers
-        // that take a `WynJson*`, which is what TYPE_JSON lowers to - the same
-        // functions the WORKING namespace spelling (`Json.set_int(j, ..)`) already
-        // used, so the two spellings now agree by construction.
-        //
-        // has/keys are deliberately NOT here: `Json_has` and `Json_keys` take a
-        // `long long` index into json_nodes[], the OTHER half of Json's documented
-        // two-representation split, so wiring them to a WynJson* receiver would
-        // trade a missing call for a type confusion. They stay namespace-only.
-        if (strcmp(method_name, "set_string") == 0 && arg_count == 2) {
-            out->c_function = "Json_set_string"; return true;
-        }
-        if (strcmp(method_name, "set_int") == 0 && arg_count == 2) {
-            out->c_function = "Json_set_int"; return true;
-        }
-        if (strcmp(method_name, "set_bool") == 0 && arg_count == 2) {
-            out->c_function = "Json_set_bool"; return true;
-        }
-        if (strcmp(method_name, "stringify") == 0 && arg_count == 0) {
-            out->c_function = "Json_stringify"; return true;
-        }
-        return false;
+        return wyn_json_method_c_function(method_name, arg_count, out);
     }
 
     if (strcmp(receiver_type, "int") == 0) {
@@ -1074,20 +1128,15 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         return false;
     }
     
-    // JSON object methods
-    if (strcmp(receiver_type, "json") == 0 || strcmp(receiver_type, "WynJson") == 0) {
-        if (strcmp(method_name, "get_string") == 0 && arg_count == 1) {
-            out->c_function = "json_get_string"; return true;
-        }
-        if (strcmp(method_name, "get_int") == 0 && arg_count == 1) {
-            out->c_function = "json_get_int"; return true;
-        }
-        if (strcmp(method_name, "free") == 0 && arg_count == 0) {
-            out->c_function = "json_free"; return true;
-        }
-        return false;
+    // JSON object methods. This used to be a SECOND, shorter copy of the json table
+    // above with three entries wired to the other representation's functions
+    // (json_get_string(WynJson*) against a handle) - two tables for one receiver, so
+    // whichever ran first decided whether `doc.get_string(k)` read a document or
+    // dereferenced an integer. One authority now.
+    if (strcmp(receiver_type, "json") == 0) {
+        return wyn_json_method_c_function(method_name, arg_count, out);
     }
-    
+
     return false;  // Method not found
 }
 
@@ -1103,6 +1152,8 @@ const char* lookup_module_fn_return_type(const char* fn_name) {
         {"Base64_encode", "string"}, {"Base64_decode", "string"},
         {"Json_stringify", "string"}, {"Json_to_pretty_string", "string"},
         {"Json_get", "string"}, {"Json_keys", "array"},
+        {"Json_get_string", "string"}, {"Json_node_str", "string"},
+        {"Json_get_float", "float"}, {"Json_is_valid", "bool"},
         {"Os_platform", "string"}, {"Os_arch", "string"},
         {"Os_hostname", "string"}, {"Os_home_dir", "string"}, {"Os_temp_dir", "string"},
         {"Uuid_generate", "string"}, {"Uuid_v4", "string"}, {"Process_exec_capture", "string"},
