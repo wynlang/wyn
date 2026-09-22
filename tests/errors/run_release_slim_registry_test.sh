@@ -155,8 +155,13 @@ fn main() -> int {
 }
 WYN
 four_ok=1; four_detail=""
+# THE CACHE MUST BE GONE BEFORE EVERY INVOCATION, .mode file included. `wyn run`
+# reuses <file>.wyn.out, and until the mode became part of that key a `wyn run`
+# before a `wyn run --release` on the same path meant the release compile NEVER
+# HAPPENED and this arm reported green having tested nothing - the precise way a
+# slim-header regression reaches a user. Deleting is belt; the .mode key is braces.
 run_one() {  # $@ = the command line; sets `out`/`rc`
-    rm -f "$TMP/nowms.wyn.out" "$TMP/nowms.wyn.c" "$TMP/nowms" 2>/dev/null
+    rm -f "$TMP/nowms.wyn.out" "$TMP/nowms.wyn.out.mode" "$TMP/nowms.wyn.c" "$TMP/nowms" 2>/dev/null
     out=$(perl -e 'alarm(120); exec @ARGV' -- "$@" 2>&1); rc=$?
 }
 run_one "$WYN" check "$TMP/nowms.wyn"
@@ -172,6 +177,81 @@ if [ "$four_ok" = 1 ]; then
 else
     bad "Time.now_millis() does not compile under every command:$four_detail"
 fi
+
+# --- arm 4b: `wyn run --release` must NOT hand back a non-release binary --------
+# The run cache is keyed on mtimes, and the MODE used to be absent from that key:
+#     wyn run c.wyn            -> the debug binary
+#     wyn run --release c.wyn  -> silently re-ran THAT binary, byte for byte
+# Measured before the fix: identical .out, 1,071,896 bytes, where a release build of
+# the same file in a fresh directory is 1,044,088. Two consequences, both worse than
+# a slow compile: benchmarking `--release` in place times the DEBUG build, and the
+# slim runtime header - which only `wyn run --release` compiles - can regress without
+# any gate noticing, because the gate's release invocation never compiled anything.
+#
+# Asserted on the ARTIFACT, not on the output: both modes print the same thing, so
+# "it printed hi" proves nothing. Deliberately does NOT delete the .out between the
+# two runs - that deletion is exactly what this arm must not depend on.
+cat > "$TMP/cachekey.wyn" <<'WYN'
+fn main() -> int {
+    print("hi")
+    return 0
+}
+WYN
+#
+# Compared by SIZE, not by bytes. Two builds of one file from one compiler are not
+# byte-reproducible here (the link embeds absolute paths), so a byte comparison of
+# the second debug build against the first fails for a reason that has nothing to do
+# with the cache - measured, and it is why this arm reads sizes.
+osize() { [ -f "$1" ] && wc -c < "$1" | tr -d ' '; }
+rm -f "$TMP/cachekey.wyn.out" "$TMP/cachekey.wyn.out.mode" "$TMP/cachekey.wyn.c"
+perl -e 'alarm(180); exec @ARGV' -- "$WYN" run "$TMP/cachekey.wyn" >/dev/null 2>&1
+dbg_sz=$(osize "$TMP/cachekey.wyn.out")
+perl -e 'alarm(180); exec @ARGV' -- "$WYN" run --release "$TMP/cachekey.wyn" >/dev/null 2>&1
+rel_sz=$(osize "$TMP/cachekey.wyn.out")
+if [ -z "${dbg_sz:-}" ] || [ -z "${rel_sz:-}" ]; then
+    bad "run-cache mode arm: no .out produced (dbg=[${dbg_sz:-}] rel=[${rel_sz:-}])"
+elif [ "$dbg_sz" = "$rel_sz" ]; then
+    bad "wyn run --release reused the non-release binary from the cache (both $rel_sz bytes) - the release path is untestable in place"
+else
+    ok "wyn run --release rebuilds instead of reusing the debug binary ($dbg_sz -> $rel_sz bytes)"
+fi
+# …and the reverse direction, which is the same bug pointing the other way: after a
+# --release run, a plain `wyn run` must not keep running the release binary.
+perl -e 'alarm(180); exec @ARGV' -- "$WYN" run "$TMP/cachekey.wyn" >/dev/null 2>&1
+back_sz=$(osize "$TMP/cachekey.wyn.out")
+if [ "${back_sz:-}" = "$dbg_sz" ]; then
+    ok "and going back to the default mode rebuilds too ($back_sz bytes)"
+else
+    bad "default mode after --release did not rebuild (want $dbg_sz bytes, got ${back_sz:-none})"
+fi
+# POSITIVE PATH, and it is not optional. Both arms above pass if the mode key is
+# simply never written, because the cache then never hits at all - measured, by
+# making wyn_run_mode_record() a no-op: both arms stayed green and
+# run_run_cache_imports_test.sh only downgraded its cache line to advisory
+# ("timing, not correctness"). So nothing in the suite would have caught a fix that
+# disabled caching outright. A SAME-MODE re-run must still hit.
+#
+# The source is backdated 5s first: st_mtime is whole-seconds, so a source written
+# and compiled inside one tick fails `out.mtime > src.mtime` and misses the cache for
+# a reason that is not the thing being tested. That flake is exactly why the other
+# cache gate has to keep its hit checks advisory; backdating removes it.
+rm -f "$TMP/cachekey.wyn.out" "$TMP/cachekey.wyn.out.mode"   # the arms above left a
+                                                             # warm cache; this arm
+                                                             # needs a cold one or the
+                                                             # "first" run never
+                                                             # compiles and proves
+                                                             # nothing.
+perl -e 'my $t = time - 5; utime $t, $t, $ARGV[0] or die' "$TMP/cachekey.wyn"
+first=$(perl -e 'alarm(180); exec @ARGV' -- "$WYN" run "$TMP/cachekey.wyn" 2>&1)
+second=$(perl -e 'alarm(180); exec @ARGV' -- "$WYN" run "$TMP/cachekey.wyn" 2>&1)
+if echo "$first" | grep -q "Compiled in" && ! echo "$second" | grep -q "Compiled in"; then
+    ok "a same-mode re-run still HITS the cache (the mode key is recorded, not just checked)"
+elif ! echo "$first" | grep -q "Compiled in"; then
+    bad "the first run did not compile, so the cache-hit arm proves nothing [$first]"
+else
+    bad "a same-mode re-run recompiled - the mode key is never recorded, so the cache is dead [$second]"
+fi
+rm -f "$TMP/cachekey.wyn.out" "$TMP/cachekey.wyn.out.mode" "$TMP/cachekey.wyn.c"
 
 # --- arm 5: the WORDING, on a slim header that really is missing a declaration
 # Self-contained: build a SHADOW WYN_ROOT (resolve_wyn_root probes $WYN_ROOT first,

@@ -1244,11 +1244,17 @@ long long Time_now_millis();
 char* Url_decode(const char* str);
 char* Url_encode(const char* str);
 
-// json
-WynJson* json_new();
-char* json_stringify(WynJson* json);
-void json_set_int(WynJson* json, const char* key, int value);
-void json_set_string(WynJson* json, const char* key, const char* value);
+// json - the lowercase spellings. `long long` handles, NOT `WynJson*`: #364 replaced
+// the pointer-to-struct model with one node arena addressed by a handle, and removed
+// the WynJson typedef from this header. These four were first written here against
+// the old spelling and every --release compile then died with
+//     error: unknown type name 'WynJson'
+// which is the same drift the Json block above warns about, one release later. Copied
+// from wyn_runtime.h:6309-6314, which is the authority.
+long long json_new(void);
+char* json_stringify(long long j);
+void json_set_int(long long j, const char* key, long long val);
+void json_set_string(long long j, const char* key, const char* val);
 
 // str
 char** str_split(const char* s, const char* delim, int* count);

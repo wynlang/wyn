@@ -929,17 +929,87 @@ static int wyn_report_undeclared_namespace_call(const char* cc_err_path) {
                 fprintf(stderr,
                     "Error: unknown method '%s.%s' on namespace '%s'\n",
                     ns, method, ns);
+                // The old wording ended "...namespace methods are not verified until
+                // the generated C is compiled, so a typo surfaces here rather than at
+                // the call site." #357 made that FALSE: a namespace method IS checked
+                // at check time now, and a typo is rejected there with a line and a
+                // caret. Reaching this branch therefore means the checker could not
+                // consult its declaration index at all, which is what the help should
+                // say - a stale explanation of a mechanism that no longer exists sends
+                // the reader looking in the wrong place.
                 fprintf(stderr,
                     "  \033[34mHelp:\033[0m '%s' is not a function Wyn knows about. Check the spelling"
-                    " against the '%s' stdlib docs - namespace methods are not"
-                    " verified until the generated C is compiled, so a typo surfaces"
-                    " here rather than at the call site.\n", method, ns);
+                    " against the '%s' stdlib docs. (This surfaced at the C-compile step"
+                    " rather than at the call site, which means this build could not read"
+                    " its own runtime headers to check the name earlier.)\n", method, ns);
             }
             reported = 1;
         }
     }
     fclose(f);
     return reported;
+}
+
+// ─── THE RUN CACHE MUST BE KEYED ON THE MODE, NOT ONLY ON MTIMES ─────────────
+//
+// `wyn run` caches its binary as <file>.wyn.out and reuses it while the mtimes say
+// it is fresh. The mode was NOT part of that decision, so:
+//
+//     wyn run c.wyn            -> compiles the DEBUG binary
+//     wyn run --release c.wyn  -> prints nothing, runs the DEBUG binary
+//
+// Measured on dev: byte-identical .out (md5 bff3f8d9…), 1,071,896 bytes, where a
+// release build of the same file in a fresh directory is 1,044,088. So the release
+// path was untestable in place, and anyone benchmarking `--release` that way was
+// timing the debug build. It is also how a slim-header regression reaches users: a
+// gate that runs `wyn run` before `wyn run --release` on one path compiles the slim
+// header exactly once - never - and reports green.
+//
+// The fix is a MODE KEY written beside the binary, not a separate output path:
+// <file>.wyn.out is an established artifact that tests, docs and the stdlib runner
+// all delete by name, and renaming it would break them silently. The sidecar is
+// advisory in the safe direction - if it is missing or unreadable the cache is
+// treated as STALE, so the worst case is an extra compile.
+//
+// Everything that changes the emitted artifact goes in the key. --release and --fast
+// pick the optimisation level; --shared/--python/--node change the artifact kind
+// entirely. --debug only decides whether the .c is kept, so it is deliberately not
+// keyed. Scans ALL of argv because --release is honoured after the file too
+// (see the `use_release` loops in the run block).
+static void wyn_run_mode_key(int argc, char** argv, char* out, size_t n)
+{
+    int rel = 0, fast = 0, lib = 0;
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "--release") == 0) rel = 1;
+        else if (strcmp(argv[i], "--fast") == 0) fast = 1;
+        else if (strcmp(argv[i], "--shared") == 0) lib = 1;
+        else if (strcmp(argv[i], "--python") == 0) lib = 2;
+        else if (strcmp(argv[i], "--node") == 0) lib = 3;
+    }
+    snprintf(out, n, "wyn-run-mode v1 rel=%d fast=%d lib=%d", rel, fast, lib);
+}
+
+// 1 when the cached binary at out_path was built in THIS mode. 0 when it was not, or
+// when we cannot tell - an unknown mode must read as stale, never as a hit.
+static int wyn_run_mode_matches(const char* out_path, const char* key)
+{
+    char p[600]; snprintf(p, sizeof(p), "%s.mode", out_path);
+    FILE* f = fopen(p, "r");
+    if (!f) return 0;
+    char line[256] = "";
+    if (!fgets(line, sizeof(line), f)) { fclose(f); return 0; }
+    fclose(f);
+    line[strcspn(line, "\r\n")] = '\0';
+    return strcmp(line, key) == 0;
+}
+
+static void wyn_run_mode_record(const char* out_path, const char* key)
+{
+    char p[600]; snprintf(p, sizeof(p), "%s.mode", out_path);
+    FILE* f = fopen(p, "w");
+    if (!f) return;                 // best effort: a missing file means "stale"
+    fprintf(f, "%s\n", key);
+    fclose(f);
 }
 
 // Detect available C backend: WYN_CC env > cc > gcc > clang
@@ -3993,9 +4063,15 @@ int main(int argc, char** argv) {
                         fclose(_sf);
                     }
                 }
+                // …and on the MODE. Mtimes cannot tell a debug binary from a release
+                // one, so `wyn run` followed by `wyn run --release` on the same path
+                // silently re-ran the DEBUG binary - see wyn_run_mode_key().
+                char _mode_key[128];
+                wyn_run_mode_key(argc, argv, _mode_key, sizeof(_mode_key));
                 if (out_st.st_mtime > src_st.st_mtime &&
                     (imports_mtime == 0 || out_st.st_mtime > imports_mtime) &&
-                    (!compiler_ok || out_st.st_mtime > wyn_st.st_mtime)) {
+                    (!compiler_ok || out_st.st_mtime > wyn_st.st_mtime) &&
+                    wyn_run_mode_matches(out_path, _mode_key)) {
                     char run_cmd[2048];
                     if (out_path[0] == '/') {
                         snprintf(run_cmd, sizeof(run_cmd), "%s", out_path);
@@ -4343,6 +4419,14 @@ int main(int argc, char** argv) {
             clock_gettime(CLOCK_MONOTONIC, &_ts_end);
             double _ms = (_ts_end.tv_sec - _ts_start.tv_sec) * 1000.0 + (_ts_end.tv_nsec - _ts_start.tv_nsec) / 1e6;
             fprintf(stderr, "\033[2mCompiled in %.0fms\033[0m\n", _ms);
+            // Record WHICH MODE this binary is, so the cache check above cannot hand a
+            // debug build to `--release` (or the reverse). Written only on success:
+            // a failed compile leaves the previous binary and its previous key, which
+            // is correct - that pair still describes what is on disk.
+            char _mode_out[520], _mode_key2[128];
+            snprintf(_mode_out, sizeof(_mode_out), "%s.out", file);
+            wyn_run_mode_key(argc, argv, _mode_key2, sizeof(_mode_key2));
+            wyn_run_mode_record(_mode_out, _mode_key2);
         }
         if (result != 0) {
             // A misspelled namespace method (`Time.now_ms()`) is lowered to a
