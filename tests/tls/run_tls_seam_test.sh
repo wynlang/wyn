@@ -14,8 +14,12 @@ if [ ! -f "$LIB" ]; then
   exit 1
 fi
 
+# -D_GNU_SOURCE mirrors the project's own CFLAGS, and it is required rather than
+# cosmetic: under -std=c11 glibc hides setenv/unsetenv behind a feature macro, so
+# this compiled on macOS and hard-errored on Linux CI. A no-op on Darwin.
+#
 # Warnings are failures here: this file is ours, unlike the vendored tree.
-if ! "$CC_BIN" -std=c11 -Wall -Wextra -Werror -O1 \
+if ! "$CC_BIN" -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror -O1 \
       -I "$ROOT/src" -I "$ROOT/vendor/mbedtls/include" -I "$ROOT/tests/tls" \
       -o "$OUT" "$ROOT/tests/tls/test_tls_seam.c" "$ROOT/src/wyn_tls.c" \
       "$LIB" -lpthread; then

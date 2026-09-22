@@ -22,11 +22,13 @@
 typedef struct WynTls WynTls;
 
 typedef struct {
-    /* Trust anchors. At least one must be set; both may be. ca_file is a path to
-     * a PEM bundle (what a system trust store looks like), ca_pem is PEM text
-     * already in memory. */
+    /* Trust anchors. At least one source must be set; they combine. ca_file is a
+     * path to a PEM bundle, ca_pem is PEM text already in memory. */
     const char* ca_file;
     const char* ca_pem;
+    /* Also load the platform's root store - what an ordinary HTTPS call wants.
+     * See wyn_tls_system_trust_count() for where roots come from per platform. */
+    int use_system_trust;
     /* Read timeout in milliseconds; 0 means block indefinitely. A network client
      * with no read timeout is a hang waiting to happen, so callers should set one. */
     unsigned int read_timeout_ms;
@@ -49,6 +51,18 @@ long wyn_tls_read(WynTls* tls, void* buf, size_t len);
 
 /* Last error on this connection; "" if none. Never NULL. */
 const char* wyn_tls_error(const WynTls* tls);
+
+/* How many root certificates the platform trust store yields here, or -1 with a
+ * reason in err. Exposed so the failure is diagnosable ("0 roots found" is a very
+ * different problem from "handshake failed") and so the gate can assert that
+ * discovery works on the platform it is running on.
+ *
+ * Sources, in order: $SSL_CERT_FILE, $SSL_CERT_DIR, then the platform's usual
+ * locations - the Windows "ROOT" store via CryptoAPI, /etc/ssl/cert.pem on
+ * macOS/BSD, the distro bundles on Linux, /system/etc/security/cacerts on
+ * Android. iOS ships no file and no enumerable store, so an iOS app must supply
+ * ca_file or ca_pem (or set SSL_CERT_FILE); that is a documented gap, not a bug. */
+long wyn_tls_system_trust_count(char* err, size_t errlen);
 
 /* Send close_notify (best effort) and free everything. NULL is a no-op. */
 void wyn_tls_close(WynTls* tls);

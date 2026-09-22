@@ -112,13 +112,14 @@ typedef struct {
     mbedtls_net_context listen_ctx;
     const Ident*        good;   /* CN=127.0.0.1 - matches what the client asks for */
     const Ident*        wrong;  /* valid chain, CN=wyn-test.invalid */
+    volatile int        stop;   /* set by main when the arms are done */
 } Server;
 
 /* Serve one connection with the given identity. Handshake failures are expected
  * on some arms, so they are swallowed rather than reported. */
-static void serve_one(mbedtls_net_context* listen_ctx, const Ident* id)
+static void serve_one(mbedtls_net_context* client_in, const Ident* id)
 {
-    mbedtls_net_context      client;
+    mbedtls_net_context      client = *client_in;
     mbedtls_ssl_context      ssl;
     mbedtls_ssl_config       conf;
     mbedtls_x509_crt         srvcrt;
@@ -126,7 +127,6 @@ static void serve_one(mbedtls_net_context* listen_ctx, const Ident* id)
     mbedtls_entropy_context  entropy;
     mbedtls_ctr_drbg_context rng;
 
-    mbedtls_net_init(&client);
     mbedtls_ssl_init(&ssl);
     mbedtls_ssl_config_init(&conf);
     mbedtls_x509_crt_init(&srvcrt);
@@ -149,7 +149,6 @@ static void serve_one(mbedtls_net_context* listen_ctx, const Ident* id)
     if (mbedtls_ssl_conf_own_cert(&conf, &srvcrt, &pkey) != 0) goto done;
     if (mbedtls_ssl_setup(&ssl, &conf) != 0) goto done;
 
-    if (mbedtls_net_accept(listen_ctx, &client, NULL, 0, NULL) != 0) goto done;
     mbedtls_ssl_set_bio(&ssl, &client, mbedtls_net_send, mbedtls_net_recv, NULL);
 
     int ret;
@@ -184,14 +183,32 @@ done:
     mbedtls_entropy_free(&entropy);
 }
 
+/* Serve whatever connects until main says stop.
+ *
+ * Deliberately NOT a fixed count of accepts. With a fixed count, an arm that
+ * correctly refuses to open a socket leaves the server blocked in accept() and the
+ * whole test dies on the watchdog - which is how a mutation of the fail-closed path
+ * first showed up here: as a 60s hang, indistinguishable from infrastructure
+ * trouble, instead of as a named failing arm. */
 static void* server_main(void* arg)
 {
     Server* s = (Server*)arg;
-    /* Connections 1 and 2 get the matching identity; connection 3 gets the
-     * valid-chain, wrong-name one, which is arm 4's whole point. */
-    serve_one(&s->listen_ctx, s->good);
-    serve_one(&s->listen_ctx, s->good);
-    serve_one(&s->listen_ctx, s->wrong);
+    int     n = 0;
+    mbedtls_net_set_nonblock(&s->listen_ctx);
+    while (!s->stop) {
+        mbedtls_net_context client;
+        mbedtls_net_init(&client);
+        int ret = mbedtls_net_accept(&s->listen_ctx, &client, NULL, 0, NULL);
+        if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
+            mbedtls_net_usleep(2000);
+            continue;
+        }
+        if (ret != 0) { mbedtls_net_free(&client); continue; }
+        mbedtls_net_set_block(&client);   /* macOS hands back a non-blocking socket */
+        /* Connection 3 gets the valid-chain, wrong-name identity - arm 4's point.
+         * Everything else gets the matching one. */
+        serve_one(&client, (++n == 3) ? s->wrong : s->good);
+    }
     return NULL;
 }
 
@@ -240,6 +257,7 @@ int main(void)
     Server s;
     s.good  = &good;
     s.wrong = &wrong;
+    s.stop  = 0;
     mbedtls_net_init(&s.listen_ctx);
     if (mbedtls_net_bind(&s.listen_ctx, "127.0.0.1", "0", MBEDTLS_NET_PROTO_TCP) != 0) {
         bad("bind loopback listener", "mbedtls_net_bind failed");
@@ -263,7 +281,7 @@ int main(void)
 
     /* Arm 1 - the happy path: trusted CA, matching name, bytes both ways. */
     {
-        WynTlsOptions opt = { NULL, ca.crt_pem, 5000 };
+        WynTlsOptions opt = { NULL, ca.crt_pem, 0, 5000 };
         WynTls*       t   = wyn_tls_connect("127.0.0.1", port_str, &opt, err, sizeof(err));
         if (!t) {
             bad("handshake with a trusted CA succeeds", err);
@@ -281,7 +299,7 @@ int main(void)
 
     /* Arm 2 - an unrelated CA must NOT verify. */
     {
-        WynTlsOptions opt = { NULL, other_ca.crt_pem, 5000 };
+        WynTlsOptions opt = { NULL, other_ca.crt_pem, 0, 5000 };
         WynTls*       t   = wyn_tls_connect("127.0.0.1", port_str, &opt, err, sizeof(err));
         if (t) {
             bad("an untrusted certificate is REJECTED",
@@ -296,7 +314,7 @@ int main(void)
 
     /* Arm 3 - no trust anchors: fail closed, and do not even open a socket. */
     {
-        WynTlsOptions opt = { NULL, NULL, 5000 };
+        WynTlsOptions opt = { NULL, NULL, 0, 5000 };
         WynTls*       t   = wyn_tls_connect("127.0.0.1", port_str, &opt, err, sizeof(err));
         if (t) {
             bad("connecting without trust anchors is REFUSED", "it connected");
@@ -310,7 +328,7 @@ int main(void)
 
     /* Arm 4 - valid chain, wrong name. Only the hostname check can catch this. */
     {
-        WynTlsOptions opt = { NULL, ca.crt_pem, 5000 };
+        WynTlsOptions opt = { NULL, ca.crt_pem, 0, 5000 };
         WynTls*       t   = wyn_tls_connect("127.0.0.1", port_str, &opt, err, sizeof(err));
         if (t) {
             bad("a certificate issued for another name is REJECTED",
@@ -323,6 +341,91 @@ int main(void)
         }
     }
 
+    /* Arm 5 - the platform trust store yields roots HERE. A store that loads zero
+     * roots is the failure mode that makes every later handshake inexplicable, so
+     * it gets its own check with its own message. */
+    {
+        long n = wyn_tls_system_trust_count(err, sizeof(err));
+        if (n < 20) {
+            char detail[640];
+            snprintf(detail, sizeof(detail), "found %ld roots%s%s", n, n < 0 ? ": " : "",
+                     n < 0 ? err : "");
+            bad("the platform trust store yields root certificates", detail);
+        } else {
+            char detail[64];
+            snprintf(detail, sizeof(detail), "%ld roots", n);
+            ok("the platform trust store yields root certificates");
+            printf("        (%s)\n", detail);
+        }
+    }
+
+    /* Arm 6 - system trust must not become "trust anything". The test CA is not a
+     * public root, so a connection that trusts ONLY the system store must fail. */
+    {
+        WynTlsOptions opt = { NULL, NULL, 1, 5000 };
+        WynTls*       t   = wyn_tls_connect("127.0.0.1", port_str, &opt, err, sizeof(err));
+        if (t) {
+            bad("system trust alone does NOT accept a private CA",
+                "handshake succeeded against a certificate no public root signed");
+            wyn_tls_close(t);
+        } else if (!strstr(err, "verification failed")) {
+            /* A machine with no roots at all would also fail here, for an unrelated
+             * reason - distinguish, or this arm passes vacuously. */
+            bad("system trust rejects a private CA for the right reason", err);
+        } else {
+            ok("system trust alone does not accept a private CA");
+        }
+    }
+
+    /* Arm 7 - an explicit-but-empty trust source must produce a CLEAR error, not a
+     * confusing one. This is the arm that pins crt_count's empty-head-node handling:
+     * miscount an empty chain as 1 and the "no roots" guard never fires, so the user
+     * sees "certificate verification failed" when the truth is "your bundle has no
+     * certificates in it". SSL_CERT_FILE is authoritative, so no platform fallback
+     * can mask it. */
+    {
+        const char* tmp = getenv("TMPDIR");
+        char        empty_pem[512];
+        snprintf(empty_pem, sizeof(empty_pem), "%s/wyn_tls_empty_roots.pem",
+                 (tmp && *tmp) ? tmp : ".");
+        FILE* f = fopen(empty_pem, "w");
+        if (!f) {
+            bad("create an empty trust bundle", empty_pem);
+        } else {
+            fputs("# no certificates here\n", f);
+            fclose(f);
+#ifdef _WIN32
+            _putenv_s("SSL_CERT_FILE", empty_pem);
+#else
+            setenv("SSL_CERT_FILE", empty_pem, 1);
+#endif
+            long n = wyn_tls_system_trust_count(err, sizeof(err));
+            if (n != -1) {
+                char detail[128];
+                snprintf(detail, sizeof(detail), "reported %ld roots from an empty bundle", n);
+                bad("an empty trust bundle reports no roots", detail);
+            } else {
+                WynTlsOptions opt = { NULL, NULL, 1, 5000 };
+                WynTls*       t   = wyn_tls_connect("127.0.0.1", port_str, &opt, err, sizeof(err));
+                if (t) {
+                    bad("an empty trust bundle REFUSES the connection", "it connected");
+                    wyn_tls_close(t);
+                } else if (!strstr(err, "no system root certificates")) {
+                    bad("an empty trust bundle explains itself instead of failing verification", err);
+                } else {
+                    ok("an empty trust bundle refuses with a clear reason");
+                }
+            }
+#ifdef _WIN32
+            _putenv_s("SSL_CERT_FILE", "");
+#else
+            unsetenv("SSL_CERT_FILE");
+#endif
+            remove(empty_pem);
+        }
+    }
+
+    s.stop = 1;
     pthread_join(th, NULL);
     mbedtls_net_free(&s.listen_ctx);
     ident_free(&ca); ident_free(&other_ca); ident_free(&good); ident_free(&wrong);
@@ -330,6 +433,6 @@ int main(void)
     mbedtls_entropy_free(&g_entropy);
 
     printf(failures ? "=== TLS seam: %d FAILING ===\n" : "=== TLS seam: all %d checks pass ===\n",
-           failures ? failures : 4);
+           failures ? failures : 7);
     return failures ? 1 : 0;
 }
