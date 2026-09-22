@@ -37,21 +37,26 @@ static inline void* wyn_realloc(void* p, size_t n) { void* q = realloc(p, n); if
 // instead of failing loudly, so both headers take the values from the single
 // canonical definition here. wyn_runtime.h:170 includes this same file.
 #include "arc_runtime.h"
-// The HashMap / HashSet / Json entry points are plain functions living in
-// hashmap.c / hashset.c / json.c, i.e. real symbols in libwyn_rt.a. Include
+// The HashMap / HashSet entry points are plain functions living in
+// hashmap.c / hashset.c, i.e. real symbols in libwyn_rt.a. Include
 // their canonical headers rather than restating the prototypes, for the same
 // drift reason as arc_runtime.h above: a hand-copied signature that disagreed
 // (int vs long long, missing const) would compile and then corrupt arguments.
 // Without these, --release rejected every program that touched a HashMap,
 // HashSet or Json with `call to undeclared function 'hashmap_new'`.
+//
+// Json has no such header any more: it is one node arena addressed by a
+// `long long` handle, declared in the Json block below. src/json.c held a SECOND
+// representation (a WynJson* struct of key/value pairs); this file's Json
+// declarations were already the handle spelling while that file defined the
+// pointer one, i.e. the exact signature drift this comment warns about, surviving
+// only because a pointer happens to fit in a long long.
 #include "hashmap.h"
 #include "hashset.h"
-#include "json.h"
 
 // Forward declarations for opaque types
 typedef struct WynHashMap WynHashMap;
 typedef struct WynHashSet WynHashSet;
-typedef struct WynJson WynJson;
 typedef struct WynOptional WynOptional;
 typedef struct WynArena WynArena;
 typedef struct HttpResponse HttpResponse;
@@ -170,20 +175,33 @@ void Http_close_client(int fd);
 void Http_close_server(int fd);
 int Http_status(int req);
 
-// Json
+// Json - one node arena, one `long long` handle. Every signature here must match
+// wyn_runtime.h exactly; `Json_has` used to be declared `int` here against a
+// `long long` definition, and `Json_new` `long long` against a `WynJson*` one.
 long long Json_new(void);
 void Json_set(long long j, const char* key, const char* val);
 void Json_set_string(long long j, const char* key, const char* val);
 void Json_set_int(long long j, const char* key, long long val);
-// `int v`, matching wyn_runtime.h:3555 - the handle keeps this file's long long
-// spelling (a WynJson* is pointer-sized) but the value width must not drift.
-void Json_set_bool(long long j, const char* key, int val);
+void Json_set_float(long long j, const char* key, double val);
+void Json_set_bool(long long j, const char* key, long long val);
+void Json_set_null(long long j, const char* key);
 char* Json_get_string(long long j, const char* key);
 long long Json_get_int(long long j, const char* key);
 char* Json_stringify(long long j);
 long long Json_parse(const char* s);
-int Json_has(long long j, const char* key);
+long long Json_is_valid(long long j);
+long long Json_has(long long j, const char* key);
+void Json_free(long long j);
 char* Json_to_pretty_string(long long j);
+// The lowercase free-function spelling, aliases of the above.
+long long json_parse(const char* text);
+long long json_new(void);
+char* json_get_string(long long j, const char* key);
+long long json_get_int(long long j, const char* key);
+void json_set_string(long long j, const char* key, const char* val);
+void json_set_int(long long j, const char* key, long long val);
+char* json_stringify(long long j);
+void json_free(long long j);
 
 // File
 char* File_read(const char* path);

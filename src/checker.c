@@ -1162,11 +1162,31 @@ static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
 }
 
 
+// A Json value IS a `long long` handle: an index into the runtime's node arena.
+// codegen lowers TYPE_JSON to `long long` (codegen_stmt.c, wyn_collection_c_type),
+// so json and int are ONE representation with two spellings, exactly as enum and int
+// are. Json.parse carries the named type - that is what gives `doc.get_string(k)` a
+// receiver to dispatch on, which used to emit nothing at all - and this pair of
+// predicates is what keeps every program that holds a handle in a plain `int`
+// checking exactly as before.
+//
+// Stated ONCE and used at all four sites that must know: call-argument
+// compatibility, overload conversion, comparison families, assignment. bool, enum
+// and channel each restate the same idea inline at a DIFFERENT subset of those sites
+// (which is why a channel still cannot be compared to an int); folding all of them
+// behind one predicate is logged, not done in a JSON change.
+static bool type_is_int_handle(const Type* t) {
+    return t && (t->kind == TYPE_INT || t->kind == TYPE_JSON);
+}
+static bool json_int_alias(const Type* a, const Type* b) {
+    return a && b && a->kind != b->kind && type_is_int_handle(a) && type_is_int_handle(b);
+}
+
 static bool wyn_is_type_compatible(Type* expected, Type* actual) {
     if (!expected || !actual) {
         return false;
     }
-    
+
     // Exact type match
     if (expected->kind == actual->kind) {
         return true;
@@ -1230,6 +1250,11 @@ static bool wyn_is_type_compatible(Type* expected, Type* actual) {
     // through int-typed function params - e.g. fn produce(ch: int, ...)).
     if ((expected->kind == TYPE_CHANNEL && actual->kind == TYPE_INT) ||
         (expected->kind == TYPE_INT && actual->kind == TYPE_CHANNEL)) {
+        return true;
+    }
+
+    // Allow json <-> int, for exactly the channel reason above - see json_int_alias.
+    if (json_int_alias(expected, actual)) {
         return true;
     }
 
@@ -2035,7 +2060,10 @@ static bool can_convert_type(Type* from, Type* to) {
     // Allow enum <-> int (enums are represented as ints)
     if ((from->kind == TYPE_ENUM && to->kind == TYPE_INT) ||
         (from->kind == TYPE_INT && to->kind == TYPE_ENUM)) return true;
-    
+
+    // Allow json <-> int, for the same reason - see json_int_alias.
+    if (json_int_alias(from, to)) return true;
+
     return false;
 }
 
@@ -2533,9 +2561,12 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 //   - generic type params (T): unknown, stay permissive so
                 //     `a == b` inside a generic fn still checks
                 // struct == struct and struct ordering are handled above.
-                bool left_num  = left->kind == TYPE_INT || left->kind == TYPE_FLOAT ||
+                // type_is_int_handle covers int AND json: a Json value is an arena
+                // index, so `a == b` on two handles (do these documents alias?) and
+                // `h > 500` are the same C comparison an int gets.
+                bool left_num  = type_is_int_handle(left) || left->kind == TYPE_FLOAT ||
                                  left->kind == TYPE_BOOL || left->kind == TYPE_ENUM;
-                bool right_num = right->kind == TYPE_INT || right->kind == TYPE_FLOAT ||
+                bool right_num = type_is_int_handle(right) || right->kind == TYPE_FLOAT ||
                                  right->kind == TYPE_BOOL || right->kind == TYPE_ENUM;
                 bool types_compatible =
                     (left_num && right_num) ||
@@ -4828,7 +4859,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     }
                 }
                 if (sym_inner->kind != val_inner->kind &&
-                    sym_inner->kind != TYPE_STRUCT) {
+                    sym_inner->kind != TYPE_STRUCT &&
+                    // json and int are one representation - see json_int_alias. An
+                    // `int`-declared variable holding a Json.parse handle (or the
+                    // reverse) is the long-standing spelling and stays legal.
+                    !json_int_alias(sym_inner, val_inner)) {
                     fprintf(stderr, "\033[31m\033[1mError:\033[0m Type mismatch in assignment to '%.*s' (line %d)\n",
                             expr->assign.name.length, expr->assign.name.start, expr->assign.name.line);
                     fprintf(stderr, "  \033[1mExpected:\033[0m %s\n", type_to_string(sym_inner));
@@ -9551,6 +9586,7 @@ bool types_equal(Type* a, Type* b) {
         case TYPE_MAP:
         case TYPE_OPTIONAL:
         case TYPE_UNION:
+        case TYPE_JSON:
             // For now, just compare kinds - more detailed comparison can be added later
             return true;
         default:
@@ -9574,6 +9610,11 @@ const char* type_to_string(Type* type) {
         case TYPE_MAP: return "map";
         case TYPE_OPTIONAL: return "optional";
         case TYPE_UNION: return "union";
+        // Without this a Json argument mismatch read "Expected: unknown (unknown)",
+        // which names nothing the programmer wrote. (TYPE_SET and TYPE_CHANNEL are
+        // still missing here; same one-line shape, logged rather than fixed in a
+        // JSON change.)
+        case TYPE_JSON: return "json";
         default: return "unknown";
     }
 }

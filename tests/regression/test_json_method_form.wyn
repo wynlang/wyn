@@ -15,8 +15,8 @@
 // lowers exactly as `Json.m(j, a)` does, by prefix rather than a method whitelist,
 // so the two spellings cannot drift apart again - which is how this arose.
 //
-// EXPECT: ns={"i": 1, "s": "x", "b": 1}
-// EXPECT: mt={"i": 1, "s": "x", "b": 1}
+// EXPECT: ns={"i": 1, "s": "x", "b": true}
+// EXPECT: mt={"i": 1, "s": "x", "b": true}
 // EXPECT: identical=true
 // EXPECT: roundtrip i=1 s=x
 // EXPECT: pretty-nonempty=true
@@ -40,10 +40,9 @@ fn build_mt() -> string {
 fn main() {
     var ns = build_ns()
     var mt = build_mt()
-    // NOTE `"b": 1`, not `"b": true`: Json.set_bool serialises a bool as a
-    // NUMBER, so the JSON loses the boolean type. Pre-existing and unrelated to
-    // the method form (the namespace spelling does the same), asserted as it
-    // actually behaves rather than as a wish. Logged in ROADMAP.
+    // `"b": true`. This used to read `"b": 1`, because Json.set_bool called
+    // json_set_int and the document lost the boolean type; the arena has a real
+    // boolean node kind, so the unification fixed it.
     println("ns=${ns}")
     println("mt=${mt}")
 
@@ -52,10 +51,9 @@ fn main() {
     println("identical=${ns == mt}")
 
     // stringify -> parse -> get is the loop real code performs (build a body, send
-    // it; receive a body, read it), and #294 made it closed. Reading uses the
-    // NAMESPACE getters deliberately: Json.parse returns the int-typed handle side
-    // of the documented split representation, so method-form getters on a parsed
-    // handle are a separate, still-open item (see ROADMAP) and are not asserted here.
+    // it; receive a body, read it), and #294 made it closed. Method-form getters on a
+    // PARSED handle were a separate open item while Json had two representations;
+    // tests/errors/run_json_model_test.sh covers them now that it has one.
     var j = Json.parse(mt)
     println("roundtrip i=${Json.get_int(j, "i")} s=${Json.get_string(j, "s")}")
 

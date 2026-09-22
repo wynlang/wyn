@@ -65,7 +65,10 @@ const char* wyn_ffi_ptr_c_type(Token t) {
 const char* wyn_collection_c_type(Token t) {
     if (t.length == 7 && memcmp(t.start, "HashMap", 7) == 0) return "WynHashMap*";
     if (t.length == 7 && memcmp(t.start, "HashSet", 7) == 0) return "WynHashSet*";
-    if (t.length == 4 && memcmp(t.start, "Json", 4) == 0) return "WynJson*";
+    // A Json value IS its handle: a long long index into the runtime's node arena.
+    // This said "WynJson*" while Json.parse/Json.get_* already dealt in handles, so
+    // a `Json` parameter or field could not be passed one.
+    if (t.length == 4 && memcmp(t.start, "Json", 4) == 0) return "long long";
     return NULL;
 }
 
