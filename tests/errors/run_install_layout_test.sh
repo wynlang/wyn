@@ -21,6 +21,14 @@ cp -r "$ROOT/src" "$TMP/install/"
 cp "$ROOT/VERSION" "$TMP/install/" 2>/dev/null || echo "0.0.0-test" > "$TMP/install/VERSION"
 [ -d "$ROOT/vendor/minicoro" ] && cp -r "$ROOT/vendor/minicoro" "$TMP/install/vendor/"
 [ -f "$ROOT/runtime/libwyn_rt.a" ] && cp "$ROOT/runtime/libwyn_rt.a" "$TMP/install/runtime/"
+# The vendored TLS library is a LINK INPUT for every program that calls Http.* over
+# https:// (runtime/libwyn_rt.a holds wyn_tls.o + wyn_https.o, which reference it), so
+# it has to be part of the install layout - see release.yml's Package step. Copied
+# here so arm 4 below can prove the PACKAGED layout still has HTTPS, on every PR,
+# rather than discovering it at a tag.
+mkdir -p "$TMP/install/vendor/mbedtls/lib"
+[ -f "$ROOT/vendor/mbedtls/lib/libmbedtls_wyn.a" ] && \
+  cp "$ROOT/vendor/mbedtls/lib/libmbedtls_wyn.a" "$TMP/install/vendor/mbedtls/lib/"
 W="$TMP/install/bin/wyn"
 
 # 1. hello world from a foreign cwd
@@ -48,5 +56,30 @@ rm -rf demo
 cd demo
 out=$(perl -e 'alarm(120); exec @ARGV' -- "$W" test 2>&1); rc=$?
 if [ $rc -eq 0 ] && echo "$out" | grep -q "passed"; then ok "wyn new + wyn test in installed layout"; else bad "new+test: rc=$rc [$(echo "$out" | tail -2)]"; fi
+
+# 4. The installed layout can still do HTTPS. Asserted NEGATIVELY, against the
+# runtime's own message, because that is the only difference a user can see: when the
+# TLS library is missing from the layout, programs still BUILD and still RUN - every
+# https:// call just returns "HTTPS unavailable: this binary was linked without the
+# TLS backend". A packaging omission is therefore invisible to every other arm here.
+# .invalid can never resolve (RFC 2606), so this needs no network.
+cd "$TMP/work"
+cat > tlscheck.wyn <<'WYN'
+fn main() {
+    var body = http_get("https://wyn-install-canary.invalid/x")
+    println("err=${http_error()}")
+    println("len=${body.len()}")
+}
+WYN
+out=$(perl -e 'alarm(120); exec @ARGV' -- "$W" run tlscheck.wyn 2>&1); rc=$?
+if [ $rc -ne 0 ]; then
+  bad "installed layout builds an HTTPS program: rc=$rc [$(echo "$out" | tail -2)]"
+elif echo "$out" | grep -q "HTTPS unavailable"; then
+  bad "installed layout has NO TLS backend - vendor/mbedtls/lib is missing from the package"
+elif echo "$out" | grep -q "len=0"; then
+  ok "installed layout links the TLS backend (https fails cleanly, not 'unavailable')"
+else
+  bad "installed layout HTTPS canary: unexpected output [$(echo "$out" | tail -2)]"
+fi
 
 echo ""; echo "install-layout: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]
