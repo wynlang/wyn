@@ -209,6 +209,13 @@ static const UiCmd CMDS[] = {
     {"ui", "tui", "Tools", "This command browser", ARG_NONE, NULL, NULL, 0,
      NULL, NULL, 0, 1,
      {{"--list-commands", NULL, "Print the dispatch names, one per line"}, {0,0,0}}},
+    // INTERNAL, hidden from the browser: prints every name the checker's builtin
+    // registry blesses, for tests/errors/run_release_slim_registry_test.sh. It is
+    // listed here rather than spelled so run_ui_coverage_test.sh's grep misses it,
+    // because a command that dodges its own coverage gate is how the table and the
+    // dispatch drift apart in the first place.
+    {"dump-builtins", NULL, "Tools", "internal: print the builtin registry", ARG_NONE, NULL, NULL, 0,
+     NULL, NULL, 0, 1, NOFLAGS},
 };
 static const int NCMD = (int)(sizeof(CMDS) / sizeof(CMDS[0]));
 static const char* GROUPS[] = {"Develop", "Build", "Packages", "Tools"};
