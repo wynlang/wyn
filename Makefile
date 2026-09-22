@@ -466,6 +466,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_clean_output_test.sh
 	@echo "=== Running interpolated-receiver method test ==="
 	@WYN=./wyn bash tests/errors/run_interp_method_test.sh
+	@echo "=== Running interpolation error-position gate (V-14) ==="
+	@WYN=./wyn bash tests/errors/run_interp_error_line_test.sh
 	@echo "=== Running UTF-8 padding test ==="
 	@WYN=./wyn bash tests/errors/run_pad_utf8_test.sh
 	@echo "=== Running Json one-model test ==="

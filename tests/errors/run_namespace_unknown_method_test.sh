@@ -371,10 +371,13 @@ check "and still runs correctly" \
 # message BODY alone cannot tell one emitter from three, so these pin its header
 # too - break it and the namespace, struct and string arms fail together.
 # ---------------------------------------------------------------------------
-# NOT written as `print("${p.frobnicate()}")`: inside an interpolation the method
-# token carries line 1, so this diagnostic reports "Error at line 1". That is a
-# pre-existing span bug, unrelated and not fixed here - the call is spelled plainly
-# so this arm measures the emitter, not that bug.
+# This arm used to be spelled plainly ON PURPOSE, with a comment saying the
+# interpolated form `print("${p.frobnicate()}")` reported "Error at line 1" because
+# the method token inside a `${}` carried line 1 - a pre-existing span bug it did not
+# want to measure. That bug is FIXED (PLAN_v1.22 V-14; the sub-lexer is now re-based
+# onto the real file), so both spellings are checked here: the plain one still
+# measures the emitter, and the interpolated one holds the line down so the old
+# behaviour cannot come back through this gate either.
 cat > structmiss.wyn <<'EOF'
 struct P { x: int }
 fn main() {
@@ -387,6 +390,17 @@ check "a struct method typo still says struct" \
     "$(echo "$out" | grep -c "Error at line 4: struct 'P' has no method 'frobnicate'")" "1"
 check "a struct method typo is not called a namespace" \
     "$(echo "$out" | grep -c "on namespace")" "0"
+
+cat > structmiss_interp.wyn <<'EOF'
+struct P { x: int }
+fn main() {
+    var p = P { x: 1 }
+    print("v=${p.frobnicate()}")
+}
+EOF
+out="$("$WYN_ABS" check structmiss_interp.wyn 2>&1)"
+check "the same typo inside \${} names ITS line, not line 1" \
+    "$(echo "$out" | grep -c "Error at line 4: struct 'P' has no method 'frobnicate'")" "1"
 
 printf 'fn main() { print("hi".uppr()) }\n' > strmiss.wyn
 out="$("$WYN_ABS" check strmiss.wyn 2>&1)"
