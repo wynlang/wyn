@@ -225,18 +225,15 @@ const char* wyn_string_concat_safe(const char* left, const char* right) {
     // would be released twice (use-after-free) and, for the old in-place grow path,
     // would also mutate a live caller-owned string. Do not reintroduce aliasing
     // "optimizations" here; they were the source of a heap-use-after-free.
-    extern int wyn_rc_is_heap(const void*);
     size_t l2 = strlen(right);
-    size_t l1;
-    // Mirror of WynRcHeaderFull (wyn_rc.c) - must stay byte-identical. magic2 is
-    // the complement sentinel appended last so the leading fields keep their offsets.
-    typedef struct { unsigned int magic; _Atomic int refcount; unsigned int capacity; unsigned int length; unsigned int magic2; } RcHdr;
-    if (wyn_rc_is_heap(left)) {
-        RcHdr* left_hdr = (RcHdr*)((char*)left - sizeof(RcHdr));
-        l1 = left_hdr->length ? left_hdr->length : strlen(left);
-    } else {
-        l1 = strlen(left);
-    }
+    // The length cache is read and written through wyn_rc_get_length /
+    // wyn_rc_set_length, NOT through a local mirror of the RC header. This used to
+    // re-declare WynRcHeaderFull by hand ("must stay byte-identical") and inline
+    // the cached-length-or-strlen rule a second time; that is the same duplication
+    // that left 36 constructors without a length at all. Cost is unchanged - the
+    // accessors do the wyn_rc_is_heap() check this code was calling anyway.
+    size_t l1 = wyn_rc_get_length(left);
+    if (l1 == 0) l1 = strlen(left);
     // Allocate new buffer with power-of-2 over-allocation
     size_t alloc_size = l1 + l2 + 1;
     if (alloc_size < 64) alloc_size = 64;
@@ -245,11 +242,8 @@ const char* wyn_string_concat_safe(const char* left, const char* right) {
     memcpy(r, left, l1);
     memcpy(r + l1, right, l2);
     r[l1 + l2] = 0;
-    // Cache length on new string
-    if (wyn_rc_is_heap(r)) {
-        RcHdr* rh = (RcHdr*)((char*)r - sizeof(RcHdr));
-        rh->length = (unsigned int)(l1 + l2);
-    }
+    // Cache length on the new string
+    wyn_rc_set_length(r, (unsigned int)(l1 + l2));
     return r;
 }
 
@@ -1401,11 +1395,39 @@ WynRange wyn_range(int start, int end) {
 bool range_has_next(WynRange* r) { return r->current < r->end; }
 int range_next(WynRange* r) { return r->current++; }
 
+// `.len()` for every string in the language, and the internal length source for
+// substring/replace/pad/... below.
+//
+// THE CACHE IS FILLED HERE, ON A MISS, AND THAT IS THE POINT.
+// The RC header carries a cached length, which is why .len() is advertised O(1) -
+// but it is only populated by the constructors that remember to call
+// wyn_rc_set_length(). 36 of the runtime's string constructors do not, so their
+// results fell through to strlen() on EVERY call:
+//
+//     "y".repeat(100000).len()     ->    5 ns/call   (cached at construction)
+//     sb_of(100000).len()          -> 2560 ns/call   (O(n), ~500x slower)
+//     sb_of(10000).len()           ->  270 ns/call   ... linear in length
+//
+// and it was never only StringBuilder.to_string(): .trim(), .replace(),
+// .capitalize() and string interpolation all measured ~2500ns at n=100000 while
+// repeat/upper/substring/join measured 5ns.
+//
+// Filling the cache at each of those 36 sites would be 36 copies of one rule, and
+// the 37th constructor would be written without it - this codebase's most
+// expensive recurring defect shape. Filling it HERE makes the cache unconditional
+// for every constructor, present and future, in one place.
+//
+// Safe to memoize because an RC string is immutable once returned: nothing in the
+// runtime grows or edits one in place (wyn_rc_set_capacity has zero callers - the
+// realloc paths allocate a NEW buffer and release the old). A length of 0 doubles
+// as "not yet known", which costs nothing: strlen("") is free.
 int string_length(const char* str) {
     if (!str) return 0;
     unsigned int cached = wyn_rc_get_length(str);
     if (cached > 0) return (int)cached;
-    return strlen(str);
+    size_t n = strlen(str);
+    wyn_rc_set_length(str, (unsigned int)n);  // no-op for literals / non-RC pointers
+    return (int)n;
 }
 char* string_substring(const char* str, int start, int end) {
     if (!str) return wyn_strdup("");

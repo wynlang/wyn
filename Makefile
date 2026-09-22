@@ -526,6 +526,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_unused_shadow_test.sh
 	@echo "=== Running StringBuilder aliasing test ==="
 	@WYN=./wyn bash tests/errors/run_stringbuilder_test.sh
+	@echo "=== Running .len() O(1) length-cache gate ==="
+	@WYN=./wyn bash tests/errors/run_len_cache_test.sh
 	@echo "=== Running Task.select diagnostic gate ==="
 	@WYN=./wyn bash tests/errors/run_task_select_diagnostic_test.sh
 	@echo "=== Running HTTP server concurrent-load gate ==="
