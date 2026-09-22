@@ -30,10 +30,20 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Paths ("Doc.tags", "Order.items[]") only ever appear in messages, so a fixed
- * bound is fine; it is generous enough that truncation is unreachable in
- * practice and harmless if reached. */
-#define SCHEMA_PATH_MAX 256
+/* Names and paths only ever appear in messages, so fixed bounds are fine - but
+ * they have to be RELATED, not independently chosen. A path is composed from at
+ * most two names plus a two-character separator ("Enum::Variant", "Doc.tags"),
+ * so the path buffer must hold 2*SCHEMA_NAME_MAX + 3. With PATH == NAME == 128
+ * and 256 respectively that was false by two bytes, and glibc's fortified
+ * snprintf proved it: gcc -Werror=format-truncation failed the Linux CI job
+ * while clang on macOS said nothing. The _Static_assert below is the fix - the
+ * numbers cannot drift apart again without failing the build everywhere. */
+#define SCHEMA_NAME_MAX  128
+#define SCHEMA_PATH_MAX  512
+#define SCHEMA_CHAIN_MAX 512
+_Static_assert(SCHEMA_PATH_MAX >= 2 * SCHEMA_NAME_MAX + 3,
+               "a path is <name> <2-char separator> <name> plus a NUL; "
+               "SCHEMA_PATH_MAX must hold that or snprintf can truncate");
 
 /* ------------------------------------------------------------------- buffer */
 
@@ -180,13 +190,13 @@ static void cycle_chain(const Ctx* c, Token name, char* out, size_t outlen)
     size_t used = 0;
     out[0] = '\0';
     for (int i = start; i < c->depth; i++) {
-        char one[128];
+        char one[SCHEMA_NAME_MAX];
         name_to_cstr(one, sizeof(one), c->stack[i]);
         int n = snprintf(out + used, outlen - used, "%s -> ", one);
         if (n < 0 || (size_t)n >= outlen - used) return;
         used += (size_t)n;
     }
-    char self[128];
+    char self[SCHEMA_NAME_MAX];
     name_to_cstr(self, sizeof(self), name);
     snprintf(out + used, outlen - used, "%s", self);
 }
@@ -232,7 +242,7 @@ static void emit_object(Ctx* c, const Prop* props, int nprops, const char* path)
             emit(&c->buf, "}");
         } else {
             char child[SCHEMA_PATH_MAX];
-            char fname[128];
+            char fname[SCHEMA_NAME_MAX];
             name_to_cstr(fname, sizeof(fname), props[i].name);
             snprintf(child, sizeof(child), "%s.%s", path, fname);
             /* Option<T> contributes T's schema; its optionality is expressed by
@@ -281,7 +291,7 @@ static void emit_object(Ctx* c, const Prop* props, int nprops, const char* path)
 static void schema_of_struct(Ctx* c, const Type* t, const char* path)
 {
     Token nm = type_name(t);
-    char  nmbuf[128];
+    char  nmbuf[SCHEMA_NAME_MAX];
     name_to_cstr(nmbuf, sizeof(nmbuf), nm);
 
     if (t->struct_type.field_count <= 0 || !t->struct_type.field_names ||
@@ -298,7 +308,7 @@ static void schema_of_struct(Ctx* c, const Type* t, const char* path)
 
     for (int i = 0; i < c->depth; i++) {
         if (token_eq(c->stack[i], nm)) {
-            char chain[512];
+            char chain[SCHEMA_CHAIN_MAX];
             cycle_chain(c, nm, chain, sizeof(chain));
             fail(c,
                  "%s: recursive type '%s' cannot be derived - the provider's "
@@ -346,7 +356,7 @@ static void schema_of_struct(Ctx* c, const Type* t, const char* path)
 static void schema_of_enum(Ctx* c, const Type* t, const char* path)
 {
     Token nm = type_name(t);
-    char  nmbuf[128];
+    char  nmbuf[SCHEMA_NAME_MAX];
     name_to_cstr(nmbuf, sizeof(nmbuf), nm);
 
     int nv = t->enum_type.variant_count;
@@ -369,7 +379,7 @@ static void schema_of_enum(Ctx* c, const Type* t, const char* path)
 
     for (int i = 0; i < c->depth; i++) {
         if (token_eq(c->stack[i], nm)) {
-            char chain[512];
+            char chain[SCHEMA_CHAIN_MAX];
             cycle_chain(c, nm, chain, sizeof(chain));
             fail(c,
                  "%s: recursive type '%s' cannot be derived - the provider's "
@@ -463,7 +473,7 @@ static void schema_of_enum(Ctx* c, const Type* t, const char* path)
         }
 
         char vpath[SCHEMA_PATH_MAX];
-        char vname[128];
+        char vname[SCHEMA_NAME_MAX];
         name_to_cstr(vname, sizeof(vname), t->enum_type.variants[v]);
         snprintf(vpath, sizeof(vpath), "%s::%s", nmbuf, vname);
         emit_object(c, props, np + 1, vpath);
@@ -490,7 +500,7 @@ static void schema_of_type(Ctx* c, const Type* t, const char* path)
         return;
     }
 
-    char nmbuf[128];
+    char nmbuf[SCHEMA_NAME_MAX];
     name_to_cstr(nmbuf, sizeof(nmbuf), type_name(t));
 
     switch (t->kind) {
