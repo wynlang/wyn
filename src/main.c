@@ -39,6 +39,10 @@ int _fileno(FILE* stream);
 #include "commands.h"
 #include "toml.h"
 #include "package.h"
+// For wyn_cli_accepts_flag / wyn_cli_command_choices: src/cmd_ui.c's command table is
+// the single source of truth for each command's accepted flags and positional choices,
+// and the dispatch below validates against it rather than carrying a second copy.
+#include "cmd_ui.h"
 
 // Single source of truth for runtime source files
 const char* wyn_runtime_sources[] = {
@@ -1401,7 +1405,107 @@ int main(int argc, char** argv) {
     }
     
     char* command = argv[1];
-    
+
+    // ─── AN UNKNOWN FLAG IS AN ERROR (V-13) ──────────────────────────────────
+    //
+    // `wyn build x.wyn --wasm` exited 0, printed a green ✓, and left a NATIVE
+    // Mach-O/ELF binary. A false success is the worst failure mode available: a
+    // first-time visitor's first command produced a silently wrong artifact and the
+    // tool said it worked. The cause is the tail of build's flag loop,
+    //     else if (!dir) dir = argv[i];
+    // so an unrecognised flag became the FILE if none had been seen yet and was
+    // DISCARDED otherwise - which is why the behaviour depended on POSITION:
+    //     wyn build x.wyn --wasm  ->  0, ✓, native binary      (flag discarded)
+    //     wyn build --wasm x.wyn  ->  1, "No main.wyn found in --wasm"
+    // while `--release` worked in either position. `--relase`, `--debugg`, `-O3` and
+    // `--target=wasm` were all swallowed the same way.
+    //
+    // The accepted set is read from CMDS[] in src/cmd_ui.c - the table that already
+    // IS the single source of truth for commands, gated against this dispatch in
+    // both directions by tests/errors/run_ui_coverage_test.sh. A second flag table
+    // here would be the "one rule with more than one copy" shape that produced the
+    // bug; see wyn_cli_accepts_flag().
+    if (command[0] != '-') {
+        const char* sub = (argc > 2 && argv[2][0] != '-') ? argv[2] : NULL;
+        // The bare-file form (`wyn prog.wyn --release`) is `run` with the command
+        // slot holding the path, so validate it against run's flag set.
+        const char* vcmd = command;
+        int first = 2;
+        {
+            const char* ext = strrchr(command, '.');
+            if (ext && strcmp(ext, ".wyn") == 0) { vcmd = "run"; first = 1; sub = NULL; }
+        }
+        // Commands that hand their tail to a CHILD: everything from the first
+        // positional on belongs to the child, and a program's own `--verbose` is
+        // indistinguishable from one of ours (see the argument-split comment under
+        // `run`). Policing that region would break every Wyn CLI tool, so stop there.
+        int stop_at_positional = (strcmp(vcmd, "run") == 0 ||
+                                  strcmp(vcmd, "test") == 0 ||
+                                  strcmp(vcmd, "debug") == 0);
+        if (wyn_cli_command_known(vcmd, sub)) {
+            for (int i = first; i < argc; i++) {
+                const char* a = argv[i];
+                if (a[0] != '-' || a[1] == '\0') {     // a positional (or a bare "-")
+                    if (stop_at_positional) break;
+                    continue;
+                }
+                if (strcmp(a, "--") == 0) { if (stop_at_positional) break; continue; }
+                int takes_value = 0;
+                if (wyn_cli_accepts_flag(vcmd, sub, a, &takes_value)) {
+                    if (takes_value) i++;              // skip the flag's value
+                    continue;
+                }
+                // Not accepted. Say so, name it, and help.
+                char known[512];
+                wyn_cli_flag_list(vcmd, sub, known, sizeof(known));
+                fprintf(stderr, "\033[31mError:\033[0m unknown flag '%s' for '\033[1mwyn %s%s%s\033[0m'\n",
+                        a, vcmd, sub ? " " : "", sub ? sub : "");
+                // `--flag=value` is never accepted anywhere in this CLI; if the part
+                // before the '=' IS a known flag, the user only got the spelling
+                // wrong. `wyn build x.wyn --target=wasm` silently built a native
+                // binary before this, which is the worst possible answer.
+                const char* eq = strchr(a, '=');
+                if (eq) {
+                    char head[128];
+                    size_t hl = (size_t)(eq - a);
+                    if (hl < sizeof(head)) {
+                        memcpy(head, a, hl); head[hl] = '\0';
+                        if (wyn_cli_accepts_flag(vcmd, sub, head, NULL)) {
+                            fprintf(stderr, "  \033[34mHelp:\033[0m flags take their value as a"
+                                    " separate argument: \033[1m%s %s\033[0m\n", head, eq + 1);
+                        }
+                    }
+                }
+                // Nearest accepted flag by edit distance - the same measure the
+                // checker uses for identifier typos - capped so an unrelated flag
+                // gets no guess.
+                if (known[0]) {
+                    extern int levenshtein_distance(const char*, const char*);
+                    char buf[512]; snprintf(buf, sizeof(buf), "%s", known);
+                    char* save = NULL; (void)save;
+                    const char* best = NULL; int best_d = 0; char bestbuf[128] = "";
+                    char* tok = strtok(buf, " ");
+                    while (tok) {
+                        int d = levenshtein_distance(a, tok);
+                        if (!best || d < best_d) {
+                            best_d = d; best = tok;
+                            snprintf(bestbuf, sizeof(bestbuf), "%s", tok);
+                        }
+                        tok = strtok(NULL, " ");
+                    }
+                    int limit = (int)(strlen(a) / 3); if (limit < 2) limit = 2;
+                    if (best && best_d <= limit)
+                        fprintf(stderr, "  \033[34mHelp:\033[0m did you mean \033[1m%s\033[0m?\n", bestbuf);
+                    fprintf(stderr, "  Accepted by 'wyn %s': %s\n", vcmd, known);
+                } else {
+                    fprintf(stderr, "  'wyn %s' takes no flags.\n", vcmd);
+                }
+                fprintf(stderr, "  Run \033[1mwyn help\033[0m for the command reference.\n");
+                return 1;
+            }
+        }
+    }
+
     // Handle --version and -v flags
     // wyn deploy <target> - deploy to server via SSH
     if (strcmp(command, "deploy") == 0) {
@@ -3143,10 +3247,19 @@ int main(int argc, char** argv) {
     }
     
     if (strcmp(command, "cross") == 0) {
+        // ONE list, printed here and by the unknown-target error below. They were two
+        // hand-written lists and they DISAGREED: this usage omitted wasm while the
+        // error advertised it, so the tool contradicted itself about what it supports
+        // depending on how you got it wrong. Both now read
+        // wyn_cli_command_choices("cross") - the `choices` field of the cross row in
+        // src/cmd_ui.c's table, which the TUI's target picker already used.
+        const char* _x_targets = wyn_cli_command_choices("cross", NULL);
+        if (!_x_targets) _x_targets = "linux|macos|windows|ios|android|wasm";
         if (argc < 4) {
             fprintf(stderr, "Usage: wyn cross <target> <file.wyn>\n");
-            fprintf(stderr, "Targets: linux, linux-x64, linux-arm64, macos, macos-x64, macos-arm64,\n");
-            fprintf(stderr, "         windows, windows-x64, ios, android\n");
+            fprintf(stderr, "Targets: %s\n", _x_targets);
+            fprintf(stderr, "  (aliases also accepted: linux-x64, linux-amd64, linux-aarch64,\n");
+            fprintf(stderr, "   windows-x64, win64, wasm32)\n");
             return 1;
         }
         
@@ -3562,7 +3675,8 @@ int main(int argc, char** argv) {
             printf("Compiling to WebAssembly via emcc...\n");
         } else {
             fprintf(stderr, "Unknown target: %s\n", target);
-            fprintf(stderr, "Available: linux, macos, windows, ios, android, wasm\n");
+            // Same list as the usage text above, from the same place. See there.
+            fprintf(stderr, "Available: %s\n", _x_targets);
             return 1;
         }
 

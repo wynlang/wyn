@@ -568,6 +568,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_sqlite_link_order_test.sh
 	@echo "=== Running wyn ui coverage test ==="
 	@WYN=./wyn bash tests/errors/run_ui_coverage_test.sh
+	@echo "=== Running CLI flag-honesty gate (an unknown flag is an error) ==="
+	@WYN=./wyn bash tests/errors/run_cli_flag_honesty_test.sh
 	@echo "=== Running install-layout canary ==="
 	@WYN=./wyn bash tests/errors/run_install_layout_test.sh
 	@echo "=== Running unsupported-field-type honesty gates ==="

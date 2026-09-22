@@ -51,42 +51,58 @@ typedef struct {
     const char* choice_flag; // "--template"; NULL = positional BEFORE the arg
     int takeover;            // long-running: exec() and never return to the TUI
     int hidden;              // in --list-commands but not in the browser
-    UiFlag flags[7];
+    // Per-command ACCEPTED FLAGS, and since V-13 this is not only the TUI's form:
+    // main.c validates every flag-shaped argument against this list and refuses an
+    // unknown one, so a row that is short here makes a working invocation fail.
+    // 14 slots because `build` accepts 11. NULL `name` terminates the list.
+    UiFlag flags[14];
 } UiCmd;
 
-#define NOFLAGS {{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0}}
+#define NOFLAGS {{0,0,0}}
 
 static const UiCmd CMDS[] = {
     // ── Develop ──
+    // wyn's own flags come BEFORE the path; everything after it is the PROGRAM's
+    // (src/main.c's argument-split comment), so main.c only validates the leading
+    // region for this command.
     {"run", NULL, "Develop", "Compile and run", ARG_FILE, "file.wyn", ".wyn", 1,
      NULL, NULL, 0, 0,
      {{"--release", NULL, "Full optimizations (-O3)"},
       {"--fast", NULL, "Skip optimizations (fastest compile)"},
       {"--debug", NULL, "Keep .c and .out artifacts"},
-      {"--mem-stats", NULL, "Print memory statistics"}, {0,0,0},{0,0,0},{0,0,0}}},
+      {"--mem-stats", NULL, "Print memory statistics"},
+      {"--shared", NULL, "Build a C shared library instead of running"},
+      {"--python", NULL, "Build a Python extension module instead of running"},
+      {"--node", NULL, "Build a Node native addon instead of running"},
+      {"-e", "code", "Run a one-liner instead of a file"},
+      {"-o", "name", "Output artifact name (library modes)"},
+      {"-O1", NULL, "Optimization level 1"},
+      {"-O2", NULL, "Optimization level 2"}, {0,0,0}}},
     {"check", NULL, "Develop", "Type-check without compiling", ARG_FILE, "file.wyn", ".wyn", 1,
      NULL, NULL, 0, 0, NOFLAGS},
     {"fmt", NULL, "Develop", "Format source file or directory", ARG_PATH, "file.wyn or dir", ".wyn", 1,
      NULL, NULL, 0, 0,
-     {{"--check", NULL, "Report differences, do not rewrite"}, {0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0}}},
+     {{"--check", NULL, "Report differences, do not rewrite"}, {0,0,0}}},
     {"fix", NULL, "Develop", "Migrate removed syntax", ARG_PATH, "file.wyn or dir", ".wyn", 1,
      NULL, NULL, 0, 0,
-     {{"--check", NULL, "Report changes, do not rewrite"}, {0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0}}},
+     {{"--check", NULL, "Report changes, do not rewrite"}, {0,0,0}}},
     {"test", NULL, "Develop", "Run project tests", ARG_TEXT, "filter or dir (optional)", NULL, 0,
      NULL, NULL, 0, 0, NOFLAGS},
     {"watch", NULL, "Develop", "Watch and auto-rebuild", ARG_FILE, "file.wyn", ".wyn", 1,
-     NULL, NULL, 1, 0, NOFLAGS},
+     NULL, NULL, 1, 0,
+     {{"--run", NULL, "Run the program after each rebuild"}, {0,0,0}}},
     {"design", NULL, "Develop", "Open the Visual Wyn form designer", ARG_FILE, "Form1.json (optional)", ".json", 0,
-     NULL, NULL, 1, 0, NOFLAGS},
+     NULL, NULL, 1, 0,
+     {{"--help", NULL, "Show design usage"}, {"-h", NULL, "Show design usage"}, {0,0,0}}},
     {"repl", NULL, "Develop", "Interactive REPL", ARG_NONE, NULL, NULL, 0,
      NULL, NULL, 1, 0, NOFLAGS},
     {"bench", NULL, "Develop", "Benchmark with timing", ARG_FILE, "file.wyn", ".wyn", 1,
      NULL, NULL, 0, 0,
      {{"--iterations", "N", "Number of runs (default 10)"},
-      {"--compare", NULL, "Show previous results only"}, {0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0}}},
+      {"--compare", NULL, "Show previous results only"}, {0,0,0}}},
     {"doc", NULL, "Develop", "Generate documentation", ARG_FILE, "file.wyn (optional)", ".wyn", 0,
      NULL, NULL, 0, 0,
-     {{"--html", NULL, "Emit HTML instead of markdown"}, {0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0}}},
+     {{"--html", NULL, "Emit HTML instead of markdown"}, {0,0,0}}},
     {"debug", NULL, "Develop", "Debug a program", ARG_FILE, "file.wyn", ".wyn", 1,
      NULL, NULL, 0, 0, NOFLAGS},
 
@@ -94,12 +110,32 @@ static const UiCmd CMDS[] = {
     {"build", NULL, "Build", "Build a binary or library", ARG_PATH, "file or dir (optional)", ".wyn", 0,
      NULL, NULL, 0, 0,
      {{"--release", NULL, "Full optimizations (-O3), stripped"},
+      {"--fast", NULL, "Skip optimizations (fastest compile)"},
+      // --debug is documented for `build` ("keeps the generated .wyn.c") and used by
+      // tests/golden/run_golden_tests.sh and the Makefile, so it MUST be accepted -
+      // omitting it here turned all 30 golden-C snapshots red. Measured while adding
+      // it: `wyn build` keeps the .c UNCONDITIONALLY, so the flag is currently a
+      // no-op for this command. Accepted, not silently ignored: refusing a documented
+      // spelling would be a worse lie than a redundant one.
+      {"--debug", NULL, "Keep the generated .wyn.c (build keeps it either way today)"},
       {"--shared", NULL, "Build a C shared library"},
       {"--python", NULL, "Build a Python extension module"},
+      {"--node", NULL, "Build a Node native addon"},
       {"--pgo", NULL, "Profile-guided optimization (with --release)"},
-      {"-o", "name", "Output binary name"}, {0,0,0},{0,0,0}}},
+      {"--app", NULL, "Package a native double-clickable GUI app"},
+      {"--app-plan", NULL, "Show the packaging decision without compiling"},
+      {"--app-target", "os", "macos | windows | linux (metadata for another platform)"},
+      {"--target", "target", "Cross-compile: delegates to wyn cross"},
+      {"-o", "name", "Output binary name"}, {0,0,0}}},
+    // THE ONE LIST OF CROSS TARGETS. `wyn cross`'s usage text and its unknown-target
+    // error both print this (wyn_cli_command_choices), because they used to be two
+    // hand-written lists that disagreed: the usage omitted wasm while the error
+    // advertised it. wasm IS implemented - src/main.c drives emcc - so it belongs
+    // here. The aliases main.c also normalises (linux-x64, linux-amd64,
+    // linux-aarch64, windows-x64, win64, wasm32) are deliberately NOT advertised:
+    // they are accepted spellings, not additional targets.
     {"cross", NULL, "Build", "Cross-compile for another platform", ARG_FILE, "file.wyn", ".wyn", 1,
-     "linux|linux-arm64|macos|macos-x64|macos-arm64|windows|ios|android", NULL, 0, 0, NOFLAGS},
+     "linux|linux-arm64|macos|macos-x64|macos-arm64|windows|ios|android|wasm", NULL, 0, 0, NOFLAGS},
     {"build-runtime", NULL, "Build", "Precompile runtime for fast builds", ARG_NONE, NULL, NULL, 0,
      NULL, NULL, 0, 0, NOFLAGS},
     {"clean", NULL, "Build", "Remove build artifacts", ARG_NONE, NULL, NULL, 0,
@@ -107,9 +143,16 @@ static const UiCmd CMDS[] = {
 
     // ── Packages ──
     {"init", "new", "Packages", "Create a new project", ARG_TEXT, "project name", NULL, 1,
-     "default|cli|api|web|lib", "--template", 0, 0, NOFLAGS},
+     "default|cli|api|web|lib", "--template", 0, 0,
+     {{"--template", "name", "default | cli | api | web | lib"},
+      {"--web", NULL, "Shorthand for --template web"},
+      {"--api", NULL, "Shorthand for --template api"},
+      {"--cli", NULL, "Shorthand for --template cli"},
+      {"--lib", "lang", "Scaffold a library (c | python | node)"}, {0,0,0}}},
     {"add", NULL, "Packages", "Add a dependency (C lib or git repo)", ARG_TEXT, "name or git url", NULL, 1,
-     NULL, NULL, 0, 0, NOFLAGS},
+     NULL, NULL, 0, 0,
+     {{"--as", "name", "Local name for the dependency"},
+      {"--list", NULL, "List known C libraries instead of adding"}, {0,0,0}}},
     {"remove", "rm", "Packages", "Remove a dependency", ARG_TEXT, "name", NULL, 1,
      NULL, NULL, 0, 0, NOFLAGS},
     {"list", NULL, "Packages", "List declared dependencies", ARG_NONE, NULL, NULL, 0,
@@ -117,7 +160,8 @@ static const UiCmd CMDS[] = {
     {"restore", NULL, "Packages", "Reinstall deps from lock file", ARG_NONE, NULL, NULL, 0,
      NULL, NULL, 0, 0, NOFLAGS},
     {"pkg add", NULL, "Packages", "pkg: add a git dependency", ARG_TEXT, "name or url[@ref]", NULL, 1,
-     NULL, NULL, 0, 0, NOFLAGS},
+     NULL, NULL, 0, 0,
+     {{"--as", "name", "Local name for the dependency"}, {0,0,0}}},
     {"pkg install", NULL, "Packages", "pkg: install all declared deps", ARG_NONE, NULL, NULL, 0,
      NULL, NULL, 0, 0, NOFLAGS},
     {"pkg remove", NULL, "Packages", "pkg: remove a dependency", ARG_TEXT, "name", NULL, 1,
@@ -126,7 +170,7 @@ static const UiCmd CMDS[] = {
      NULL, NULL, 0, 0, NOFLAGS},
     {"pkg audit", NULL, "Packages", "pkg: verify lock vs remotes", ARG_NONE, NULL, NULL, 0,
      NULL, NULL, 0, 0,
-     {{"--offline", NULL, "Skip network checks"}, {0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0}}},
+     {{"--offline", NULL, "Skip network checks"}, {0,0,0}}},
     {"pkg search", NULL, "Packages", "pkg: discover packages on GitHub", ARG_TEXT, "query (optional)", NULL, 0,
      NULL, NULL, 0, 0, NOFLAGS},
 
@@ -139,10 +183,12 @@ static const UiCmd CMDS[] = {
      NULL, NULL, 0, 0, NOFLAGS},
     {"bind", NULL, "Tools", "Generate FFI bindings from a C header", ARG_FILE, "header.h", ".h", 1,
      NULL, NULL, 0, 0,
-     {{"-o", "out.wyn", "Write bindings to a file"}, {0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0}}},
+     {{"-o", "out.wyn", "Write bindings to a file"},
+      {"-I", "dir", "Extra include directory for the C header"},
+      {"-D", "name=val", "Extra preprocessor define"}, {0,0,0}}},
     {"deploy", NULL, "Tools", "Deploy to a server via SSH", ARG_TEXT, "target (from wyn.toml)", NULL, 1,
      NULL, NULL, 0, 0,
-     {{"--dry-run", NULL, "Show the plan, change nothing"}, {0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0},{0,0,0}}},
+     {{"--dry-run", NULL, "Show the plan, change nothing"}, {0,0,0}}},
     {"logs", NULL, "Tools", "Tail remote service logs", ARG_TEXT, "target (from wyn.toml)", NULL, 1,
      NULL, NULL, 1, 0, NOFLAGS},
     {"ssh", NULL, "Tools", "Open a shell on a deploy target", ARG_TEXT, "target (from wyn.toml)", NULL, 1,
@@ -152,7 +198,8 @@ static const UiCmd CMDS[] = {
     {"uninstall", NULL, "Tools", "Remove wyn from system PATH", ARG_NONE, NULL, NULL, 0,
      NULL, NULL, 0, 0, NOFLAGS},
     {"upgrade", "update", "Tools", "Update wyn to a release", ARG_TEXT, "version (optional)", NULL, 0,
-     NULL, NULL, 0, 0, NOFLAGS},
+     NULL, NULL, 0, 0,
+     {{"--help", NULL, "Show upgrade usage"}, {"-h", NULL, "Show upgrade usage"}, {0,0,0}}},
     {"wisdom", NULL, "Tools", "Flight rules from Wynter", ARG_NONE, NULL, NULL, 0,
      NULL, NULL, 0, 0, NOFLAGS},
     {"version", NULL, "Tools", "Show version", ARG_NONE, NULL, NULL, 0,
@@ -160,7 +207,8 @@ static const UiCmd CMDS[] = {
     {"help", NULL, "Tools", "Show CLI help", ARG_NONE, NULL, NULL, 0,
      NULL, NULL, 0, 0, NOFLAGS},
     {"ui", "tui", "Tools", "This command browser", ARG_NONE, NULL, NULL, 0,
-     NULL, NULL, 0, 1, NOFLAGS},
+     NULL, NULL, 0, 1,
+     {{"--list-commands", NULL, "Print the dispatch names, one per line"}, {0,0,0}}},
     // INTERNAL, hidden from the browser: prints every name the checker's builtin
     // registry blesses, for tests/errors/run_release_slim_registry_test.sh. It is
     // listed here rather than spelled so run_ui_coverage_test.sh's grep misses it,
@@ -171,6 +219,109 @@ static const UiCmd CMDS[] = {
 };
 static const int NCMD = (int)(sizeof(CMDS) / sizeof(CMDS[0]));
 static const char* GROUPS[] = {"Develop", "Build", "Packages", "Tools"};
+
+// ─────────────── the table, read by main.c's flag validation (V-13) ──────────
+//
+// `wyn build x.wyn --wasm` used to exit 0, print a ✓ and leave a NATIVE binary,
+// because main.c's build loop ended in `else if (!dir) dir = argv[i];` - an
+// unrecognised flag became the FILE if none had been seen yet and was silently
+// DISCARDED otherwise. A false success is the worst failure mode available.
+//
+// The accepted set has to come from ONE place or the fix reintroduces the bug in a
+// new shape: a second flag table in main.c would be the "one rule with more than
+// one copy" pattern that has bitten this repo repeatedly (the slim runtime header,
+// the two cross-target lists below, RT_SRCS vs wyn_runtime_sources). CMDS[] is
+// already the single source of truth for COMMANDS - run_ui_coverage_test.sh gates it
+// against main.c's dispatch in both directions - so it is the right place for their
+// flags too, and the TUI form and the validator can no longer disagree.
+//
+// Matching is on the first token of `name` (so "pkg add" matches command "pkg" with
+// subcommand "add"), or on `alias`.
+
+static const UiCmd* ui_find_cmd(const char* command, const char* sub)
+{
+    if (!command) return NULL;
+    const UiCmd* head_only = NULL;
+    for (int i = 0; i < NCMD; i++) {
+        const char* n = CMDS[i].name;
+        const char* sp = strchr(n, ' ');
+        size_t headlen = sp ? (size_t)(sp - n) : strlen(n);
+        int head_hit = (strlen(command) == headlen && strncmp(command, n, headlen) == 0);
+        if (!head_hit && CMDS[i].alias && strcmp(command, CMDS[i].alias) == 0) head_hit = 1;
+        if (!head_hit) continue;
+        if (!sp) return &CMDS[i];                     // exact single-word command
+        if (sub && strcmp(sub, sp + 1) == 0) return &CMDS[i];  // "pkg add"
+        // Remember that the head exists, so an unknown subcommand still resolves to
+        // SOMETHING rather than reporting the whole command as unknown.
+        if (!head_only) head_only = &CMDS[i];
+    }
+    return head_only;
+}
+
+// 1 = the table knows this command (so its flags can be validated), 0 = it does not.
+// A command the table does not know is left ALONE: refusing flags for it would be
+// guessing, and the coverage gate already fails the build when a command is missing.
+int wyn_cli_command_known(const char* command, const char* sub)
+{
+    return ui_find_cmd(command, sub) != NULL;
+}
+
+// 1 = <command> accepts <flag>. *takes_value is set to 1 when the flag consumes the
+// NEXT argv element (`-o name`, `--template cli`), so a validator does not mistake a
+// flag's value for a positional or for another flag.
+int wyn_cli_accepts_flag(const char* command, const char* sub, const char* flag,
+                         int* takes_value)
+{
+    if (takes_value) *takes_value = 0;
+    const UiCmd* c = ui_find_cmd(command, sub);
+    if (!c || !flag) return 0;
+    for (int f = 0; f < (int)(sizeof(c->flags) / sizeof(c->flags[0])); f++) {
+        if (!c->flags[f].name) break;
+        if (strcmp(c->flags[f].name, flag) == 0) {
+            if (takes_value && c->flags[f].value) *takes_value = 1;
+            return 1;
+        }
+    }
+    // The radio-list flag (`--template cli`) is stored in choice_flag, not in flags[].
+    if (c->choice_flag && strcmp(c->choice_flag, flag) == 0) {
+        if (takes_value) *takes_value = 1;
+        return 1;
+    }
+    return 0;
+}
+
+// Space-separated accepted flags, for the error message. Writes "" when there are
+// none, which the caller reports as "takes no flags" rather than printing an empty
+// list.
+void wyn_cli_flag_list(const char* command, const char* sub, char* out, size_t out_sz)
+{
+    if (!out || out_sz == 0) return;
+    out[0] = '\0';
+    const UiCmd* c = ui_find_cmd(command, sub);
+    if (!c) return;
+    size_t used = 0;
+    if (c->choice_flag) {
+        int n = snprintf(out, out_sz, "%s", c->choice_flag);
+        if (n > 0) used = (size_t)n;
+    }
+    for (int f = 0; f < (int)(sizeof(c->flags) / sizeof(c->flags[0])); f++) {
+        if (!c->flags[f].name) break;
+        if (used + strlen(c->flags[f].name) + 2 >= out_sz) break;
+        int n = snprintf(out + used, out_sz - used, "%s%s",
+                         used ? " " : "", c->flags[f].name);
+        if (n <= 0) break;
+        used += (size_t)n;
+    }
+}
+
+// The pipe-separated positional choices ("linux|macos|..."), or NULL. `wyn cross`'s
+// usage text and its unknown-target error both print this, which is the whole point:
+// they were two hand-written lists and they disagreed.
+const char* wyn_cli_command_choices(const char* command, const char* sub)
+{
+    const UiCmd* c = ui_find_cmd(command, sub);
+    return c ? c->choices : NULL;
+}
 
 // ───────────────────── portable part: --list-commands ─────────────────────
 
