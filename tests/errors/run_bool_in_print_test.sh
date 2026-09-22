@@ -13,8 +13,15 @@
 # print(), println(), to_string() and wyn_out_append() dispatch with C's _Generic on
 # the STATIC C TYPE they are handed (wyn_runtime.h / wyn_runtime_slim.h), so the
 # rendering is decided by the C type at the call site - not by the runtime helper the
-# call lowers to. Sixteen spellings printed `1` because sixteen runtime helpers happen
-# to be declared `int`/`long long`.
+# call lowers to. A long list of spellings printed `1` because their runtime helpers
+# happen to be declared `int`/`long long`.
+#
+# The `--release` arm below earns its keep: it found EIGHT functions that
+# wyn_runtime_slim.h declared `int` while wyn_runtime.h defines them `bool` (a return
+# type mismatch across translation units - undefined behaviour). Invisible on arm64,
+# where the return register held a clean 0/1; on x86-64 a `bool` return sets only the
+# low byte of eax, so `"abc".ends_with("z")` came back TRUE under --release. Only the
+# macos-15-intel CI job could see it.
 #
 # The 2026-08 fix (run_bool_method_format_test.sh) cast at ONE emit site, which is
 # exactly why `arr.contains(3)` was fixed and none of the above were. The rule now
@@ -115,6 +122,15 @@ ROWS=(
   'ns_col_set_contains_n|HashSet::contains(hs, "zz")|false'
   'ns_dot_map_has|HashMap.has(hm, "k")|true'
   'ns_col_map_has|HashMap::has(hm, "k")|true'
+  # --- File.exists / File.is_dir / File.is_file. These reach the runtime through
+  #     File_exists / File_is_dir / File_is_file, which the slim header declared `int`
+  #     while the archive defines them `bool` - so unlike the `.exists()` METHOD rows
+  #     above, these DO compile under --release, and on x86-64 they returned garbage
+  #     there. Rows in both spellings so the release arm covers them.
+  'ns_dot_file_exists|File.exists(".")|true'
+  'ns_col_file_exists|File::exists(".")|true'
+  'ns_dot_file_is_dir|File.is_dir(".")|true'
+  'ns_dot_file_is_file_n|File.is_file(".")|false'
   # --- CONTROL GROUP: bool sources that were ALREADY correct. If one of these
   #     changes, the fix reached further than its own rule.
   'ctl_cmp|3 > 2|true'

@@ -988,17 +988,25 @@ void init_checker() {
         }
     }
 
-    // File namespace methods
+    // File namespace methods.
+    //
+    // The three predicates are `bool`, agreeing with wyn_runtime.h's definitions
+    // (`bool File_exists(const char*)`) and with the entries in
+    // lookup_module_fn_return_type (types.c). While they were `int` here, the SYMBOL
+    // lookup in the `::` path found int and returned before the table could be
+    // consulted, so `File::exists(".")` printed `1` while `File.exists(".")` printed
+    // `true` - the latter only because the C declaration happens to be `bool`. No
+    // program in tests/, examples/ or demos/ compares any of the 62 uses to 0 or 1.
     struct { const char* name; int pc; Type* p1; Type* p2; Type* ret; } file_ns_fns[] = {
         {"File_read", 1, builtin_string, NULL, builtin_string},
         {"File_write", 2, builtin_string, builtin_string, builtin_int},
-        {"File_exists", 1, builtin_string, NULL, builtin_int},
+        {"File_exists", 1, builtin_string, NULL, builtin_bool},
         {"File_delete", 1, builtin_string, NULL, builtin_int},
         {"File_copy", 2, builtin_string, builtin_string, builtin_int},
         {"File_move", 2, builtin_string, builtin_string, builtin_int},
         {"File_size", 1, builtin_string, NULL, builtin_int},
-        {"File_is_dir", 1, builtin_string, NULL, builtin_int},
-        {"File_is_file", 1, builtin_string, NULL, builtin_int},
+        {"File_is_dir", 1, builtin_string, NULL, builtin_bool},
+        {"File_is_file", 1, builtin_string, NULL, builtin_bool},
         {"File_mkdir", 1, builtin_string, NULL, builtin_int},
         {"File_list_dir", 1, builtin_string, NULL, builtin_string},
         {"File_append", 2, builtin_string, builtin_string, builtin_int},

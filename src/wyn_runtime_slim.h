@@ -210,7 +210,7 @@ void json_free(long long j);
 char* File_read(const char* path);
 WynArray File_read_lines(const char* path);
 int File_write(const char* path, const char* content);
-int File_exists(const char* path);
+bool File_exists(const char* path);
 int File_delete(const char* path);
 char* File_cwd(void);
 
@@ -246,9 +246,9 @@ int Env_set(const char* key, const char* val);
 WynClosure wyn_closure_new(void* fn, void* env);
 int wyn_closure_call_int(WynClosure c, int arg);
 const char* wyn_string_concat_safe(const char* left, const char* right);
-int regex_match(const char* str, const char* pattern);
+bool regex_match(const char* str, const char* pattern);
 char* regex_replace(const char* str, const char* pattern, const char* replacement);
-int Regex_match(const char* s, const char* p);
+bool Regex_match(const char* s, const char* p);
 char* Regex_replace(const char* s, const char* p, const char* r);
 int Regex_find(const char* s, const char* p);
 char* regex_find_all(const char* str, const char* pattern);
@@ -476,9 +476,20 @@ int string_is_numeric(const char* str);
 char* string_capitalize(const char* str);
 char* string_reverse(const char* str);
 int string_len(const char* str);
-int string_is_empty(const char* str);
-int string_starts_with(const char* str, const char* prefix);
-int string_ends_with(const char* str, const char* suffix);
+// `bool`, matching the DEFINITIONS in wyn_runtime.h. These three, plus File_exists,
+// File_is_dir, File_is_file, Regex_match and regex_match, were declared `int` here
+// while the archive defines them `bool` - a return-type mismatch across translation
+// units, which is undefined behaviour, not a harmless widening. On arm64 the return
+// register happened to hold a clean 0/1 and nothing was visible; on x86-64 a `bool`
+// return sets only the low byte of eax, so reading it as a full `int` picked up the
+// upper garbage and `"abc".ends_with("z")` came back TRUE under --release. Found by
+// run_bool_in_print_test.sh on the macos-15-intel runner, on the second push - the
+// arm64 dev box and every other CI job were green. Same "two declarations of one
+// function disagree about bool" shape this branch is fixing elsewhere; the remedy is
+// the same, make them agree.
+bool string_is_empty(const char* str);
+bool string_starts_with(const char* str, const char* prefix);
+bool string_ends_with(const char* str, const char* suffix);
 int string_index_of(const char* str, const char* substr);
 // Ditto: the local copy this replaces had a real bug the archive version does
 // not - when a match was found mid-string it copied the prefix but never the
@@ -721,8 +732,8 @@ int file_move(const char* src, const char* dst);
 int File_copy(const char* s, const char* d);
 int File_move(const char* s, const char* d);
 long long File_size(const char* p);
-int File_is_dir(const char* p);
-int File_is_file(const char* p);
+bool File_is_dir(const char* p);
+bool File_is_file(const char* p);
 int File_mkdir(const char* p);
 char* File_list_dir(const char* p);
 int File_append(const char* p, const char* d);
