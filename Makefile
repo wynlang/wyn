@@ -112,6 +112,10 @@ MBEDTLS_LIB  = $(MBEDTLS_DIR)/lib/libmbedtls_wyn.a
 
 mbedtls: $(MBEDTLS_LIB)
 
+# The TLS seam on its own, for the edit loop. `make test` runs it too.
+test-tls-seam: $(MBEDTLS_LIB)
+	@bash tests/tls/run_tls_seam_test.sh
+
 $(MBEDTLS_LIB): $(MBEDTLS_SRCS) $(wildcard $(MBEDTLS_DIR)/library/*.h) $(wildcard $(MBEDTLS_DIR)/include/mbedtls/*.h)
 	@echo "Building vendored mbedTLS ($$(sed -n 's/.*MBEDTLS_VERSION_STRING  *"\(.*\)".*/\1/p' $(MBEDTLS_DIR)/include/mbedtls/build_info.h))..."
 	@mkdir -p $(MBEDTLS_DIR)/obj $(MBEDTLS_DIR)/lib
@@ -319,9 +323,11 @@ check-fast: wyn
 	@echo ""
 	@echo "check-fast passed. This is NOT 'make test' - run that before pushing."
 
-test: wyn
+test: wyn $(MBEDTLS_LIB)
 	@echo "=== Running assertion tests (run_bdd.sh) ==="
 	@WYN=./wyn bash tests/run_bdd.sh
+	@echo "=== Running TLS seam test ==="
+	@bash tests/tls/run_tls_seam_test.sh
 	@echo "=== Running golden-C snapshot tests ==="
 	@WYN=./wyn bash tests/golden/run_golden_tests.sh
 	@echo "=== Running GPU transparent-dispatch test ==="
@@ -978,7 +984,7 @@ clean:
 	rm -f wyn wyn.exe wyn-windows.exe wyn-linux wyn-macos tests/test_lexer tests/test_parser tests/test_checker tests/test_codegen tests/test_operators tests/test_default_parameters tests/test_function_overloading tests/test_generic_functions tests/test_parameter_validation tests/test_function_integration tests/test_syntax_design tests/test_system_integration tests/phase2_integration tests/phase2_integration_simple tests/test_wasm_support tests/test_self_compilation tests/test_documentation_system tests/test_container_support tests/test_lexer_rewrite tests/test_coroutine tools/formatter.wyn.out
 	rm -rf temp runtime/obj runtime/libwyn_rt.a $(MBEDTLS_DIR)/obj $(MBEDTLS_DIR)/lib
 
-.PHONY: all test test_bdd clean container-build container-test container-deploy container-all fmt-tool platform-info wyn-windows wyn-linux wyn-macos mbedtls
+.PHONY: all test test_bdd test-tls-seam clean container-build container-test container-deploy container-all fmt-tool platform-info wyn-windows wyn-linux wyn-macos mbedtls
 
 # valgrind-test defined earlier in file (line ~125)
 
