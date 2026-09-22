@@ -538,6 +538,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_channel_deadlock_test.sh
 	@echo "=== Running collection type-safety test ==="
 	@WYN=./wyn bash tests/errors/run_collection_type_test.sh
+	@echo "=== Running sort_by comparator gate (V-19) ==="
+	@WYN=./wyn bash tests/errors/run_sort_by_cmp_test.sh
 	@echo "=== Running silent-wrong-answer test ==="
 	@WYN=./wyn bash tests/errors/run_silent_wrong_test.sh
 	@echo "=== Running regex shorthand-class gate (\\d \\w \\s) ==="
