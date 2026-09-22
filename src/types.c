@@ -1233,7 +1233,10 @@ static const struct { const char* ns; const char* prefix; } wyn_ns_prefixes[] = 
 // Methods whose C symbol is not <prefix><method>. Each one is a rename in the
 // runtime, and each one was a real bug before it was listed: the blanket mangling
 // emitted a symbol that did not exist.
-static const struct { const char* ns; const char* method; const char* sym; } wyn_ns_renames[] = {
+// Named, not anonymous: both spellings' tables are held through one pointer below,
+// and two anonymous structs are distinct types in C (-Wpointer-type-mismatch).
+typedef struct { const char* ns; const char* method; const char* sym; } WynNsRename;
+static const WynNsRename wyn_ns_renames[] = {
     // Http's simple string API is lowercase; its server API is not.
     {"Http", "get",        "http_get"},
     {"Http", "post",       "http_post"},
@@ -1263,20 +1266,88 @@ static const char* wyn_ns_prefix_for(const char* ns) {
     return NULL;   // caller uses "<ns>_"
 }
 
-int wyn_namespace_c_symbol(const char* ns, const char* method, char* out, size_t out_sz) {
+// THE TWO SPELLINGS LOWER DIFFERENTLY TODAY, AND THAT IS A BUG - BUT NOT THIS BUG.
+//
+// `Ns.method()` and `Ns::method()` are the same call, and codegen_expr.c lowers them
+// through two separate chains that disagree. Measured on dev @ 82f8d2bc by reading
+// the generated C for each spelling of the same program:
+//
+//   HashMap.set_int  -> hashmap_insert_int   (declared: builds and runs)
+//   HashMap::set_int -> hashmap_set_int      (NOT declared: build fails)
+//   String.char      -> String_char_from_int (builds)
+//   String::char     -> String_char          (NOT declared: build fails)
+//   Regex.match      -> regex_match          (builds)
+//   Regex::match     -> Regex_match          (NOT declared: build fails)
+//   File.list_dir    -> File_list_dir        (char*)
+//   File::list_dir   -> file_list_dir        (WynArray)   <- DIFFERENT FUNCTIONS
+//
+// Converging them is a real fix and is NOT attempted here. The last row is why: the
+// two File prefixes are not aliases. `char* File_list_dir(const char*)` and
+// `WynArray file_list_dir(const char*)` return different C types, and each spelling's
+// checker type already agrees with its own symbol, so pointing both at one of them
+// breaks the other. ("Both names are declared" is not evidence they are the same
+// function - that assumption regressed File::list_dir once already while this change
+// was being written.) It needs the runtime types reconciled first; filed separately.
+//
+// What this file therefore owns is the lowering FOR EACH SPELLING, in one place, so
+// the checker can ask what the call it is looking at will actually emit. The old
+// arrangement had the `::` mapping only inside codegen, where the checker could not
+// see it - which is precisely why the check-time rule shipped for `.` alone.
+//
+// The `::` map below mirrors codegen_expr.c's `::` chain exactly, including what it
+// does NOT special-case (no Regex, Http, Task or String entries - those fall to the
+// plain `<Ns>_<method>`), because a faithful copy is the only kind that can tell the
+// truth about what will be emitted.
+static const struct { const char* ns; const char* prefix; } wyn_ns_prefixes_colon[] = {
+    {"HashMap",       "hashmap_"},
+    {"HashSet",       "hashset_"},
+    {"Random",        "random_"},
+    {"File",          "file_"},
+    {"StringBuilder", "StringBuilder_"},
+    {"Color",         "Color_"},
+    {"Time",          "Time_"},
+    {"System",        "System_"},
+    {NULL, NULL}
+};
+static const WynNsRename wyn_ns_renames_colon[] = {
+    {"HashMap", "get", "hashmap_get_string"},
+    {"HashMap", "set", "hashmap_set"},
+    {"HashMap", "has", "hashmap_has"},
+    {NULL, NULL, NULL}
+};
+
+static int wyn_ns_spelling_is_colon(const char* separator) {
+    return separator && separator[0] == ':';
+}
+
+int wyn_namespace_c_symbol_spelled(const char* ns, const char* method,
+                                   const char* separator, char* out, size_t out_sz) {
     if (!ns || !method || !out || out_sz == 0) return 0;
     if (!is_builtin_module(ns)) return 0;
-    for (int i = 0; wyn_ns_renames[i].ns; i++) {
-        if (strcmp(wyn_ns_renames[i].ns, ns) == 0 &&
-            strcmp(wyn_ns_renames[i].method, method) == 0) {
-            snprintf(out, out_sz, "%s", wyn_ns_renames[i].sym);
+    int colon = wyn_ns_spelling_is_colon(separator);
+    const WynNsRename* renames = colon ? wyn_ns_renames_colon : wyn_ns_renames;
+    for (int i = 0; renames[i].ns; i++) {
+        if (strcmp(renames[i].ns, ns) == 0 && strcmp(renames[i].method, method) == 0) {
+            snprintf(out, out_sz, "%s", renames[i].sym);
             return 1;
         }
     }
-    const char* pfx = wyn_ns_prefix_for(ns);
+    const char* pfx = NULL;
+    if (colon) {
+        for (int i = 0; wyn_ns_prefixes_colon[i].ns; i++)
+            if (strcmp(wyn_ns_prefixes_colon[i].ns, ns) == 0) { pfx = wyn_ns_prefixes_colon[i].prefix; break; }
+    } else {
+        pfx = wyn_ns_prefix_for(ns);
+    }
     if (pfx) snprintf(out, out_sz, "%s%s", pfx, method);
     else     snprintf(out, out_sz, "%s_%s", ns, method);
     return 1;
+}
+
+// The dotted spelling, which is what this name has always meant - codegen_expr.c's
+// dot chain and main.c's post-compile diagnostic both call it and are unchanged.
+int wyn_namespace_c_symbol(const char* ns, const char* method, char* out, size_t out_sz) {
+    return wyn_namespace_c_symbol_spelled(ns, method, ".", out, out_sz);
 }
 
 // --- the runtime declaration index ----------------------------------------
@@ -1367,11 +1438,25 @@ static int wyn_runtime_declares(const char* sym) {
 // index cannot speak for the namespace at all (a user module named `math` shadowing
 // the builtin list, a header this build does not ship), and the checker must then
 // stay permissive rather than reject every call to it.
-static int wyn_ns_declared_count(const char* ns) {
-    char pfx[128];
-    const char* p = wyn_ns_prefix_for(ns);
-    if (p) snprintf(pfx, sizeof(pfx), "%s", p);
-    else   snprintf(pfx, sizeof(pfx), "%s_", ns);
+// The C prefix this namespace lowers to in `separator`'s spelling, so a caller can
+// ask the index about the namespace as a whole.
+static void wyn_ns_prefix_spelled(const char* ns, const char* separator,
+                                  char* out, size_t out_sz) {
+    char probe[320];
+    // Derive it from the lowering itself rather than re-deriving the prefix map:
+    // lower a method name that cannot be a rename, then drop it off the end.
+    if (wyn_namespace_c_symbol_spelled(ns, "\x01", separator, probe, sizeof(probe))) {
+        size_t n = strlen(probe);
+        if (n >= 1) probe[n - 1] = '\0';           // strip the sentinel method
+        snprintf(out, out_sz, "%s", probe);
+        return;
+    }
+    snprintf(out, out_sz, "%s_", ns);
+}
+
+static int wyn_ns_declared_count_spelled(const char* ns, const char* separator) {
+    char pfx[160];
+    wyn_ns_prefix_spelled(ns, separator, pfx, sizeof(pfx));
     size_t pl = strlen(pfx);
     int n = 0;
     for (int i = 0; i < wyn_rt_sym_count; i++)
@@ -1379,12 +1464,21 @@ static int wyn_ns_declared_count(const char* ns) {
     return n;
 }
 
-int wyn_namespace_method_unknown(const char* ns, const char* method) {
+int wyn_namespace_method_unknown_spelled(const char* ns, const char* method,
+                                         const char* separator) {
     char sym[320];
-    if (!wyn_namespace_c_symbol(ns, method, sym, sizeof(sym))) return 0;
-    if (wyn_runtime_declares(sym) != 0) return 0;      // declared, or index unavailable
-    if (wyn_ns_declared_count(ns) == 0) return 0;      // index knows nothing here
+    if (!wyn_namespace_c_symbol_spelled(ns, method, separator, sym, sizeof(sym))) return 0;
+    if (wyn_runtime_declares(sym) != 0) return 0;   // declared, or index unavailable
+    // Zero symbols under the namespace's prefix means the index cannot speak for the
+    // namespace at all (a user module named `math` shadowing the builtin list, a
+    // header this build does not ship), and the checker must stay permissive rather
+    // than reject every call to it.
+    if (wyn_ns_declared_count_spelled(ns, separator) == 0) return 0;
     return 1;
+}
+
+int wyn_namespace_method_unknown(const char* ns, const char* method) {
+    return wyn_namespace_method_unknown_spelled(ns, method, ".");
 }
 
 // Does the runtime header this compiler ships DECLARE the C symbol this namespace
@@ -1417,27 +1511,55 @@ int wyn_namespace_method_declared(const char* ns, const char* method,
 // answer (DateTime.millis), and an exact method-name match elsewhere is not a
 // guess. Only then a near miss inside the namespace the user named
 // (`File.read_al` -> `File.read_all`).
-int wyn_suggest_namespace_method(const char* ns, const char* method, char* out, size_t out_sz) {
+// Which tier answered, because the right HELP text depends on it: "Wyn has no such
+// function" is false when the only problem is the spelling the user chose.
+#define WYN_NS_SUGGEST_OTHER_SPELLING  1
+#define WYN_NS_SUGGEST_OTHER_NAMESPACE 2
+#define WYN_NS_SUGGEST_NEAR_MISS       3
+int wyn_suggest_namespace_method_spelled(const char* ns, const char* method,
+                                        const char* separator,
+                                        char* out, size_t out_sz) {
     if (!ns || !method || !out || out_sz == 0) return 0;
+    if (!separator || !*separator) separator = ".";
     wyn_rt_index_load();
     if (wyn_rt_index_state != 1) return 0;
 
+    // TIER 1: the same call in the OTHER spelling. Because the two spellings lower
+    // differently (see wyn_namespace_c_symbol_spelled), a method can be real in one
+    // and unbuildable in the other - `HashMap::set_int` lowers to an undeclared
+    // hashmap_set_int while `HashMap.set_int` lowers to hashmap_insert_int and works.
+    // Answering "unknown method" there and stopping would be true but useless; the
+    // useful answer is the spelling that does work. Tried first because it is not a
+    // guess at all: same namespace, same method, verified declared.
+    {
+        const char* other_sep = (separator[0] == ':') ? "." : "::";
+        char sym[320];
+        if (wyn_namespace_c_symbol_spelled(ns, method, other_sep, sym, sizeof(sym)) &&
+            wyn_runtime_declares(sym) == 1) {
+            snprintf(out, out_sz, "%s%s%s()", ns, other_sep, method);
+            return WYN_NS_SUGGEST_OTHER_SPELLING;
+        }
+    }
+
+    // TIER 2: the right name in the WRONG namespace - the likelier typo, and still
+    // not a guess: `Time.millis()` is a real mistake with a real answer
+    // (DateTime.millis). Kept in the separator the user typed.
     for (int i = 0; ; i++) {
         const char* other = builtin_module_name_at(i);
         if (!other) break;
         if (strcmp(other, ns) == 0) continue;
         char sym[320];
-        if (!wyn_namespace_c_symbol(other, method, sym, sizeof(sym))) continue;
+        if (!wyn_namespace_c_symbol_spelled(other, method, separator, sym, sizeof(sym))) continue;
         if (wyn_runtime_declares(sym) == 1) {
-            snprintf(out, out_sz, "%s.%s()", other, method);
-            return 1;
+            snprintf(out, out_sz, "%s%s%s()", other, separator, method);
+            return WYN_NS_SUGGEST_OTHER_NAMESPACE;
         }
     }
 
-    char pfx[128];
-    const char* p = wyn_ns_prefix_for(ns);
-    if (p) snprintf(pfx, sizeof(pfx), "%s", p);
-    else   snprintf(pfx, sizeof(pfx), "%s_", ns);
+    // TIER 3: a near miss inside the namespace the user named
+    // (`File.read_al` -> `File.read_all`).
+    char pfx[160];
+    wyn_ns_prefix_spelled(ns, separator, pfx, sizeof(pfx));
     size_t pl = strlen(pfx);
     const char* best = NULL;
     int best_dist = WYN_NAME_FAR;
@@ -1447,6 +1569,13 @@ int wyn_suggest_namespace_method(const char* ns, const char* method, char* out, 
         int d = wyn_name_distance(method, cand);
         if (d > 0 && d < best_dist) { best_dist = d; best = cand; }
     }
-    if (best) { snprintf(out, out_sz, "%s.%s()", ns, best); return 1; }
+    if (best) {
+        snprintf(out, out_sz, "%s%s%s()", ns, separator, best);
+        return WYN_NS_SUGGEST_NEAR_MISS;
+    }
     return 0;
+}
+
+int wyn_suggest_namespace_method(const char* ns, const char* method, char* out, size_t out_sz) {
+    return wyn_suggest_namespace_method_spelled(ns, method, ".", out, out_sz);
 }

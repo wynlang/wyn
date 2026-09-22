@@ -2118,6 +2118,113 @@ static int channel_const_capacity(const Expr* cap, long long* out) {
     return 1;
 }
 
+// An unknown method on a builtin namespace: ONE rule, EVERY spelling.
+//
+// `Ns.method()` and `Ns::method()` are the same call. The parser hands the first to
+// the checker as a METHOD_CALL and folds the second into a single `Ns::method`
+// IDENT that arrives as an EXPR_CALL, so they reach two different dispatch sites -
+// and #357 wired the unknown-method check to the METHOD_CALL site only. The result
+// was measured on dev @ 82f8d2bc: `Time.no_such_xyz()` rejected on 31 of 31
+// namespaces, `Time::no_such_xyz()` accepted on 31 of 31. `::` is the spelling the
+// docs and examples use most (`Time::sleep` is the single most common stdlib call
+// in this repo's corpus), so the release claim "if `wyn check` passes, it builds"
+// was still false for the more common form.
+//
+// That is this codebase's standing defect shape: one rule with more than one copy.
+// So the rule lives here, once, and a call site only hands it the namespace, the
+// method and the spelling the user typed. A third spelling inherits the check by
+// calling this; it cannot silently skip it.
+//
+// `separator` is quoted back in the message, so the diagnostic shows the user's own
+// code. `receiver` is the receiver expression's type for a dotted call and NULL for
+// a spelling with no receiver expression - the one guard that cannot be shared,
+// because `Ns::m()` has no receiver to type.
+//
+// Returns true when it reported; the caller then types the expression as int and
+// returns, exactly as it did before.
+static bool reject_unknown_namespace_method(const char* ns, const char* method,
+                                            const char* separator, int line,
+                                            Type* receiver) {
+    extern bool is_builtin_module(const char* name);
+    extern bool is_module_loaded(const char* name);
+    extern int wyn_namespace_c_symbol_spelled(const char*, const char*, const char*, char*, size_t);
+    extern int wyn_namespace_method_unknown_spelled(const char*, const char*, const char*);
+    extern int wyn_suggest_namespace_method_spelled(const char*, const char*, const char*,
+                                                   char*, size_t);
+    if (!ns || !method || !*ns || !*method) return false;
+
+    // Each guard is a case that is NOT a namespace typo:
+    //  - a LOADED user module may be named like a builtin namespace (`math` is in
+    //    is_builtin_module's list, and tests/modules import a local math.wyn) - its
+    //    own source is the authority.
+    if (!is_builtin_module(ns)) return false;
+    if (is_module_loaded(ns)) return false;
+    if (checking_same_module(ns)) return false;
+    //  - a real variable shadowing the name types as something other than the int
+    //    placeholder an import registers. MAP and SET are allowed alongside it
+    //    because init_checker registers the names `HashMap` and `HashSet` as the
+    //    collection TYPES, so the receiver of `HashMap.no_such()` types TYPE_MAP.
+    if (receiver && receiver->kind != TYPE_INT &&
+        receiver->kind != TYPE_MAP && receiver->kind != TYPE_SET) return false;
+    //  - a method name starting with a capital is an enum variant or a type
+    //    reference (`Shape::Circle`, `Color::Red`), not a stdlib call. This matters
+    //    far more for `::` than for `.`: `Enum::Variant` IS the `::` spelling.
+    if (method[0] >= 'A' && method[0] <= 'Z') return false;
+    //  - a struct/enum of that name means the same thing for the receiver half.
+    {
+        Token ns_tok = {TOKEN_IDENT, ns, (int)strlen(ns), line};
+        Symbol* shadow = find_symbol(global_scope, ns_tok);
+        if (shadow && shadow->type &&
+            (shadow->type->kind == TYPE_STRUCT || shadow->type->kind == TYPE_ENUM))
+            return false;
+    }
+    //  - a registry entry that names THE SYMBOL THIS SPELLING WILL EMIT. Deliberately
+    //    not "a registry entry for this name": the builtin registry is keyed by the
+    //    dotted `Ns_method` spelling, but `::` may emit something else, and the
+    //    question here is whether the emitted call will link. `File.read_lines` is
+    //    the case that makes the difference measurable - the runtime declares
+    //    `File_read_lines` and no `file_read_lines`, so the dotted form builds and
+    //    `File::read_lines` cannot. Skipping on the registered name alone let that
+    //    one keep passing `wyn check` and failing the C compile.
+    {
+        char sym[320], colons[320];
+        if (!wyn_namespace_c_symbol_spelled(ns, method, separator, sym, sizeof(sym)))
+            return false;
+        snprintf(colons, sizeof(colons), "%s::%s", ns, method);
+        Token st = {TOKEN_IDENT, sym, (int)strlen(sym), line};
+        Token ct = {TOKEN_IDENT, colons, (int)strlen(colons), line};
+        if (find_symbol(global_scope, st) || find_symbol(global_scope, ct)) return false;
+    }
+    if (!wyn_namespace_method_unknown_spelled(ns, method, separator)) return false;
+
+    char headline[384], help[512], sug[192];
+    snprintf(headline, sizeof(headline), "unknown method '%s%s%s' on namespace '%s'",
+             ns, separator, method, ns);
+    snprintf(help, sizeof(help),
+             "'%s' is not a function Wyn knows about. Check the spelling against the '%s' stdlib docs.",
+             method, ns);
+    // The suggester is given the separator too, so it answers in the spelling the user
+    // typed - telling someone who wrote `Time::millis()` to try `DateTime.millis()`
+    // hands them a second edit - and so it can offer the OTHER spelling when that is
+    // the real answer (`HashMap::set_int` -> `HashMap.set_int`, which is a different
+    // C symbol and does build).
+    int have_sug = wyn_suggest_namespace_method_spelled(ns, method, separator,
+                                                       sug, sizeof(sug));
+    // Tier 1 means Wyn HAS this function, just not in the spelling that was written -
+    // the two forms lower to different C symbols. Saying "not a function Wyn knows
+    // about" there would be the same kind of confidently-wrong help that #365 had to
+    // remove from the C-compile-step message, and it would send the reader to the
+    // docs to check a name that is already correct.
+    if (have_sug == 1)
+        snprintf(help, sizeof(help),
+                 "Wyn has '%s' on '%s', but the two call spellings lower to different C"
+                 " symbols and only the form above is built. Write it that way.",
+                 method, ns);
+    report_unknown_method(line, headline, have_sug ? sug : NULL, help);
+    had_error = true;
+    return true;
+}
+
 Type* check_expr(Expr* expr, SymbolTable* scope) {
     if (!expr) return NULL;
 
@@ -3362,6 +3469,25 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
                 
                 if (is_qualified && !best_match) {
+                    // The `::` spelling's unknown-method check, and it has to run
+                    // BEFORE the return-type lookups below, not after them.
+                    //
+                    // Those lookups resolve `Ns::method` through the builtin registry,
+                    // which is keyed by the DOTTED `Ns_method` name - so they answer
+                    // "yes, that has a type" for a call whose `::` lowering emits a
+                    // different, undeclared symbol, and return before any check could
+                    // run. `File::read_lines` is the measurable case: the runtime
+                    // declares `File_read_lines` and no `file_read_lines`, so the
+                    // dotted form builds and the `::` form cannot, yet the registry
+                    // entry made both look fine. Running the rule first, gated on the
+                    // declaration index, keeps every call that really does build.
+                    if (reject_unknown_namespace_method(qual_module, qual_func, "::",
+                                                        expr->call.callee->token.line,
+                                                        NULL)) {
+                        expr->expr_type = builtin_int;
+                        free(arg_types);
+                        return builtin_int;
+                    }
                     // Module-qualified function - check for known return types
                     if (strcmp(qual_module, "C_Parser") == 0) {
                         // C_Parser module functions
@@ -4074,40 +4200,12 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     //  - the `Ns_method` symbol existing at all (even with no usable
                     //    return type, which is how execution reaches here).
                     //
-                    // Called out rather than left looking covered: mutating away either
-                    // the is_module_loaded() or the !ns_sym test turns NO arm of
-                    // run_namespace_unknown_method_test.sh red. A user module whose
-                    // function IS registered returns above this point, so both are
-                    // defence for the narrower case the get_module_fn_builtin_return
-                    // fallback above already documents - a module loaded from the
-                    // package cache whose symbol is registered under neither spelling.
-                    // Kept, because that case reaching this rule would reject a
-                    // perfectly good package call.
-                    extern bool is_builtin_module(const char* name);
-                    extern int wyn_namespace_method_unknown(const char*, const char*);
-                    extern int wyn_suggest_namespace_method(const char*, const char*, char*, size_t);
-                    Symbol* _shadow = find_symbol(global_scope, expr->method_call.object->token);
-                    if (is_builtin_module(obj_name) &&
-                        !is_module_loaded(obj_name) &&
-                        !checking_same_module(obj_name) &&
-                        (!object_type || object_type->kind == TYPE_INT ||
-                         object_type->kind == TYPE_MAP || object_type->kind == TYPE_SET) &&
-                        !(_shadow && _shadow->type &&
-                          (_shadow->type->kind == TYPE_STRUCT || _shadow->type->kind == TYPE_ENUM)) &&
-                        !(method_name[0] >= 'A' && method_name[0] <= 'Z') &&
-                        !ns_sym &&
-                        wyn_namespace_method_unknown(obj_name, method_name)) {
-                        char _hl[320], _help[512], _sug[192];
-                        snprintf(_hl, sizeof(_hl),
-                                 "unknown method '%s.%s' on namespace '%s'",
-                                 obj_name, method_name, obj_name);
-                        snprintf(_help, sizeof(_help),
-                                 "'%s' is not a function Wyn knows about. Check the spelling against the '%s' stdlib docs.",
-                                 method_name, obj_name);
-                        int have_sug = wyn_suggest_namespace_method(obj_name, method_name,
-                                                                   _sug, sizeof(_sug));
-                        report_unknown_method(method.line, _hl, have_sug ? _sug : NULL, _help);
-                        had_error = true;
+                    // All of those now live INSIDE the rule, with the rule, so the
+                    // `::` spelling inherits every one of them rather than growing its
+                    // own near-copy. This is the DOT call site; see
+                    // reject_unknown_namespace_method() for the rule itself.
+                    if (reject_unknown_namespace_method(obj_name, method_name, ".",
+                                                        method.line, object_type)) {
                         expr->expr_type = builtin_int;
                         return builtin_int;
                     }
