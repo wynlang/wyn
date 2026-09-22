@@ -13,6 +13,13 @@
 #include "mbedtls/ssl.h"
 #include "mbedtls/x509_crt.h"
 
+#ifdef _WIN32
+/* Windows has no PEM bundle on disk; roots live in the CryptoAPI "ROOT" store.
+ * Needs -lcrypt32 wherever this object is linked. */
+#include <windows.h>
+#include <wincrypt.h>
+#endif
+
 struct WynTls {
     mbedtls_net_context      net;
     mbedtls_ssl_context      ssl;
@@ -30,6 +37,106 @@ static void tls_fail(char* buf, size_t buflen, const char* what, int ret)
     char detail[128];
     mbedtls_strerror(ret, detail, sizeof(detail));
     snprintf(buf, buflen, "%s: %s (-0x%04x)", what, detail, (unsigned)-ret);
+}
+
+/* --------------------------------------------------- the platform trust store */
+
+/* Count the certificates in a parsed chain. mbedTLS gives no count, and "how many
+ * roots did we actually load" is the only useful diagnostic when verification
+ * starts failing everywhere.
+ *
+ * `version != 0` is load-bearing: mbedtls_x509_crt_init leaves a zeroed HEAD NODE
+ * that is part of the list but holds no certificate, so a naive walk reports 1 for
+ * an empty chain. That cost two defects in the first draft of this file - the root
+ * count came out one short, and the "asked for system trust, found none" guard
+ * below could never fire, so that case surfaced as a baffling verification failure
+ * instead. A mutation test caught it: neutering the loader left an arm passing. */
+static long crt_count(const mbedtls_x509_crt* chain)
+{
+    long n = 0;
+    for (const mbedtls_x509_crt* c = chain; c != NULL; c = c->next) {
+        if (c->version != 0) n++;
+    }
+    return n;
+}
+
+/* Load the platform's roots into chain. Returns how many were added (0 is a
+ * failure for our purposes - a trust store with no roots trusts nothing). */
+static long load_system_trust(mbedtls_x509_crt* chain)
+{
+    long before = crt_count(chain);
+
+    /* $SSL_CERT_FILE / $SSL_CERT_DIR first: the standard override, and the only way
+     * an iOS app or a scratch container can supply roots at all.
+     *
+     * AUTHORITATIVE when set, even if it yields nothing. Falling back to the
+     * platform store would mean an operator who pointed us at the wrong bundle gets
+     * a working connection verified against roots they did not choose - the failure
+     * an override exists to make visible. */
+    const char* env_file = getenv("SSL_CERT_FILE");
+    const char* env_dir  = getenv("SSL_CERT_DIR");
+    if ((env_file && *env_file) || (env_dir && *env_dir)) {
+        if (env_file && *env_file) mbedtls_x509_crt_parse_file(chain, env_file);
+        if (env_dir && *env_dir)   mbedtls_x509_crt_parse_path(chain, env_dir);
+        return crt_count(chain) - before;
+    }
+
+#ifdef _WIN32
+    /* No bundle on disk: enumerate the CryptoAPI "ROOT" store and hand mbedTLS
+     * each certificate as DER. */
+    HCERTSTORE store = CertOpenSystemStoreA(0, "ROOT");
+    if (store) {
+        PCCERT_CONTEXT ctx = NULL;
+        while ((ctx = CertEnumCertificatesInStore(store, ctx)) != NULL) {
+            /* A root we cannot parse is skipped, not fatal - the store holds
+             * certificate types mbedTLS has no use for. */
+            mbedtls_x509_crt_parse_der(chain, ctx->pbCertEncoded, ctx->cbCertEncoded);
+        }
+        CertCloseStore(store, 0);
+    }
+#else
+    /* First location that yields anything wins; these are ordered by how likely
+     * they are to be the real store rather than a leftover. */
+    static const char* const files[] = {
+        "/etc/ssl/cert.pem",                   /* macOS, BSD */
+        "/etc/ssl/certs/ca-certificates.crt",  /* Debian, Ubuntu, Alpine */
+        "/etc/pki/tls/certs/ca-bundle.crt",    /* RHEL, Fedora, Amazon Linux */
+        "/etc/ssl/ca-bundle.pem",              /* SUSE */
+        "/etc/pki/tls/cacert.pem",
+        "/etc/ssl/certs/ca-bundle.crt",
+        NULL
+    };
+    for (int i = 0; files[i]; i++) {
+        if (mbedtls_x509_crt_parse_file(chain, files[i]) >= 0 && crt_count(chain) > before) break;
+    }
+    if (crt_count(chain) == before) {
+        static const char* const dirs[] = {
+            "/etc/ssl/certs",                   /* Linux, when it is a hashed dir */
+            "/system/etc/security/cacerts",     /* Android */
+            NULL
+        };
+        for (int i = 0; dirs[i]; i++) {
+            if (mbedtls_x509_crt_parse_path(chain, dirs[i]) >= 0 && crt_count(chain) > before) break;
+        }
+    }
+#endif
+
+    return crt_count(chain) - before;
+}
+
+long wyn_tls_system_trust_count(char* err, size_t errlen)
+{
+    if (err && errlen) err[0] = '\0';
+    mbedtls_x509_crt chain;
+    mbedtls_x509_crt_init(&chain);
+    long n = load_system_trust(&chain);
+    mbedtls_x509_crt_free(&chain);
+    if (n <= 0 && err) {
+        snprintf(err, errlen,
+                 "tls: no system root certificates found; set SSL_CERT_FILE to a PEM bundle "
+                 "or pass ca_file/ca_pem explicitly");
+    }
+    return n > 0 ? n : -1;
 }
 
 static void tls_free(WynTls* tls)
@@ -54,7 +161,7 @@ WynTls* wyn_tls_connect(const char* host, const char* port,
     }
     /* Fail closed: no trust anchors, no connection. This is the whole point of
      * the seam - the code it replaces verified nothing at all. */
-    if (!opt || (!opt->ca_file && !opt->ca_pem)) {
+    if (!opt || (!opt->ca_file && !opt->ca_pem && !opt->use_system_trust)) {
         if (err) snprintf(err, errlen,
                           "tls: no trust anchors configured (set ca_file or ca_pem); "
                           "refusing to connect without certificate verification");
@@ -99,6 +206,16 @@ WynTls* wyn_tls_connect(const char* host, const char* port,
             tls_free(tls);
             return NULL;
         }
+    }
+    if (opt->use_system_trust && load_system_trust(&tls->cacert) <= 0 &&
+        crt_count(&tls->cacert) == 0) {
+        /* Asked for system trust, got nothing, and no explicit anchor to fall back
+         * on: say so here rather than letting every handshake fail mysteriously. */
+        if (err) snprintf(err, errlen,
+                          "tls: no system root certificates found; set SSL_CERT_FILE to a "
+                          "PEM bundle or pass ca_file/ca_pem explicitly");
+        tls_free(tls);
+        return NULL;
     }
 
     if ((ret = mbedtls_ssl_config_defaults(&tls->conf, MBEDTLS_SSL_IS_CLIENT,
