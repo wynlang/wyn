@@ -1,33 +1,46 @@
-// JSON - Parsing and using JSON data
+// JSON - parsing, reading, and building
+//
+// Json.parse returns a HANDLE. Test it with Json.is_valid, never with `== 0`:
+// handles are indices, so 0 is the first document a program parses. This example
+// used to teach `if json == 0`, which rejected the first valid document and
+// accepted every failure after it.
 fn main() -> int {
-    // Parse JSON string
-    var json_text = "{\"name\":\"Alice\",\"age\":30,\"score\":95}"
-    var json = json_parse(json_text)
+    // --- parse, and check the parse ------------------------------------------
+    var json_text = "{\"name\":\"Alice\",\"age\":30,\"score\":95.5,\"admin\":true}"
+    var doc = Json.parse(json_text)
 
-    if (json == 0) {
-        print("Failed to parse JSON\n")
+    if not Json.is_valid(doc) {
+        print("Failed to parse JSON")
         return 1
     }
 
-    // Get string value
-    var name = json_get_string(json, "name")
-    if (name != "") {
-        print("Name: ")
-        print(name)
-        print("\n")
+    print("Name:  ${Json.get_string(doc, "name")}")
+    print("Age:   ${Json.get_int(doc, "age")}")
+    print("Score: ${Json.get_float(doc, "score")}")
+    print("Admin: ${Json.get(doc, "admin")}")
+
+    for key in Json.keys(doc) {
+        print("  key: ${key}")
     }
 
-    // Get integer values
-    var age = json_get_int(json, "age")
-    var score = json_get_int(json, "score")
+    // --- build, then read your own document back ----------------------------
+    // Build and read share one object model, so what you set you can get.
+    var out = Json.new()
+    Json.set_string(out, "name", Json.get_string(doc, "name"))
+    Json.set_int(out, "age", Json.get_int(doc, "age") + 1)
+    Json.set_bool(out, "admin", true)
+    Json.set_null(out, "note")
 
-    print("Age: ")
-    print(age)
-    print("\n")
-    print("Score: ")
-    print(score)
-    print("\n")
+    print("Built: ${Json.stringify(out)}")
+    print("Read back: ${Json.get_string(out, "name")}")
 
-    json_free(json)
+    // --- a parse failure is detectable, not guessed --------------------------
+    var broken = Json.parse("{\"truncated\":")
+    if Json.is_valid(broken) {
+        print("expected the truncated document to be rejected")
+        return 1
+    }
+    print("Rejected malformed input")
+
     return 0
 }

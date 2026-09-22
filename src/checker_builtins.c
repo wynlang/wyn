@@ -928,18 +928,21 @@ void init_checker() {
         add_symbol(global_scope, tok, ft, false);
     }
     
-    // JSON stdlib
-    Type* json_obj_type = make_type(TYPE_MAP);
+    // JSON stdlib - the lowercase free-function spelling. TYPE_JSON, not TYPE_MAP:
+    // these are aliases of the capital-J handle functions, so `json_new()` yields a
+    // Json (method dispatch works on it) and every param takes a Json handle. Typing
+    // them TYPE_MAP made `json_get_int(json_parse(s), k)` fail the arg check with
+    // "Expected: map (HashMap<string, int>), Got: int" - the two-representation split
+    // showing up as a bogus error on correct code.
+    Type* json_obj_type = make_type(TYPE_JSON);
     struct { const char* name; int pc; Type* p1; Type* p2; Type* p3; Type* ret; } json_fns[] = {
         {"json_new", 0, NULL, NULL, NULL, json_obj_type},
         {"json_set_string", 3, json_obj_type, builtin_string, builtin_string, builtin_void},
         {"json_set_int", 3, json_obj_type, builtin_string, builtin_int, builtin_void},
-        // param0 is the JSON handle. json_parse() is registered (blanket loop) as
-        // a plain int handle, so accept int here (not json_obj_type) or a var
-        // holding a parsed doc fails the arg check. Return type MUST be string so
-        // `s = json_get_string(..)` infers string everywhere, not just in
-        // print/interp position (json_get_int stays shadowed as unchecked int).
-        {"json_get_string", 2, builtin_int, builtin_string, NULL, builtin_string},
+        // Return type MUST be string so `s = json_get_string(..)` infers string
+        // everywhere, not just in print/interp position (json_get_int stays shadowed
+        // as unchecked int).
+        {"json_get_string", 2, json_obj_type, builtin_string, NULL, builtin_string},
         {"json_get_int", 2, json_obj_type, builtin_string, NULL, builtin_int},
         {"json_stringify", 1, json_obj_type, NULL, NULL, builtin_string},
         {"Regex_match", 2, builtin_string, builtin_string, NULL, builtin_bool},
@@ -1054,18 +1057,20 @@ void init_checker() {
     reg_fn("HashSet_new", set_type, 0);
 
     // Json namespace
-    // TYPE_JSON, not TYPE_MAP. A WynJson* is NOT a WynHashMap*: typing it as a map made
+    // TYPE_JSON, not TYPE_MAP. A Json handle is NOT a WynHashMap*: typing it as a map made
     // codegen declare `var j = Json.new()` as `WynHashMap*` AND register it for the
-    // scope-exit `hashmap_free()`, so a Json.set() followed by that free walked a WynJson
-    // as a hashmap and ABORTED (exit 134). codegen_stmt.c already maps TYPE_JSON ->
-    // "WynJson*", and the hashmap scope-free only triggers on the WynHashMap* c_type, so
-    // naming the real type fixes both halves.
+    // scope-exit `hashmap_free()`, so a Json.set() followed by that free walked the value
+    // as a hashmap and ABORTED (exit 134). codegen_stmt.c maps TYPE_JSON -> "long long"
+    // (the arena handle), and the hashmap scope-free only triggers on the WynHashMap*
+    // c_type, so naming the real type fixes both halves.
     Type* json_type = make_type(TYPE_JSON);
     struct { const char* name; int pc; Type* p1; Type* p2; Type* p3; Type* ret; } json_ns_fns[] = {
         {"Json_new", 0, NULL, NULL, NULL, json_type},
         {"Json_set_string", 3, json_type, builtin_string, builtin_string, builtin_void},
         {"Json_set_int", 3, json_type, builtin_string, builtin_int, builtin_void},
+        {"Json_set_float", 3, json_type, builtin_string, builtin_float, builtin_void},
         {"Json_set_bool", 3, json_type, builtin_string, builtin_int, builtin_void},
+        {"Json_set_null", 2, json_type, builtin_string, NULL, builtin_void},
         // Json_get_string and Json_get_int moved to new_fns for flexible type checking
         // {"Json_get_string", 2, json_type, builtin_string, NULL, builtin_string},
         // {"Json_get_int", 2, json_type, builtin_string, NULL, builtin_int},
@@ -1279,12 +1284,21 @@ void init_checker() {
 
     // New module registrations
     struct { const char* name; int nparams; Type* ret; } new_fns[] = {
-        {"Json_parse", 1, builtin_int},
+        // json_type, not builtin_int: a parsed document carries the Json type so the
+        // METHOD form dispatches (`doc.get_string("k")` used to emit nothing at all,
+        // because an int receiver has no json method table). can_convert_type() makes
+        // Json and int interchangeable - the handle IS a long long - so the many
+        // existing programs that hold one in an `int` keep checking.
+        {"Json_parse", 1, json_type},
         {"Json_stringify", 1, builtin_string},
         {"Json_get", 2, builtin_string},
         {"Json_get_string", 2, builtin_string},
         {"Json_get_int", 2, builtin_int},
         {"Json_has", 2, builtin_int},
+        // The only way to learn that a parse failed: the handle is an arena index, so
+        // 0 is a valid document and there is no in-band error value.
+        {"Json_is_valid", 1, builtin_bool},
+        {"Json_free", 1, builtin_void},
         // Json_keys registered separately below with its real [string] return
         // type (find_symbol returns the first match, so no builtin_string entry
         // here may shadow it).
