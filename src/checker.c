@@ -232,6 +232,51 @@ static bool had_error = false;
 static Type* current_function_return_type = NULL;
 static Type* current_self_type = NULL; // receiver type for extension methods
 
+// `spawn` on a closure: reject it, here, rather than let it return 0.
+//
+//     var n = 5
+//     g = (() => n * 2)
+//     print(g())               // 10 - the closure itself is fine
+//     f = spawn (() => n * 2)
+//     print(await f)           // 0  - check clean, build clean, exit 0, WRONG
+//
+// The worst class of bug there is: nothing anywhere told the programmer. `spawn`
+// hands the scheduler a function POINTER, and a closure's captured environment is
+// not carried across the task boundary, so the task reads zeroes.
+//
+// Deliberately NOT conditional on captured_count: measured on dev, a
+// non-capturing `spawn (() => 42)` returns 0 as well, and so does the
+// immediately-invoked `spawn (() => n * 2)()`, whose target is a CALL whose callee
+// is the lambda. The fire-and-forget statement form died with
+// "Internal codegen error: lambda at line 0 was never registered" - loud, but no
+// more use to the reader - and now gets this message too.
+//
+// Making closures genuinely spawnable is a larger piece (the captured env has to
+// be boxed and refcounted across the boundary) and is out of scope for v1.22 per
+// internal-docs/PLAN_v1.22.md §5. This is the clean error and the workaround.
+//
+// One function, called from BOTH spawn forms (the EXPR_SPAWN expression and the
+// STMT_SPAWN statement), because the same rule emitted twice is how the two
+// spellings of a construct come to disagree.
+static bool reject_spawned_closure(Expr* target, int line) {
+    if (!target) return false;
+    bool is_closure = target->type == EXPR_LAMBDA ||
+                      (target->type == EXPR_CALL && target->call.callee &&
+                       target->call.callee->type == EXPR_LAMBDA);
+    if (!is_closure) return false;
+    fprintf(stderr, "\nError at line %d: `spawn` cannot run a closure\n", line);
+    show_source_line(line);
+    fprintf(stderr,
+        "  \033[34mHelp:\033[0m spawn needs a function pointer, and a closure's captured\n"
+        "        variables are not carried across the task boundary - the task reads\n"
+        "        zeroes, which is why this used to build and then answer 0. Pass the\n"
+        "        captured values as parameters to a named function and spawn that:\n"
+        "          \033[1mfn work(n: int) -> int { return n * 2 }\033[0m\n"
+        "          \033[1mf = spawn work(n)\033[0m\n");
+    had_error = true;
+    return true;
+}
+
 // Module visibility tracking
 static char current_module_name[256] = "";
 
@@ -4874,6 +4919,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return builtin_int;
         case EXPR_SPAWN:
             if (expr->spawn.call) {
+                reject_spawned_closure(expr->spawn.call, expr->token.line);
                 Type* call_type = check_expr(expr->spawn.call, scope);
                 // The spawn returns a future wrapping the call's return type
                 // Store the inner type for await to use
@@ -6321,7 +6367,10 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             // array_get_int regardless of element type (string elements arrived
             // as NULL, float elements truncated) - and never marked the arg
             // identifiers used, so the arrays were falsely warned "unused".
-            if (stmt->spawn.call) check_expr(stmt->spawn.call, scope);
+            if (stmt->spawn.call) {
+                reject_spawned_closure(stmt->spawn.call, stmt->spawn.line);
+                check_expr(stmt->spawn.call, scope);
+            }
             break;
         case STMT_RETURN:
             if (stmt->ret.value) {
