@@ -334,6 +334,11 @@ void json_set_int(WynJson* json, const char* key, int value);
 char* json_stringify(WynJson* json);
 
 // Regex module - portable regex
+//
+// \d \w \s (and \D \W \S) are expanded to plain ERE by wyn_regex_expand_escapes
+// BEFORE either engine sees the pattern - see src/wyn_regex_escapes.h for why
+// that pass is upstream of both engines rather than inside each of them.
+#include "wyn_regex_escapes.h"
 #ifdef _WIN32
 #include "wyn_regex.h"
 bool regex_match(const char* str, const char* pattern) { return wre_match_full(str, pattern); }
@@ -421,16 +426,29 @@ char* regex_split(const char* str, const char* pattern) {
 }
 #else
 #include <regex.h>
+// The single point at which a pattern becomes a compiled regex on this platform.
+// Shorthand expansion lives HERE and not at the call sites: regex_match,
+// regex_replace, regex_find, regex_find_all, regex_split and Regex_find each
+// call regcomp() themselves, and a fix applied to one of them is not a fix - the
+// other five kept answering with the letter instead of the class.
+static inline int wyn_regcomp(regex_t* re, const char* pattern, int flags) {
+    char bad = 0;
+    char* expanded = wyn_regex_expand_escapes(pattern, &bad);
+    if (!expanded) { wyn_rx_reject(pattern, bad); return REG_BADPAT; }
+    int rc = regcomp(re, expanded, flags);
+    free(expanded);
+    return rc;
+}
 bool regex_match(const char* str, const char* pattern) {
     regex_t re;
-    if (regcomp(&re, pattern, REG_EXTENDED | REG_NOSUB) != 0) return false;
+    if (wyn_regcomp(&re, pattern, REG_EXTENDED | REG_NOSUB) != 0) return false;
     bool result = regexec(&re, str, 0, NULL, 0) == 0;
     regfree(&re);
     return result;
 }
 char* regex_replace(const char* str, const char* pattern, const char* replacement) {
     regex_t re;
-    if (regcomp(&re, pattern, REG_EXTENDED) != 0) return wyn_strdup(str);
+    if (wyn_regcomp(&re, pattern, REG_EXTENDED) != 0) return wyn_strdup(str);
     int rlen = strlen(replacement);
     size_t cap = strlen(str) + rlen * 4 + 64;
     char* result = wyn_str_alloc(cap);
@@ -4041,7 +4059,7 @@ char* regex_split(const char* str, const char* pattern);
 #ifndef _WIN32
 bool Regex_match(const char* s, const char* p) { return regex_match(s, p); }
 char* Regex_replace(const char* s, const char* p, const char* r) { return regex_replace(s, p, r); }
-int Regex_find(const char* s, const char* p) { regex_t re; if (regcomp(&re, p, REG_EXTENDED) != 0) return -1; regmatch_t m; int r2 = regexec(&re, s, 1, &m, 0) == 0 ? m.rm_so : -1; regfree(&re); return r2; }
+int Regex_find(const char* s, const char* p) { regex_t re; if (wyn_regcomp(&re, p, REG_EXTENDED) != 0) return -1; regmatch_t m; int r2 = regexec(&re, s, 1, &m, 0) == 0 ? m.rm_so : -1; regfree(&re); return r2; }
 char* Regex_find_all(const char* s, const char* p) { return regex_find_all(s, p); }
 char* Regex_split(const char* s, const char* p) { return regex_split(s, p); }
 #endif
@@ -6261,7 +6279,7 @@ char* DateTime_to_iso(long long timestamp) {
 #ifndef _WIN32
 long long regex_find(const char* str, const char* pattern) {
     regex_t re;
-    if (regcomp(&re, pattern, REG_EXTENDED) != 0) return -1;
+    if (wyn_regcomp(&re, pattern, REG_EXTENDED) != 0) return -1;
     regmatch_t match;
     int result = regexec(&re, str, 1, &match, 0) == 0 ? match.rm_so : -1;
     regfree(&re);
@@ -6270,7 +6288,7 @@ long long regex_find(const char* str, const char* pattern) {
 
 char* regex_find_all(const char* str, const char* pattern) {
     regex_t re;
-    if (regcomp(&re, pattern, REG_EXTENDED) != 0) return "";
+    if (wyn_regcomp(&re, pattern, REG_EXTENDED) != 0) return "";
     size_t cap = 1024, rlen = 0;
     char* result = wyn_str_alloc(cap);
     const char* p = str;
@@ -6546,7 +6564,7 @@ long long DateTime_second(long long timestamp) { time_t t = (time_t)timestamp; s
 #ifndef _WIN32
 char* regex_split(const char* str, const char* pattern) {
     regex_t re;
-    if (regcomp(&re, pattern, REG_EXTENDED) != 0) return wyn_strdup(str);
+    if (wyn_regcomp(&re, pattern, REG_EXTENDED) != 0) return wyn_strdup(str);
     char* result = wyn_malloc(strlen(str) + 256); result[0] = 0;
     const char* p = str;
     regmatch_t match;
