@@ -169,9 +169,20 @@ fn main() -> int {
     // httpbin.org:80 - the remote connect made this whole 100+ assertion file
     // hostage to a third-party host and was observed wedging for the full 75s
     // watchdog while passing 3/3 standalone.
-    var nsrv = Net.listen(18791)
+    // WALKED, not fixed: sibling agents run this suite concurrently out of separate
+    // worktrees, so the loser of a fixed-port bind race reported the clash as a Wyn
+    // defect. Gated by tests/errors/run_test_port_hygiene_test.sh.
+    var nport = 18791
+    var nsrv = -1
+    var ntries = 0
+    while ntries < 64 {
+        nsrv = Net.listen(nport)
+        if nsrv > 0 { break }
+        nport = nport + 1
+        ntries = ntries + 1
+    }
     Test.assert(nsrv > 0, "Net.listen")
-    var sock = Net.connect("127.0.0.1", 18791)
+    var sock = Net.connect("127.0.0.1", nport)
     Test.assert(sock > 0, "Net.connect")
     Net.close(sock)
     Net.close(nsrv)
@@ -243,9 +254,17 @@ fn main() -> int {
     
     // Http (client + server), all on 127.0.0.1. Was Http.get to httpbin.org over
     // HTTPS - same third-party dependency as the Net block above.
-    var srv = Http.serve(19997)
+    var hport = 19997
+    var srv = -1
+    var htries = 0
+    while htries < 64 {
+        srv = Http.serve(hport)
+        if srv > 0 { break }
+        hport = hport + 1
+        htries = htries + 1
+    }
     Test.assert(srv > 0, "Http.serve")
-    var hc = Net.connect("127.0.0.1", 19997)
+    var hc = Net.connect("127.0.0.1", hport)
     Test.assert(hc > 0, "client connects to local server")
     Net.send(hc, "GET /v HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
     var hreq = Http.accept(srv)
