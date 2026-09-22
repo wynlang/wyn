@@ -135,6 +135,10 @@ mbedtls: $(MBEDTLS_LIB)
 test-tls-seam: $(MBEDTLS_LIB)
 	@bash tests/tls/run_tls_seam_test.sh
 
+# JSON Schema derivation on its own, for the edit loop. `make test` runs it too.
+# Needs no `wyn` binary: it links src/wyn_schema.c directly.
+test-schema:
+	@bash tests/schema/run_schema_test.sh
 # The native HTTPS transport on its own, for the edit loop. `make test` runs it too.
 test-https: $(MBEDTLS_LIB) runtime
 	@bash tests/https/run_https_test.sh
@@ -163,7 +167,12 @@ platform-info:
 	@echo "Platform flags: $(PLATFORM_CFLAGS)"
 
 # C-based compiler
-CORE_SRCS = src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string_runtime.c src/arc_runtime.c src/async_runtime.c src/concurrency.c src/optional.c src/result.c src/type_inference.c src/module_loader.c src/module.c src/module_registry.c src/io.c src/net.c src/stdlib_array.c src/stdlib_string.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c src/cmd_compile.c src/cmd_test.c src/cmd_other.c src/cmd_ui.c src/hashmap.c src/hashset.c src/json.c src/types.c src/patterns.c  src/toml.c src/package.c src/pkgspec.c src/lsp.c src/bindgen.c src/cpkg.c src/tcc_backend.c src/wyn_arena.c src/wyn_rc.c src/coroutine.c
+CORE_SRCS = src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string_runtime.c src/arc_runtime.c src/async_runtime.c src/concurrency.c src/optional.c src/result.c src/type_inference.c src/module_loader.c src/module.c src/module_registry.c src/io.c src/net.c src/stdlib_array.c src/stdlib_string.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c src/cmd_compile.c src/cmd_test.c src/cmd_other.c src/cmd_ui.c src/hashmap.c src/hashset.c src/json.c src/types.c src/patterns.c  src/toml.c src/package.c src/pkgspec.c src/lsp.c src/bindgen.c src/cpkg.c src/tcc_backend.c src/wyn_arena.c src/wyn_rc.c src/coroutine.c src/wyn_schema.c
+# src/wyn_schema.c is here before anything calls it (the `ai fn` parser and codegen
+# land in later changes). It is listed anyway so every `make`, on all four CI
+# platforms, compiles it under -Wall -Wextra: a module that only the test runner
+# builds is a module whose portability nobody checks until the day it matters.
+#
 # NOTE: src/spawn.c is deliberately NOT linked into the compiler. The compiler
 # only registers Task_send/Task_recv/etc. as builtin NAME strings (checker.c) -
 # it never calls the spawn runtime in-process; compiled programs get it from
@@ -351,6 +360,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/run_bdd.sh
 	@echo "=== Running TLS seam test ==="
 	@bash tests/tls/run_tls_seam_test.sh
+	@echo "=== Running JSON Schema derivation test ==="
+	@bash tests/schema/run_schema_test.sh
 	@echo "=== Running native HTTPS transport test (+ no-openssl tripwire) ==="
 	@bash tests/https/run_https_test.sh
 	@echo "=== Running golden-C snapshot tests ==="
