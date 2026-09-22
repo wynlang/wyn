@@ -452,6 +452,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_bug_batch2_test.sh
 	@echo "=== Running user test-runner test ==="
 	@WYN=./wyn bash tests/errors/run_user_test_runner_test.sh
+	@echo "=== Running wyn test one-summary gate ==="
+	@WYN=./wyn bash tests/errors/run_test_summary_test.sh
 	@echo "=== Running module-codegen (M1-M4) test ==="
 	@WYN=./wyn bash tests/errors/run_module_codegen_test.sh
 	@echo "=== Running pub-visibility enforcement test ==="
