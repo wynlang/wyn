@@ -32,6 +32,27 @@ static void show_source_line(int line) {
         fprintf(stderr, "\033[0m\n");
     }
 }
+// The ONE unknown-method diagnostic. PR #115 introduced this shape for value
+// receivers (string, array, user struct) and it reads well, so the builtin-namespace
+// path added later renders through the same function rather than growing a second
+// one: the layout, the caret line, the colours and the "Did you mean" line are
+// decided here, once. Callers own only the headline, because the three receivers
+// genuinely say different things ("string has no method 'uppr'" vs "unknown method
+// 'Time.millis' on namespace 'Time'").
+//
+// `suggestion` is spelled exactly as the user would type the call (".upper()",
+// "DateTime.millis()") - the caller knows the call syntax for its receiver, and
+// formatting it here was how the namespace form first came out as ".millis()".
+static void report_unknown_method(int line, const char* headline,
+                                  const char* suggestion, const char* help) {
+    fprintf(stderr, "\nError at line %d: %s\n", line, headline);
+    show_source_line(line);
+    if (suggestion)
+        fprintf(stderr, "  \033[33mDid you mean:\033[0m %s?\n", suggestion);
+    if (help)
+        fprintf(stderr, "  \033[34mHelp:\033[0m %s\n", help);
+}
+
 #include "ast.h"
 #include "types.h"
 #include "error.h"  // T1.5.3: For type_error_mismatch function
@@ -3918,6 +3939,71 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                             if (strncmp(mr, "array", 5) == 0) { expr->expr_type = builtin_array; return builtin_array; }
                         }
                     }
+
+                    // Nothing knows this name. On a BUILTIN namespace that used to
+                    // be the end of it: the call fell through, typed as int, and
+                    // died in clang on a symbol the programmer never wrote
+                    // (`Time_no_such_method_xyz`) - `wyn check` said the program was
+                    // fine on all 31 namespaces. Reject it here instead, but only
+                    // when the compiler can PROVE the symbol it would emit is
+                    // declared nowhere in the runtime; wyn_namespace_method_unknown()
+                    // returns 0 whenever it cannot tell, so a call that compiles
+                    // today still checks today.
+                    //
+                    // The guards, each for a case that is not a namespace typo:
+                    //  - a LOADED user module may be named like a builtin namespace
+                    //    (`math` is in is_builtin_module's list, and tests/modules
+                    //    import a local math.wyn) - its own AST is the authority.
+                    //  - a real variable shadowing the name types as something other
+                    //    than the int placeholder an import registers. MAP and SET are
+                    //    allowed alongside it because init_checker registers the names
+                    //    `HashMap` and `HashSet` as the collection TYPES, so the
+                    //    receiver of `HashMap.no_such()` types TYPE_MAP - without this
+                    //    those two namespaces, the two most typo-prone in the stdlib,
+                    //    were the only ones left unchecked (29 of 31).
+                    //  - a struct/enum of that name means `Name.X` is a type or
+                    //    variant reference, not a stdlib call - as does a method name
+                    //    that starts with a capital.
+                    //  - the `Ns_method` symbol existing at all (even with no usable
+                    //    return type, which is how execution reaches here).
+                    //
+                    // Called out rather than left looking covered: mutating away either
+                    // the is_module_loaded() or the !ns_sym test turns NO arm of
+                    // run_namespace_unknown_method_test.sh red. A user module whose
+                    // function IS registered returns above this point, so both are
+                    // defence for the narrower case the get_module_fn_builtin_return
+                    // fallback above already documents - a module loaded from the
+                    // package cache whose symbol is registered under neither spelling.
+                    // Kept, because that case reaching this rule would reject a
+                    // perfectly good package call.
+                    extern bool is_builtin_module(const char* name);
+                    extern int wyn_namespace_method_unknown(const char*, const char*);
+                    extern int wyn_suggest_namespace_method(const char*, const char*, char*, size_t);
+                    Symbol* _shadow = find_symbol(global_scope, expr->method_call.object->token);
+                    if (is_builtin_module(obj_name) &&
+                        !is_module_loaded(obj_name) &&
+                        !checking_same_module(obj_name) &&
+                        (!object_type || object_type->kind == TYPE_INT ||
+                         object_type->kind == TYPE_MAP || object_type->kind == TYPE_SET) &&
+                        !(_shadow && _shadow->type &&
+                          (_shadow->type->kind == TYPE_STRUCT || _shadow->type->kind == TYPE_ENUM)) &&
+                        !(method_name[0] >= 'A' && method_name[0] <= 'Z') &&
+                        !ns_sym &&
+                        wyn_namespace_method_unknown(obj_name, method_name)) {
+                        char _hl[320], _help[512], _sug[192];
+                        snprintf(_hl, sizeof(_hl),
+                                 "unknown method '%s.%s' on namespace '%s'",
+                                 obj_name, method_name, obj_name);
+                        snprintf(_help, sizeof(_help),
+                                 "'%s' is not a function Wyn knows about. Check the spelling against the '%s' stdlib docs.",
+                                 method_name, obj_name);
+                        int have_sug = wyn_suggest_namespace_method(obj_name, method_name,
+                                                                   _sug, sizeof(_sug));
+                        report_unknown_method(method.line, _hl, have_sug ? _sug : NULL, _help);
+                        had_error = true;
+                        expr->expr_type = builtin_int;
+                        return builtin_int;
+                    }
                 }
             }
             
@@ -4376,11 +4462,13 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 if (find_struct_definition(type_name) &&
                     !struct_has_method(global_scope, type_name, method) &&
                     !is_field_of_struct(type_name, method)) {
-                    fprintf(stderr, "\nError at line %d: struct '%s' has no method '%.*s'\n",
-                            method.line, sname, (int)method.length, method.start);
-                    show_source_line(method.line);
-                    fprintf(stderr, "  \033[34mHelp:\033[0m define it with `fn %.*s(self) { ... }` inside `struct %s { ... }` (or an `impl %s` block).\n",
-                            (int)method.length, method.start, sname, sname);
+                    char _hl[320], _help[512];
+                    snprintf(_hl, sizeof(_hl), "struct '%s' has no method '%.*s'",
+                             sname, (int)method.length, method.start);
+                    snprintf(_help, sizeof(_help),
+                             "define it with `fn %.*s(self) { ... }` inside `struct %s { ... }` (or an `impl %s` block).",
+                             (int)method.length, method.start, sname, sname);
+                    report_unknown_method(method.line, _hl, NULL, _help);
                     had_error = true;
                     expr->expr_type = builtin_int;
                     return builtin_int;
@@ -4399,11 +4487,10 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 const char* recv = object_type->kind == TYPE_STRING ? "string" : "array";
                 extern const char* suggest_method_name(const char*, const char*);
                 const char* near = suggest_method_name(recv, method_name);
-                fprintf(stderr, "\nError at line %d: %s has no method '%s'\n",
-                        method.line, recv, method_name);
-                show_source_line(method.line);
-                if (near)
-                    fprintf(stderr, "  \033[33mDid you mean:\033[0m .%s()?\n", near);
+                char _hl[320], _sug[192];
+                snprintf(_hl, sizeof(_hl), "%s has no method '%s'", recv, method_name);
+                if (near) snprintf(_sug, sizeof(_sug), ".%s()", near);
+                report_unknown_method(method.line, _hl, near ? _sug : NULL, NULL);
                 had_error = true;
                 expr->expr_type = builtin_int;
                 return builtin_int;

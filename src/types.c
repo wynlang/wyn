@@ -287,26 +287,35 @@ const char* lookup_method_return_type(const char* receiver_type, const char* met
     return NULL;  // Method not found
 }
 
+// How close two identifiers are, for every "did you mean" hint: differing chars +
+// length difference. WYN_NAME_FAR means "not worth suggesting". One function
+// because the value-receiver suggester and the namespace suggester must rank
+// candidates the same way - two metrics would make `.uppr` and `Time.millis`
+// disagree about what counts as a near miss for no reason a user could see.
+#define WYN_NAME_FAR 4
+int wyn_name_distance(const char* a, const char* b) {
+    if (!a || !b) return WYN_NAME_FAR;
+    size_t al = strlen(a), bl = strlen(b);
+    int diff = (int)(al > bl ? al - bl : bl - al);
+    if (diff > 2) return WYN_NAME_FAR;
+    size_t shorter = al < bl ? al : bl;
+    int match = 0;
+    for (size_t c = 0; c < shorter; c++)
+        if (a[c] == b[c]) match++;
+    int d = (int)(shorter - match) + diff;
+    return d < WYN_NAME_FAR ? d : WYN_NAME_FAR;
+}
+
 // Nearest known method name on a receiver, for "did you mean" hints when an
-// unknown method is rejected. Simple distance: differing chars + length diff,
-// same metric as the undefined-function suggester in checker.c. Returns NULL
-// when nothing is within distance 3.
+// unknown method is rejected. Returns NULL when nothing is within distance 3.
 const char* suggest_method_name(const char* receiver_type, const char* method_name) {
     if (!receiver_type || !method_name) return NULL;
     const char* best = NULL;
-    int best_dist = 4;  // only suggest reasonably close names
-    size_t ml = strlen(method_name);
+    int best_dist = WYN_NAME_FAR;
     for (int i = 0; method_signatures[i].receiver_type != NULL; i++) {
         if (strcmp(method_signatures[i].receiver_type, receiver_type) != 0) continue;
         const char* cand = method_signatures[i].method_name;
-        size_t cl = strlen(cand);
-        int diff = (int)(ml > cl ? ml - cl : cl - ml);
-        if (diff > 2) continue;
-        size_t shorter = ml < cl ? ml : cl;
-        int match = 0;
-        for (size_t c = 0; c < shorter; c++)
-            if (method_name[c] == cand[c]) match++;
-        int d = (int)(shorter - match) + diff;
+        int d = wyn_name_distance(method_name, cand);
         if (d > 0 && d < best_dist) { best_dist = d; best = cand; }
     }
     return best;
@@ -1124,4 +1133,247 @@ const char* lookup_module_fn_return_type(const char* fn_name) {
         if (strcmp(fns[i].name, fn_name) == 0) return fns[i].ret;
     }
     return NULL;
+}
+
+// ===========================================================================
+// Builtin stdlib namespaces: one lowering, and the check-time "does it exist?"
+// ===========================================================================
+//
+// THE PROBLEM THIS SOLVES
+//
+// `Time.no_such_method_xyz()` used to pass `wyn check` on all 31 namespaces and
+// then fail in clang on a symbol the programmer never wrote. The checker could not
+// reject it because its namespace return-type tables are deliberately partial - 37
+// of the 217 distinct `Namespace.method` calls in this repo's own .wyn corpus are
+// absent from them, so "not in a table" has never meant "does not exist".
+//
+// What DOES decide is the C symbol the call lowers to: codegen emits it, and the C
+// compiler resolves it against the runtime headers. So the lowering is the
+// authority, and it lives here - once. codegen_expr.c used to carry it as a
+// 26-branch if-chain over namespace names; it now calls wyn_namespace_c_symbol(),
+// because a second copy of this mapping is exactly how `HashMap.set_int` came to
+// pass the checker and fail the C compile (the runtime spells it
+// hashmap_insert_int).
+//
+// The existence answer is TRI-STATE on purpose. If the runtime headers cannot be
+// read (an unusual install), or if the index knows no symbol at all under a
+// namespace's prefix, the checker stays permissive - the same behaviour as before
+// this existed. Being unable to prove a call wrong must never mean rejecting it.
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+
+extern bool is_builtin_module(const char* name);
+extern const char* builtin_module_name_at(int index);
+extern const char* wyn_installation_root(void);   // main.c
+
+// Namespaces whose C symbols are spelled with a LOWERCASE prefix. Everything else
+// uses the namespace's own name (`File.read_all` -> `File_read_all`), which is also
+// what the module fall-through in codegen emits.
+static const struct { const char* ns; const char* prefix; } wyn_ns_prefixes[] = {
+    {"Regex",   "regex_"},
+    {"HashMap", "hashmap_"},
+    {"HashSet", "hashset_"},
+    {"Random",  "random_"},
+    {NULL, NULL}
+};
+
+// Methods whose C symbol is not <prefix><method>. Each one is a rename in the
+// runtime, and each one was a real bug before it was listed: the blanket mangling
+// emitted a symbol that did not exist.
+static const struct { const char* ns; const char* method; const char* sym; } wyn_ns_renames[] = {
+    // Http's simple string API is lowercase; its server API is not.
+    {"Http", "get",        "http_get"},
+    {"Http", "post",       "http_post"},
+    {"Http", "put",        "http_put"},
+    {"Http", "delete",     "http_delete"},
+    {"Http", "set_header", "http_set_header"},
+    // HashMap: the runtime spells the setters hashmap_insert_*, and `get` defaults
+    // to the string flavour.
+    {"HashMap", "get",        "hashmap_get_string"},
+    {"HashMap", "set",        "hashmap_set"},
+    {"HashMap", "has",        "hashmap_has"},
+    {"HashMap", "set_int",    "hashmap_insert_int"},
+    {"HashMap", "set_string", "hashmap_insert_string"},
+    {"HashMap", "set_float",  "hashmap_insert_float"},
+    {"HashMap", "set_bool",   "hashmap_insert_bool"},
+    // Task.try_recv returns int? in Wyn, so it lowers to the Option-returning shim
+    // built on the pointer out-param form that Wyn cannot express.
+    {"Task", "try_recv", "Task_try_recv_opt"},
+    // String.char(65) -> "A"
+    {"String", "char", "String_char_from_int"},
+    {NULL, NULL, NULL}
+};
+
+static const char* wyn_ns_prefix_for(const char* ns) {
+    for (int i = 0; wyn_ns_prefixes[i].ns; i++)
+        if (strcmp(wyn_ns_prefixes[i].ns, ns) == 0) return wyn_ns_prefixes[i].prefix;
+    return NULL;   // caller uses "<ns>_"
+}
+
+int wyn_namespace_c_symbol(const char* ns, const char* method, char* out, size_t out_sz) {
+    if (!ns || !method || !out || out_sz == 0) return 0;
+    if (!is_builtin_module(ns)) return 0;
+    for (int i = 0; wyn_ns_renames[i].ns; i++) {
+        if (strcmp(wyn_ns_renames[i].ns, ns) == 0 &&
+            strcmp(wyn_ns_renames[i].method, method) == 0) {
+            snprintf(out, out_sz, "%s", wyn_ns_renames[i].sym);
+            return 1;
+        }
+    }
+    const char* pfx = wyn_ns_prefix_for(ns);
+    if (pfx) snprintf(out, out_sz, "%s%s", pfx, method);
+    else     snprintf(out, out_sz, "%s_%s", ns, method);
+    return 1;
+}
+
+// --- the runtime declaration index ----------------------------------------
+// Every `identifier(` in the translation unit a compiled program forms:
+// src/wyn_runtime.h plus the project headers it includes. Built at most once, and
+// only when a namespace call has already failed every return-type lookup - so an
+// ordinary compile never reads a byte of it.
+
+static char** wyn_rt_syms = NULL;
+static int wyn_rt_sym_count = 0;
+static int wyn_rt_sym_cap = 0;
+static int wyn_rt_index_state = 0;   // 0 unloaded, 1 loaded, -1 unavailable
+
+static void wyn_rt_index_add(const char* name, size_t len) {
+    if (len == 0 || len > 190) return;
+    if (wyn_rt_sym_count == wyn_rt_sym_cap) {
+        int ncap = wyn_rt_sym_cap ? wyn_rt_sym_cap * 2 : 512;
+        char** grown = (char**)realloc(wyn_rt_syms, (size_t)ncap * sizeof(char*));
+        if (!grown) return;
+        wyn_rt_syms = grown; wyn_rt_sym_cap = ncap;
+    }
+    char* copy = (char*)malloc(len + 1);
+    if (!copy) return;
+    memcpy(copy, name, len); copy[len] = '\0';
+    wyn_rt_syms[wyn_rt_sym_count++] = copy;
+}
+
+// Scan one header. `collect_includes` is set for the top-level runtime header only:
+// the compiled program sees its `#include "x.h"` files too, and four namespaces
+// (HashMap, HashSet, Json, Gui among them) are declared exclusively in those.
+static void wyn_rt_index_file(const char* root, const char* rel, int collect_includes,
+                              char includes[][64], int* ninc) {
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/src/%s", root, rel);
+    FILE* f = fopen(path, "r");
+    if (!f) return;
+    char line[4096];
+    while (fgets(line, sizeof(line), f)) {
+        if (collect_includes && *ninc < 64) {
+            const char* inc = strstr(line, "#include \"");
+            if (inc) {
+                inc += 10;
+                const char* endq = strchr(inc, '"');
+                if (endq && endq - inc > 0 && endq - inc < 63) {
+                    size_t n = (size_t)(endq - inc);
+                    memcpy(includes[*ninc], inc, n);
+                    includes[*ninc][n] = '\0';
+                    (*ninc)++;
+                }
+            }
+        }
+        for (const char* p = line; *p; ) {
+            if (!(*p == '_' || (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z'))) { p++; continue; }
+            const char* start = p;
+            while (*p == '_' || (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
+                   (*p >= '0' && *p <= '9')) p++;
+            const char* q = p;
+            while (*q == ' ' || *q == '\t') q++;
+            if (*q == '(') wyn_rt_index_add(start, (size_t)(p - start));
+        }
+    }
+    fclose(f);
+}
+
+static void wyn_rt_index_load(void) {
+    if (wyn_rt_index_state != 0) return;
+    const char* root = wyn_installation_root();
+    if (!root || !root[0]) { wyn_rt_index_state = -1; return; }
+    char includes[64][64];
+    int ninc = 0;
+    wyn_rt_index_file(root, "wyn_runtime.h", 1, includes, &ninc);
+    if (wyn_rt_sym_count == 0) { wyn_rt_index_state = -1; return; }
+    for (int i = 0; i < ninc; i++)
+        wyn_rt_index_file(root, includes[i], 0, includes, &ninc);
+    wyn_rt_index_state = 1;
+}
+
+// 1 declared, 0 not declared, -1 the index is unavailable (stay permissive).
+static int wyn_runtime_declares(const char* sym) {
+    wyn_rt_index_load();
+    if (wyn_rt_index_state != 1) return -1;
+    for (int i = 0; i < wyn_rt_sym_count; i++)
+        if (strcmp(wyn_rt_syms[i], sym) == 0) return 1;
+    return 0;
+}
+
+// How many symbols the index holds under this namespace's prefix. Zero means the
+// index cannot speak for the namespace at all (a user module named `math` shadowing
+// the builtin list, a header this build does not ship), and the checker must then
+// stay permissive rather than reject every call to it.
+static int wyn_ns_declared_count(const char* ns) {
+    char pfx[128];
+    const char* p = wyn_ns_prefix_for(ns);
+    if (p) snprintf(pfx, sizeof(pfx), "%s", p);
+    else   snprintf(pfx, sizeof(pfx), "%s_", ns);
+    size_t pl = strlen(pfx);
+    int n = 0;
+    for (int i = 0; i < wyn_rt_sym_count; i++)
+        if (strncmp(wyn_rt_syms[i], pfx, pl) == 0 && wyn_rt_syms[i][pl]) n++;
+    return n;
+}
+
+int wyn_namespace_method_unknown(const char* ns, const char* method) {
+    char sym[320];
+    if (!wyn_namespace_c_symbol(ns, method, sym, sizeof(sym))) return 0;
+    if (wyn_runtime_declares(sym) != 0) return 0;      // declared, or index unavailable
+    if (wyn_ns_declared_count(ns) == 0) return 0;      // index knows nothing here
+    return 1;
+}
+
+// "Did you mean" for a rejected namespace method, spelled as the user would type
+// it (`DateTime.millis()`). Returns 1 when it filled `out`.
+//
+// The right name in the WRONG namespace is tried first, because it is the stronger
+// signal and the likelier typo: `Time.millis()` is a real mistake with a real
+// answer (DateTime.millis), and an exact method-name match elsewhere is not a
+// guess. Only then a near miss inside the namespace the user named
+// (`File.read_al` -> `File.read_all`).
+int wyn_suggest_namespace_method(const char* ns, const char* method, char* out, size_t out_sz) {
+    if (!ns || !method || !out || out_sz == 0) return 0;
+    wyn_rt_index_load();
+    if (wyn_rt_index_state != 1) return 0;
+
+    for (int i = 0; ; i++) {
+        const char* other = builtin_module_name_at(i);
+        if (!other) break;
+        if (strcmp(other, ns) == 0) continue;
+        char sym[320];
+        if (!wyn_namespace_c_symbol(other, method, sym, sizeof(sym))) continue;
+        if (wyn_runtime_declares(sym) == 1) {
+            snprintf(out, out_sz, "%s.%s()", other, method);
+            return 1;
+        }
+    }
+
+    char pfx[128];
+    const char* p = wyn_ns_prefix_for(ns);
+    if (p) snprintf(pfx, sizeof(pfx), "%s", p);
+    else   snprintf(pfx, sizeof(pfx), "%s_", ns);
+    size_t pl = strlen(pfx);
+    const char* best = NULL;
+    int best_dist = WYN_NAME_FAR;
+    for (int i = 0; i < wyn_rt_sym_count; i++) {
+        if (strncmp(wyn_rt_syms[i], pfx, pl) != 0 || !wyn_rt_syms[i][pl]) continue;
+        const char* cand = wyn_rt_syms[i] + pl;
+        int d = wyn_name_distance(method, cand);
+        if (d > 0 && d < best_dist) { best_dist = d; best = cand; }
+    }
+    if (best) { snprintf(out, out_sz, "%s.%s()", ns, best); return 1; }
+    return 0;
 }

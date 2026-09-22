@@ -954,6 +954,21 @@ static void resolve_wyn_root(const char* argv0, char* out, size_t out_sz) {
     snprintf(out, out_sz, "%s", exe_dir);
 }
 
+// The installation root, for code that is not on the command-line path and so has
+// no argv[0] to resolve it from - the checker, which reads the runtime headers to
+// answer "is `Time.foo` a real namespace method?". Resolved once, lazily, by
+// resolve_wyn_root() itself rather than by a second probe of its own: a duplicate
+// of that probe order is how installed binaries came to look for src/ in the
+// user's CWD (see the note on resolve_wyn_root). Empty string if unresolvable, and
+// every caller must treat that as "don't know" rather than "no".
+static char wyn_root_cached[512] = "";
+static const char* wyn_root_argv0 = "";
+const char* wyn_installation_root(void) {
+    if (!wyn_root_cached[0])
+        resolve_wyn_root(wyn_root_argv0, wyn_root_cached, sizeof(wyn_root_cached));
+    return wyn_root_cached;
+}
+
 // Resolve the REAL path of the running `wyn` compiler binary. Same OS-level
 // lookup resolve_wyn_root() uses, but keeps the executable path itself (not
 // its root dir). Used by the `wyn run` incremental cache to detect a rebuilt
@@ -1166,7 +1181,11 @@ int main(int argc, char** argv) {
     
     // Initialize arguments for Wyn compiler access
     wyn_init_args(argc, argv);
-    
+
+    // argv[0] is only a fallback hint for resolve_wyn_root(); stash it so
+    // wyn_installation_root() can be called from code that never sees argv.
+    wyn_root_argv0 = argv[0];
+
     if (argc < 2) {
         // Banner
         print_banner(get_version());

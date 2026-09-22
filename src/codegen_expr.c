@@ -2901,126 +2901,39 @@ void codegen_expr(Expr* expr) {
                     }
                 }
                 if (!is_local && is_loaded_module) {
-                    // Special case: some modules use lowercase C functions
-                    if (strcmp(module_name, "Http") == 0) {
-                        // Http.get/post/put/delete -> http_ (simple string API)
-                        // Http.serve/accept/respond/close_server -> Http_ (server API)
-                        if (method.length == 3 && memcmp(method.start, "get", 3) == 0) {
-                            emit("http_get(");
-                        } else if (method.length == 4 && memcmp(method.start, "post", 4) == 0) {
-                            emit("http_post(");
-                        } else if (method.length == 3 && memcmp(method.start, "put", 3) == 0) {
-                            emit("http_put(");
-                        } else if (method.length == 6 && memcmp(method.start, "delete", 6) == 0) {
-                            emit("http_delete(");
-                        } else if (method.length == 10 && memcmp(method.start, "set_header", 10) == 0) {
-                            emit("http_set_header(");
-                        } else {
-                            // Server methods: serve, accept, respond, close_server
-                            emit("Http_%.*s(", method.length, method.start);
-                        }
-                    } else if (strcmp(module_name, "Regex") == 0) {
-                        emit("regex_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "HashMap") == 0) {
-                        // Map common methods to correct C functions
-                        if (method.length == 3 && memcmp(method.start, "get", 3) == 0) {
-                            emit("hashmap_get_string(");
-                        } else if (method.length == 3 && memcmp(method.start, "set", 3) == 0) {
-                            emit("hashmap_set(");
-                        } else if (method.length == 3 && memcmp(method.start, "has", 3) == 0) {
-                            emit("hashmap_has(");
-                        // set_int / set_string / set_float / set_bool: the runtime
-                        // spells these hashmap_insert_*, so the blanket
-                        // `hashmap_<method>` mangling below emitted hashmap_set_int
-                        // and friends - undeclared, so a program using the obvious
-                        // name (`set` and `get_int` both exist) passed `wyn check`
-                        // and failed the C compile. types.c registers map.set_int
-                        // as a real method, so the checker was right to accept it.
-                        } else if ((method.length == 7 && memcmp(method.start, "set_int", 7) == 0) ||
-                                   (method.length == 10 && memcmp(method.start, "set_string", 10) == 0) ||
-                                   (method.length == 9 && memcmp(method.start, "set_float", 9) == 0) ||
-                                   (method.length == 8 && memcmp(method.start, "set_bool", 8) == 0)) {
-                            emit("hashmap_insert_%.*s(", method.length - 4, method.start + 4);
-                        } else {
-                            emit("hashmap_%.*s(", method.length, method.start);
-                        }
-                    } else if (strcmp(module_name, "HashSet") == 0) {
-                        emit("hashset_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Task") == 0) {
-                        // Task API maps directly to Task_ prefix. try_recv is the
-                        // exception: the Wyn-facing form returns int? (OptionInt),
-                        // so it lowers to the Task_try_recv_opt shim (built on the
-                        // pointer out-param Task_try_recv that Wyn can't express).
-                        if (method.length == 8 && memcmp(method.start, "try_recv", 8) == 0) {
-                            emit("Task_try_recv_opt(");
-                        } else {
-                            emit("Task_%.*s(", method.length, method.start);
-                        }
-                    } else if (strcmp(module_name, "File") == 0) {
-                        // File maps to File_ prefix (wrappers in runtime)
-                        emit("File_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Net") == 0) {
-                        emit("Net_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Url") == 0) {
-                        emit("Url_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Db") == 0) {
-                        emit("Db_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Gui") == 0) {
-                        emit("Gui_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Audio") == 0) {
-                        emit("Audio_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "StringBuilder") == 0) {
-                        emit("StringBuilder_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Crypto") == 0) {
-                        emit("Crypto_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Template") == 0) {
-                        emit("Template_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Encoding") == 0) {
-                        emit("Encoding_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Os") == 0) {
-                        emit("Os_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Uuid") == 0) {
-                        emit("Uuid_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Log") == 0) {
-                        emit("Log_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Process") == 0) {
-                        emit("Process_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "String") == 0) {
-                        if (method.length == 4 && memcmp(method.start, "char", 4) == 0) {
-                            emit("String_char_from_int(");
-                        } else if (method.length == 10 && memcmp(method.start, "from_chars", 10) == 0) {
-                            emit("String_from_chars(");
-                        } else {
-                            emit("String_%.*s(", method.length, method.start);
-                        }
-                    } else if (strcmp(module_name, "Random") == 0) {
-                        emit("random_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Web") == 0) {
-                        emit("Web_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Smtp") == 0) {
-                        emit("Smtp_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "App") == 0) {
-                        emit("App_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Shared") == 0) {
-                        emit("Shared_%.*s(", method.length, method.start);
+                    // The C symbol a builtin-namespace call lowers to is decided by
+                    // wyn_namespace_c_symbol() (types.c): ONE authority, shared with
+                    // the checker. This was a 26-branch if-chain over namespace names
+                    // right here, and because the checker could not consult it, it had
+                    // no way to tell `HashMap.set_int` (real - the runtime spells it
+                    // hashmap_insert_int) from `HashMap.set_intt` (not real), so it
+                    // accepted BOTH and clang reported the second one against a symbol
+                    // the programmer never wrote. The mapping moved; the emitted
+                    // strings did not (the golden-C snapshots pin that).
+                    //
+                    // An `extern fn` declared by a module keeps precedence, exactly as
+                    // it had when it was the first test in the fall-through below: it
+                    // names a symbol that already exists in a C library and must be
+                    // called UNPREFIXED.
+                    char _mfn[256]; token_to_cstr(_mfn, sizeof(_mfn), method);
+                    char _mnbuf[128]; token_to_cstr(_mnbuf, sizeof(_mnbuf), obj_name);
+                    const char* _mname = resolved_mod_name[0] ? resolved_mod_name : _mnbuf;
+                    extern bool is_module_extern_fn(const char*, const char*);
+                    extern int wyn_namespace_c_symbol(const char*, const char*, char*, size_t);
+                    char _nssym[320];
+                    if (!is_module_extern_fn(_mname, _mfn) &&
+                        wyn_namespace_c_symbol(module_name, _mfn, _nssym, sizeof(_nssym))) {
+                        emit("%s(", _nssym);
                     } else {
-                        // An `extern fn` declared by the module names a symbol
-                        // that already exists in a C library, so it must be
-                        // called UNPREFIXED - there is no `mymod_Thing_do` in
+                        // A USER module (or an `extern fn` it declares). An extern fn
+                        // names a symbol that already exists in a C library, so it must
+                        // be called UNPREFIXED - there is no `mymod_Thing_do` in
                         // libthing, only `Thing_do`. The declaration was already
                         // being emitted unprefixed (correctly); only the call
                         // site prefixed, so the two disagreed and the program
                         // failed to link. That made it impossible to put an FFI
                         // binding behind a Wyn module.
-                        char _mfn[256]; token_to_cstr(_mfn, sizeof(_mfn), method);
-                        extern bool is_module_extern_fn(const char*, const char*);
-                        const char* _mn = resolved_mod_name[0] ? resolved_mod_name : NULL;
-                        char _obuf[128];
-                        if (!_mn) {
-                            token_to_cstr(_obuf, sizeof(_obuf), obj_name);
-                            _mn = _obuf;
-                        }
-                        if (is_module_extern_fn(_mn, _mfn)) {
+                        if (is_module_extern_fn(_mname, _mfn)) {
                             emit("%.*s(", method.length, method.start);
                         } else if (resolved_mod_name[0]) {
                             // Use resolved module name if available (e.g., "lib/utils" -> "lib_utils")

@@ -366,6 +366,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_mut_param_nonlvalue_test.sh
 	@echo "=== Running namespace-typo message test ==="
 	@WYN=./wyn bash tests/errors/run_namespace_typo_message_test.sh
+	@echo "=== Running namespace unknown-method check-time rejection test ==="
+	@WYN=./wyn bash tests/errors/run_namespace_unknown_method_test.sh
 	@echo "=== Running for-in-string check-time rejection test ==="
 	@WYN=./wyn bash tests/errors/run_for_in_string_test.sh
 	@echo "=== Running run-cache import-staleness test ==="
