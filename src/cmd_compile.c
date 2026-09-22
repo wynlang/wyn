@@ -825,10 +825,17 @@ static int compile_file_with_output(const char* filename, const char* output_nam
     FILE* rt_test = fopen(rt_path, "r");
     if (rt_test) {
         fclose(rt_test);
+        // Native HTTPS: same one decision as every other link line - see
+        // wyn_tls_build_flags() in src/main.c. -DWYN_HAVE_TLS gates the call in
+        // wyn_runtime.h; the archive has to sit AFTER libwyn_rt.a for GNU ld.
+        char tls_cflags[64], tls_link[1152];
+        extern int wyn_tls_build_flags(const char*, char*, size_t, char*, size_t);
+        wyn_tls_build_flags(wyn_dir, tls_cflags, sizeof(tls_cflags),
+                            tls_link, sizeof(tls_link));
         snprintf(cmd, sizeof(cmd),
-                 "gcc -O2 -fwrapv -w -I %s/src -o %s %s %s/runtime/libwyn_rt.a "
+                 "gcc -O2 -fwrapv -w -I %s/src %s-o %s %s %s/runtime/libwyn_rt.a%s "
                  "-L%s/runtime/parser_lib -lwyn_c_parser -lpthread -lm%s 2>&1",
-                 wyn_dir, output_bin, output_c, wyn_dir, wyn_dir, extra_flags);
+                 wyn_dir, tls_cflags, output_bin, output_c, wyn_dir, tls_link, wyn_dir, extra_flags);
     } else {
         snprintf(cmd, sizeof(cmd), 
                  "gcc -O2 -fwrapv -w -I %s/src -o %s %s %s/src/wyn_wrapper.c %s/src/wyn_interface.c "

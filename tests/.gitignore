@@ -11,3 +11,4 @@
 # that was never committed, so it has always executed zero tests while showing a
 # green tick. Un-ignore per directory as C tests are added.
 !tls/*.c
+!https/*.c

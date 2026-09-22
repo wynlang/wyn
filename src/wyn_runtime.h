@@ -2190,73 +2190,94 @@ char* http_request(const char* method, const char* url, const char* body) {
     return response;
 }
 
-char* https_get(const char* url) {
-    // POSIX HTTPS via openssl s_client (no curl dependency)
-    char hostname[256], path[1024];
-    const char* p = url + 8; // skip "https://"
-    const char* slash = strchr(p, '/');
-    if (slash) {
-        int hlen = slash - p; if (hlen > 255) hlen = 255;
-        memcpy(hostname, p, hlen); hostname[hlen] = 0;
-        strncpy(path, slash, 1023); path[1023] = 0;
-    } else {
-        strncpy(hostname, p, 255); hostname[255] = 0;
-        strcpy(path, "/");
+// ---------------------------------------------------------------------------
+// HTTPS. One native transport for all four verbs.
+//
+// What was here until 2026-09 was four copies of a popen'd shell pipeline -
+//
+//   printf 'GET <url> HTTP/1.1...<body>' | openssl s_client -connect <host>:443
+//
+// i.e. the caller's URL and POST body interpolated into a shell command: a REMOTE
+// CODE EXECUTION bug, live in a shipped release. All four copies also shared a hard
+// 128 KB response cap (wyn_malloc(131072) + fread(..., 131071) - a real 1.3 MB
+// response came back as 126 KB), no chunked decoding (so chunk-length lines landed
+// INSIDE the body), and they cut the headers off at \r\n\r\n and threw them away, so
+// the status code was unreachable and a 500 was indistinguishable from a 200.
+//
+// Four copies of one routine is why all four had all four bugs, so the replacement
+// is ONE call site: src/wyn_https.c (transport) on top of src/wyn_tls.c (TLS, which
+// verifies the chain and the hostname and fails closed). Gated by
+// tests/https/run_https_test.sh.
+//
+// WYN_HAVE_TLS is added by the build wherever the vendored mbedTLS can be linked -
+// see wyn_tls_build_flags() in src/main.c, which is the single place that decides.
+// Where it cannot (a cross-compiled target with no cross-built mbedTLS, the TCC
+// backend, a -fPIC shared library), these functions return a NAMED error instead,
+// because "your binary does not link an mbedtls symbol" is not a thing a user of a
+// language can act on.
+#ifdef WYN_HAVE_TLS
+#include "wyn_https.h"
+
+// http_set_header() accumulates "Name: value" lines; the transport wants one block
+// of CRLF-terminated lines. Returns NULL when no headers are set, so the transport
+// can skip the block entirely.
+static const char* wyn_http_header_block(void) {
+    static char block[32 * 544];
+    if (http_header_count <= 0) return NULL;
+    size_t at = 0;
+    for (int i = 0; i < http_header_count; i++) {
+        if (!http_headers[i]) continue;
+        int n = snprintf(block + at, sizeof(block) - at, "%s\r\n", http_headers[i]);
+        if (n < 0 || (size_t)n >= sizeof(block) - at) break;
+        at += (size_t)n;
     }
-    char cmd[4096];
-    snprintf(cmd, sizeof(cmd),
-        "printf 'GET %s HTTP/1.1\\r\\nHost: %s\\r\\nConnection: close\\r\\n\\r\\n' | "
-        "openssl s_client -quiet -connect %s:443 2>/dev/null",
-        path, hostname, hostname);
-    FILE* fp = popen(cmd, "r");
-    if (!fp) return "";
-    char* response = wyn_malloc(131072);
-    size_t len = fread(response, 1, 131071, fp);
-    response[len] = 0;
-    pclose(fp);
-    // Skip HTTP headers - find \r\n\r\n
-    char* body = strstr(response, "\r\n\r\n");
-    if (body) {
-        body += 4;
-        char* result = wyn_strdup(body);
-        free(response);
-        return result;
-    }
-    return response;
+    block[at] = '\0';
+    return at ? block : NULL;
 }
-char* https_post(const char* url, const char* data) {
-    char hostname[256], path[1024];
-    const char* p = url + 8;
-    const char* slash = strchr(p, '/');
-    if (slash) {
-        int hlen = slash - p; if (hlen > 255) hlen = 255;
-        memcpy(hostname, p, hlen); hostname[hlen] = 0;
-        strncpy(path, slash, 1023); path[1023] = 0;
-    } else {
-        strncpy(hostname, p, 255); hostname[255] = 0;
-        strcpy(path, "/");
+#endif
+
+// The one HTTPS call site. Returns the BODY as an RC-managed string (release it,
+// never free() it - same class as File_read_line), or "" on failure with
+// http_error() / http_status() carrying the reason. Keeping the char*-returning
+// signature is deliberate: the typed Result<HttpResponse, HttpError> surface is a
+// separate change, and this one must not move the language surface.
+static char* wyn_https_body(const char* method, const char* url, const char* data) {
+#ifdef WYN_HAVE_TLS
+    WynHttpResponse r;
+    char err[320];
+    if (wyn_https_request(method, url, data, wyn_http_header_block(), &r,
+                          err, sizeof(err)) != 0) {
+        http_last_status = 0;
+        snprintf(http_last_error, sizeof(http_last_error), "%s", err);
+        return "";
     }
-    int dlen = data ? (int)strlen(data) : 0;
-    char cmd[8192];
-    snprintf(cmd, sizeof(cmd),
-        "printf 'POST %s HTTP/1.1\\r\\nHost: %s\\r\\nContent-Length: %d\\r\\nContent-Type: application/x-www-form-urlencoded\\r\\nConnection: close\\r\\n\\r\\n%s' | "
-        "openssl s_client -quiet -connect %s:443 2>/dev/null",
-        path, hostname, dlen, data ? data : "", hostname);
-    FILE* fp = popen(cmd, "r");
-    if (!fp) return "";
-    char* response = wyn_malloc(131072);
-    size_t len = fread(response, 1, 131071, fp);
-    response[len] = 0;
-    pclose(fp);
-    char* body = strstr(response, "\r\n\r\n");
-    if (body) {
-        body += 4;
-        char* result = wyn_strdup(body);
-        free(response);
-        return result;
+    // The status is now REACHABLE - through the existing http_status() builtin, so
+    // this adds no new Wyn-visible surface. It was unreachable for every HTTPS call
+    // in every release before this one.
+    http_last_status = r.status;
+    http_last_error[0] = '\0';
+    char* out = wyn_str_alloc(r.body_len);
+    if (out) {
+        if (r.body_len) memcpy(out, r.body, r.body_len);
+        out[r.body_len] = '\0';
+        wyn_rc_set_length(out, (unsigned int)r.body_len);
     }
-    return response;
+    wyn_https_response_free(&r);
+    return out ? out : "";
+#else
+    (void)method; (void)url; (void)data;
+    http_last_status = 0;
+    snprintf(http_last_error, sizeof(http_last_error),
+             "HTTPS unavailable: this binary was linked without the TLS backend "
+             "(vendored mbedTLS). Cross-compiled targets, the TCC backend and "
+             "--shared/--python/--node libraries are built this way; build natively "
+             "with the system C compiler for HTTPS.");
+    return "";
+#endif
 }
+
+char* https_get(const char* url) { return wyn_https_body("GET", url, NULL); }
+char* https_post(const char* url, const char* data) { return wyn_https_body("POST", url, data); }
 
 char* http_get(const char* url) {
     char* result;
@@ -2271,48 +2292,12 @@ char* http_post(const char* url, const char* data) {
     return result ? result : "";
 }
 char* http_put(const char* url, const char* data) {
-    if (strncmp(url, "https://", 8) == 0) {
-        // POSIX HTTPS PUT via openssl
-        char hostname[256], path[1024];
-        const char* p = url + 8;
-        const char* slash = strchr(p, '/');
-        if (slash) { int h = slash-p; if(h>255)h=255; memcpy(hostname,p,h); hostname[h]=0; strncpy(path,slash,1023); path[1023]=0; }
-        else { strncpy(hostname,p,255); hostname[255]=0; strcpy(path,"/"); }
-        int dlen = data ? (int)strlen(data) : 0;
-        char cmd[8192];
-        snprintf(cmd, sizeof(cmd),
-            "printf 'PUT %s HTTP/1.1\\r\\nHost: %s\\r\\nContent-Length: %d\\r\\nConnection: close\\r\\n\\r\\n%s' | openssl s_client -quiet -connect %s:443 2>/dev/null",
-            path, hostname, dlen, data?data:"", hostname);
-        FILE* fp = popen(cmd, "r"); if (!fp) return "";
-        char* resp = wyn_str_alloc(131072); size_t len = fread(resp,1,131071,fp); resp[len]=0; pclose(fp);
-        wyn_rc_set_length(resp, (unsigned int)len);
-        char* body = strstr(resp, "\r\n\r\n");
-        // RC-offset pointer: release, never free() (same class as File_read_line).
-        if (body) { body+=4; char* r=wyn_strdup(body); wyn_rc_release(resp); return r; }
-        return resp;
-    }
+    if (strncmp(url, "https://", 8) == 0) return wyn_https_body("PUT", url, data);
     char* result = http_request("PUT", url, data);
     return result ? result : "";
 }
 char* http_delete(const char* url) {
-    if (strncmp(url, "https://", 8) == 0) {
-        char hostname[256], path[1024];
-        const char* p = url + 8;
-        const char* slash = strchr(p, '/');
-        if (slash) { int h = slash-p; if(h>255)h=255; memcpy(hostname,p,h); hostname[h]=0; strncpy(path,slash,1023); path[1023]=0; }
-        else { strncpy(hostname,p,255); hostname[255]=0; strcpy(path,"/"); }
-        char cmd[4096];
-        snprintf(cmd, sizeof(cmd),
-            "printf 'DELETE %s HTTP/1.1\\r\\nHost: %s\\r\\nConnection: close\\r\\n\\r\\n' | openssl s_client -quiet -connect %s:443 2>/dev/null",
-            path, hostname, hostname);
-        FILE* fp = popen(cmd, "r"); if (!fp) return "";
-        char* resp = wyn_str_alloc(131072); size_t len = fread(resp,1,131071,fp); resp[len]=0; pclose(fp);
-        wyn_rc_set_length(resp, (unsigned int)len);
-        char* body = strstr(resp, "\r\n\r\n");
-        // RC-offset pointer: release, never free() (same class as File_read_line).
-        if (body) { body+=4; char* r=wyn_strdup(body); wyn_rc_release(resp); return r; }
-        return resp;
-    }
+    if (strncmp(url, "https://", 8) == 0) return wyn_https_body("DELETE", url, NULL);
     char* result = http_request("DELETE", url, NULL);
     return result ? result : "";
 }
