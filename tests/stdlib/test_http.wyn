@@ -15,8 +15,23 @@
 // Single-threaded by construction: each client write buffers in the socket until
 // the server accept, so no spawn/scheduler participates and there is nothing to
 // race.
-fn serve_once(port: int, path: string, body: string) -> string {
-    var srv = Http.serve(port)
+// The port argument is a BASE, not a fixed port: this walks up until bind()
+// succeeds and then talks to whatever it got. Sibling agents run this suite
+// concurrently out of separate worktrees, so several copies of this file can be
+// listening at once; with a fixed port the loser of the bind race reported the
+// clash as a Wyn defect. Http_serve sets SO_REUSEADDR but not SO_REUSEPORT, so a
+// live port gives EADDRINUSE and the walk steps past it. The rule is gated by
+// tests/errors/run_test_port_hygiene_test.sh.
+fn serve_once(base: int, path: string, body: string) -> string {
+    var port = base
+    var srv = -1
+    var tries = 0
+    while tries < 64 {
+        srv = Http.serve(port)
+        if srv > 0 { break }
+        port = port + 1
+        tries = tries + 1
+    }
     if srv <= 0 { return "" }
 
     var client = Net.connect("127.0.0.1", port)
@@ -68,9 +83,17 @@ fn main() -> int {
     Test.assert(resp.contains("hello=world"), "second body carries its payload")
 
     // Request-side parse, checked directly rather than inferred from a remote echo.
-    var srv = Http.serve(18753)
+    var port = 18753
+    var srv = -1
+    var tries = 0
+    while tries < 64 {
+        srv = Http.serve(port)
+        if srv > 0 { break }
+        port = port + 1
+        tries = tries + 1
+    }
     Test.assert(srv > 0, "Http.serve binds")
-    var c = Net.connect("127.0.0.1", 18753)
+    var c = Net.connect("127.0.0.1", port)
     Test.assert(c > 0, "Net.connect to local server")
     Net.send(c, "POST /submit HTTP/1.0\r\nHost: 127.0.0.1\r\nContent-Length: 11\r\n\r\nhello=world")
     var req = Http.accept(srv)

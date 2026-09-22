@@ -14,11 +14,22 @@
 // before the server accepts, so the request sits in the socket buffer and no
 // scheduler/spawn is involved.
 fn main() -> int {
-    // A high, fixed port. SO_REUSEADDR is set by Http_serve, and the suite runs
-    // one process per file, so contention here is not the flake it was for
-    // test_net_basic's 8080.
+    // The port is WALKED from a high base, never fixed. "one process per file, so
+    // contention is not a flake" was wrong: sibling agents run the whole suite
+    // concurrently out of separate worktrees, so there can be several copies of
+    // THIS file listening at once, and the loser of the bind race reports the clash
+    // as a Wyn defect. Http_serve sets SO_REUSEADDR but not SO_REUSEPORT, so a live
+    // port gives EADDRINUSE and the walk steps past it. The rule is gated by
+    // tests/errors/run_test_port_hygiene_test.sh.
     var port = 18744
-    var srv = Http.serve(port)
+    var srv = -1
+    var tries = 0
+    while tries < 64 {
+        srv = Http.serve(port)
+        if srv > 0 { break }
+        port = port + 1
+        tries = tries + 1
+    }
     if srv <= 0 {
         print("FAIL: could not bind local server\n")
         return 1
