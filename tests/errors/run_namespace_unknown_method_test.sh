@@ -38,10 +38,15 @@
 # certify calls it cannot build. wyn_namespace_c_symbol_spelled() holds both
 # mappings, so the check is asked per spelling. Some arms below therefore differ by
 # spelling ON PURPOSE - `HashMap::set_int` is genuinely unbuildable while
-# `HashMap.set_int` works, and `File::is_dir` renders `1` where `File.is_dir` renders
-# `true`, because they are different C functions. Converging the two lowerings is a
-# separate fix (it needs the File runtime types reconciled first) and is filed, not
-# attempted here. These arms pin today's truth per spelling instead of pretending.
+# `HashMap.set_int` works.
+#
+# RENDERING is no longer one of those differences. This header used to say
+# "`File::is_dir` renders `1` where `File.is_dir` renders `true`, because they are
+# different C functions ... filed, not attempted here". Two C functions is a reason for
+# two symbols, never a reason for two ANSWERS: V-30 made a bool-typed call render from
+# one authority, and File's three predicates are registered `bool` in all four places
+# that had an opinion. The bool expectation is shared by both spellings now - see the
+# note in run_spelling_arms.
 #
 # BOTH DIRECTIONS ARE PINNED. A namespace diagnostic that breaks `Time.now()` would
 # be worse than the bug it fixes, so the good programs are checked by value.
@@ -74,13 +79,13 @@ NS_LIST="Args Base64 Crypto Csv Data DateTime Db Encoding Env File HashMap HashS
 # Every arm, for one separator. $1 is the separator as written in Wyn source.
 run_spelling_arms() {
     local SEP="$1"
-    # How a bool-returning File call RENDERS in this spelling. The two spellings lower
-    # File to different C functions - `File.is_dir` -> `bool File_is_dir`, `File::is_dir`
-    # -> `int file_is_dir` - so one prints `true` and the other `1`. That divergence is
-    # dev's, not this change's, and it is filed separately; the arm pins today's truth
-    # per spelling rather than pretending they agree.
-    local BOOLTXT="$2"
     local tag="$SEP"
+    # This used to take a second parameter, BOOLTXT, because a bool-returning File call
+    # rendered DIFFERENTLY per spelling - `File.is_dir` printed `true`, `File::is_dir`
+    # printed `1` - and the arm pinned today's truth per spelling rather than pretending
+    # they agreed. The parameter is gone: V-30 made them agree (one registered `bool`,
+    # read by every spelling), so the expectation is shared, and sharing it is the point.
+    # A gate that takes the divergence as an argument can never report the divergence.
 
     # --- every builtin namespace rejects an unknown method AT CHECK TIME ---------
     local rejected=0 total=0 n out rc
@@ -199,8 +204,14 @@ fn main() {
     print("\${HashMap${SEP}has(m, "k")}|\${HashSet${SEP}contains(s, "a")}|\${String${SEP}from_chars([72, 105])}|\${Math${SEP}abs(-3)}")
 }
 EOF
+    # HashSet.contains is the second field, and it says `true` in BOTH spellings as of
+    # V-30. It used to be `1` here: `HashSet` is both a namespace and a registered type,
+    # so the dotted form read the set RECEIVER table (bool) and the `::` form read the
+    # namespace table (nothing -> int default), and the two printed differently. Both
+    # read the one registered `bool` now. Keeping one expected string for both spellings
+    # is deliberate - it is what made the split visible.
     check "[$tag] and still runs correctly" \
-        "$("$WYN_ABS" run good_run.wyn 2>/dev/null | tail -1)" "true|1|Hi|3"
+        "$("$WYN_ABS" run good_run.wyn 2>/dev/null | tail -1)" "true|true|Hi|3"
 
     # File:: moved from the file_ prefix to File_ when the two spellings were
     # consolidated. Every File_* is a same-arity wrapper over its file_* counterpart,
@@ -212,7 +223,7 @@ fn main() {
 }
 EOF
     check "[$tag] File reads/writes still work by value" \
-        "$("$WYN_ABS" run good_file.wyn 2>/dev/null | tail -1)" "hi|b.txt|${BOOLTXT}"
+        "$("$WYN_ABS" run good_file.wyn 2>/dev/null | tail -1)" "hi|b.txt|true"
 
     # --- what must NOT be claimed as an unknown namespace method ----------------
     # A USER module whose name collides with a builtin namespace (`math` is in
@@ -260,8 +271,8 @@ EOF
         "$(grep -c "unknown method" um2.txt)" "0"
 }
 
-run_spelling_arms "."  "true"
-run_spelling_arms "::" "1"
+run_spelling_arms "."
+run_spelling_arms "::"
 
 # The string-valued map round-trip, which #357's version of this gate pinned by
 # value. It lives outside run_spelling_arms because `HashMap::get` is a pre-existing

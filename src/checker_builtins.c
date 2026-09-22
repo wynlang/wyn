@@ -988,17 +988,25 @@ void init_checker() {
         }
     }
 
-    // File namespace methods
+    // File namespace methods.
+    //
+    // The three predicates are `bool`, agreeing with wyn_runtime.h's definitions
+    // (`bool File_exists(const char*)`) and with the entries in
+    // lookup_module_fn_return_type (types.c). While they were `int` here, the SYMBOL
+    // lookup in the `::` path found int and returned before the table could be
+    // consulted, so `File::exists(".")` printed `1` while `File.exists(".")` printed
+    // `true` - the latter only because the C declaration happens to be `bool`. No
+    // program in tests/, examples/ or demos/ compares any of the 62 uses to 0 or 1.
     struct { const char* name; int pc; Type* p1; Type* p2; Type* ret; } file_ns_fns[] = {
         {"File_read", 1, builtin_string, NULL, builtin_string},
         {"File_write", 2, builtin_string, builtin_string, builtin_int},
-        {"File_exists", 1, builtin_string, NULL, builtin_int},
+        {"File_exists", 1, builtin_string, NULL, builtin_bool},
         {"File_delete", 1, builtin_string, NULL, builtin_int},
         {"File_copy", 2, builtin_string, builtin_string, builtin_int},
         {"File_move", 2, builtin_string, builtin_string, builtin_int},
         {"File_size", 1, builtin_string, NULL, builtin_int},
-        {"File_is_dir", 1, builtin_string, NULL, builtin_int},
-        {"File_is_file", 1, builtin_string, NULL, builtin_int},
+        {"File_is_dir", 1, builtin_string, NULL, builtin_bool},
+        {"File_is_file", 1, builtin_string, NULL, builtin_bool},
         {"File_mkdir", 1, builtin_string, NULL, builtin_int},
         {"File_list_dir", 1, builtin_string, NULL, builtin_string},
         {"File_append", 2, builtin_string, builtin_string, builtin_int},
@@ -1374,7 +1382,14 @@ void init_checker() {
         {"Http_get_json", 1, builtin_int},
         {"Http_post_json", 2, builtin_int},
         {"Json_get_float", 2, builtin_float},
-        {"Json_get_bool", 2, builtin_int},
+        // `bool`, agreeing with the json RECEIVER table's {"json","get_bool","bool"}
+        // (types.c). While this said int, `Json.get_bool(d, "k")` and
+        // `d.get_bool("k")` were two types for one call: once codegen started
+        // rendering a bool-typed call as true/false from one authority
+        // (cg_expr_is_bool_typed), the receiver spelling printed `true` and the
+        // namespace spelling still printed `1`. Json.has stays int in BOTH tables on
+        // purpose - see the note beside it in types.c.
+        {"Json_get_bool", 2, builtin_bool},
         {"Json_get_array", 2, builtin_int},
         {"Json_get_object", 2, builtin_int},
         {"File_glob", 1, builtin_string},

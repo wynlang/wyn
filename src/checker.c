@@ -3613,6 +3613,29 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                             return _r;
                         }
                     }
+                    // Last stop before the int default: the SAME hardcoded stdlib
+                    // return-type table the DOTTED spelling falls back to
+                    // (check_expr's EXPR_METHOD_CALL arm). `Random::bool()` resolves
+                    // to no symbol, so it took the int default and printed `1` while
+                    // `Random.bool()` printed `true` - one registered `bool` return,
+                    // honoured on one of the two paths. Reading the one table from both
+                    // is what makes the spellings agree.
+                    {
+                        extern const char* lookup_module_fn_return_type(const char*);
+                        char _tname[264];
+                        snprintf(_tname, sizeof(_tname), "%s_%s", qual_module, qual_func);
+                        const char* _trt = lookup_module_fn_return_type(_tname);
+                        if (_trt) {
+                            Type* _r = strcmp(_trt, "bool") == 0   ? builtin_bool
+                                     : strcmp(_trt, "string") == 0 ? builtin_string
+                                     : strcmp(_trt, "float") == 0  ? builtin_float
+                                     : strcmp(_trt, "array") == 0  ? builtin_array
+                                     : builtin_int;
+                            expr->expr_type = _r;
+                            free(arg_types);
+                            return _r;
+                        }
+                    }
                     expr->expr_type = builtin_int;  // Default return type
                     free(arg_types);
                     return builtin_int;
@@ -8653,7 +8676,14 @@ void check_program(Program* prog) {
         file_exists_type->fn_type.param_count = 1;
         file_exists_type->fn_type.param_types = malloc(sizeof(Type*) * 1);
         file_exists_type->fn_type.param_types[0] = builtin_string;
-        file_exists_type->fn_type.return_type = builtin_int;
+        // `bool`, agreeing with the File_exists entries in checker_builtins.c and
+        // types.c and with wyn_runtime.h's `bool File_exists(const char*)`. This block
+        // is a THIRD registry - it registers the `::` spellings by hand, with their own
+        // return types - so while this said int, `File::exists(".")` printed `1` and
+        // `File.exists(".")` printed `true`. One function, four places that have an
+        // opinion about its type. Fixing the three predicates here; the duplicate
+        // registry itself is filed, not refactored in this branch.
+        file_exists_type->fn_type.return_type = builtin_bool;
         add_symbol(global_scope, file_exists_tok, file_exists_type, false);
         
         Token file_delete_tok = {TOKEN_IDENT, "File::delete", 12, 0};
@@ -8680,7 +8710,7 @@ void check_program(Program* prog) {
         file_is_file_type->fn_type.param_count = 1;
         file_is_file_type->fn_type.param_types = malloc(sizeof(Type*) * 1);
         file_is_file_type->fn_type.param_types[0] = builtin_string;
-        file_is_file_type->fn_type.return_type = builtin_int;
+        file_is_file_type->fn_type.return_type = builtin_bool;
         add_symbol(global_scope, file_is_file_tok, file_is_file_type, false);
         
         Token file_is_dir_tok = {TOKEN_IDENT, "File::is_dir", 12, 0};
@@ -8688,7 +8718,7 @@ void check_program(Program* prog) {
         file_is_dir_type->fn_type.param_count = 1;
         file_is_dir_type->fn_type.param_types = malloc(sizeof(Type*) * 1);
         file_is_dir_type->fn_type.param_types[0] = builtin_string;
-        file_is_dir_type->fn_type.return_type = builtin_int;
+        file_is_dir_type->fn_type.return_type = builtin_bool;
         add_symbol(global_scope, file_is_dir_tok, file_is_dir_type, false);
         
         Token file_get_cwd_tok = {TOKEN_IDENT, "File::get_cwd", 13, 0};

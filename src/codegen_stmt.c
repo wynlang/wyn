@@ -813,7 +813,26 @@ void codegen_stmt(Stmt* stmt) {
                     }
                 }
             } else if (stmt->var.init) {
-                // Infer type from initializer if no explicit type
+                // Infer type from initializer if no explicit type.
+                //
+                // A call the checker typed `bool` declares a `bool`, asked of the SAME
+                // authority that decides how the expression renders
+                // (cg_expr_is_bool_typed, codegen_expr.c). Both halves of the type
+                // decision have to agree or the variable and the direct call print
+                // differently - the recurring shape of this defect family.
+                //
+                // Not redundant with the cast at the emit site: the two `::` and `.`
+                // spellings of one namespace call are different AST shapes, and the
+                // `::` one (a single EXPR_CALL ident) fell through this chain to
+                // `__auto_type`. That resolves to `bool` from a `(bool)` initializer
+                // on clang/gcc, but wyn_runtime.h #defines `__auto_type` to
+                // `long long` for TinyCC - which `wyn run` uses whenever the prebuilt
+                // runtime lib is absent. Naming `bool` here makes it the same answer
+                // on every backend.
+                if (cg_expr_is_bool_typed(stmt->var.init)) {
+                    c_type = "bool";
+                    goto var_type_done;
+                }
                 if (stmt->var.init->type == EXPR_STRING) {
                     c_type = "const char*";
                     is_already_const = true;

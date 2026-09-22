@@ -451,7 +451,55 @@ static const char* cg_array_elem_helper(Expr* e) {
     return NULL;
 }
 
+// THE bool-in-print authority: does this expression have to reach C with the static
+// type `bool`?
+//
+// print(), println(), to_string() and wyn_out_append() all dispatch with C's
+// _Generic on the STATIC TYPE of what they are handed (wyn_runtime.h,
+// wyn_runtime_slim.h). So "a bool renders as true/false" is not a property of the
+// runtime helper a call lowers to - it is a property of the C type at the call site.
+// The checker already decided the Wyn type once and recorded it in expr_type
+// (checker.c, via lookup_method_return_type / lookup_module_fn_return_type); this is
+// the single place codegen honours that decision.
+//
+// It replaces a cast hand-written at one emit site per spelling. That is why the
+// 2026-08 fix made `print(arr.contains(3))` say `true` while every one of these still
+// said `1`: the five string `is_*` predicates, `.equals`, the five `int` predicates,
+// the three `float` predicates, `.exists`/`.is_file`/`.is_dir`, `set.contains`,
+// `contains` on a FLOAT array (the cast covered two of the three helpers),
+// `map.get` on a bool-valued map, `Json.is_valid`, `Json.get_bool` and `Random.bool`.
+// Per-spelling casting does not converge; the rule has to be stated once. The full,
+// currently-verified list is the table in tests/errors/run_bool_in_print_test.sh.
+//
+// Deliberately scoped to the CALL shapes. A call is always an r-value in C, so the
+// cast can never land on an lvalue (`&flag`, `flag = x`, `xs[i] = x`). Every other
+// bool source already carries a `bool` C type on its own: a literal, a comparison,
+// a declared `bool` variable, a `bool` struct field, a `bool` array element.
+int cg_expr_is_bool_typed(Expr* expr) {
+    if (!expr) return 0;
+    if (!expr->expr_type || expr->expr_type->kind != TYPE_BOOL) return 0;
+    return expr->type == EXPR_CALL || expr->type == EXPR_METHOD_CALL;
+}
+
+static void codegen_expr_inner(Expr* expr);
+
 void codegen_expr(Expr* expr) {
+    // The one application site of the rule above. Casting here rather than inside
+    // each call's emitter is what makes every spelling agree: a method call on a
+    // value, `Ns.method()`, `Ns::method()` (a different AST shape and a different C
+    // symbol - see #369), the same call inside `${}` (which lowers to to_string of
+    // this very expression), and a call used as an `if` condition - where the cast
+    // changes the C type and not the value, so truthiness is untouched.
+    if (cg_expr_is_bool_typed(expr)) {
+        emit("(bool)(");
+        codegen_expr_inner(expr);
+        emit(")");
+        return;
+    }
+    codegen_expr_inner(expr);
+}
+
+static void codegen_expr_inner(Expr* expr) {
     if (!expr) return;
     // If this expr was pre-evaluated to a temp, emit the temp name
     if (expr->_codegen_temp_id >= 0 && expr->_codegen_temp_id < 1000) {
@@ -3622,19 +3670,20 @@ void codegen_expr(Expr* expr) {
                 // arr_contains - otherwise `["a"].contains("a")` was always 0.
                 if (method.length == 8 && memcmp(method.start, "contains", 8) == 0 && expr->method_call.arg_count == 1) {
                     Type* _et = object_type->array_type.element_type;
-                    // Both helpers are declared `int`, but `contains` is `bool` in Wyn:
-                    // without the cast, to_string()/print() dispatched on the integer
-                    // branch and printed `1` rather than `true`. Same reason as
-                    // any()/all() below.
+                    // Both helpers are declared `int` while `contains` is `bool` in Wyn.
+                    // No cast here: cg_expr_is_bool_typed() wraps the whole call once,
+                    // in codegen_expr. Casting at THIS site is what left a float-element
+                    // array's contains (array_contains_float, emitted from a different
+                    // branch above) and a dozen other bool spellings printing `1`.
                     if (_et && _et->kind == TYPE_STRING) {
-                        emit("(bool)array_contains_str(");
+                        emit("array_contains_str(");
                         codegen_expr(expr->method_call.object);
                         emit(", ");
                         codegen_expr(expr->method_call.args[0]);
                         emit(")");
                         break;
                     }
-                    emit("(bool)arr_contains(");
+                    emit("arr_contains(");
                     codegen_expr(expr->method_call.object);
                     emit(", ");
                     codegen_expr(expr->method_call.object);
@@ -3710,19 +3759,18 @@ void codegen_expr(Expr* expr) {
                     emit("array_concat("); codegen_expr(expr->method_call.object);
                     emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
                 }
-                // arr.any(fn) / arr.all(fn) return `bool` in Wyn, but their runtime
+                // arr.any(fn) / arr.all(fn) return `bool` in Wyn while their runtime
                 // helpers are declared `long long`, so print()/to_string()'s _Generic
-                // dispatch picked the INTEGER branch and `print(ns.any(...))` printed
-                // `1` instead of `true`. The same (bool) cast the comparison operators
-                // already use above (see _is_bool_op) makes the C type match the Wyn
-                // type at the one place that knows both.
+                // dispatch would pick the INTEGER branch. The (bool) cast that used to
+                // be written here has moved to cg_expr_is_bool_typed(), applied once in
+                // codegen_expr - see the note there for why per-site was not a fix.
                 if (method.length == 3 && memcmp(method.start, "any", 3) == 0 && expr->method_call.arg_count == 1) {
-                    emit("(bool)wyn_arr_any("); codegen_expr(expr->method_call.object);
+                    emit("wyn_arr_any("); codegen_expr(expr->method_call.object);
                     emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
                 }
                 // arr.all(fn)
                 if (method.length == 3 && memcmp(method.start, "all", 3) == 0 && expr->method_call.arg_count == 1) {
-                    emit("(bool)wyn_arr_all("); codegen_expr(expr->method_call.object);
+                    emit("wyn_arr_all("); codegen_expr(expr->method_call.object);
                     emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
                 }
                 
