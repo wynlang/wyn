@@ -538,7 +538,9 @@ static void print_type_name(Type* type) {
             fprintf(stderr, "HashMap<string, int>");
             break;
         case TYPE_SET:
-            fprintf(stderr, "HashSet<int>");
+            // See the note in error.c's friendly_type_name: the set is string-keyed,
+            // so `HashSet<int>` named an element type the language has never had.
+            fprintf(stderr, "HashSet<string>");
             break;
         case TYPE_STRUCT:
             if (type->struct_type.name.length > 0) {
@@ -2290,6 +2292,93 @@ static bool reject_option_method_on_scalar(const Type* receiver, const char* met
     return true;
 }
 
+// V-35: a non-string element handed to the string-keyed runtime set. `s = {:1, 2}`
+// passed `wyn check` and then SIGSEGV'd (exit 139) with the set never even used.
+//
+// The runtime set is string-keyed by construction - `hashset_add(WynHashSet*, const
+// char* key)` stores `strdup(key)` and compares with `strcmp` - and codegen emitted
+// the element expression straight into that parameter. `{:1, 2}` became
+// `hashset_add(set, 1)`: the integer 1 used as an address, dereferenced by strcmp.
+// Measured on dev @ 35ff414a, every non-string element crashed, on every spelling -
+// the literal, an int VARIABLE in the literal, `.add`/`.insert`/`.contains`/`.remove`,
+// and the `HashSet.add(s, x)` namespace form. A float element missed the segfault
+// only by failing in the C compiler instead.
+//
+// WHY THE ANSWER IS "REJECT" AND NOT "SUPPORT INT ELEMENTS". Making ints work at this
+// layer means stringifying into that same table, which collapses `{:1}` and `{:"1"}`
+// into one set - a silently wrong answer, which is worse than the crash. A genuinely
+// typed set needs an element type on TYPE_SET, which today carries none (while
+// type_to_string already prints the unearned `HashSet<int>`), so it is a feature and
+// is logged as one. HashMap has refused non-string keys all along ("HashMap keys must
+// be strings", parser.c), so this is one rule that had one copy, not a new limit.
+//
+// The element's TYPE is what is tested, not its syntax, because an int variable
+// (`x = 1; {:x}`) crashes exactly as hard as an int literal. That leans on the
+// checker's type for the element, and TYPE_INT is also its fallback for anything it
+// could not resolve (#372) - so the risk this rule runs is rejecting a string the
+// checker merely lost. Measured before it was written: every string shape that has to
+// be resolved THROUGH something unresolved still types as string - `sb.to_string()`
+// off a StringBuilder handle, a `fn -> string` call, `"a" + "b"`, an interpolation -
+// and `wyn check` over all 12,106 `.wyn` files in the tree fires this rule on none of
+// them. The StringBuilder shape is pinned as a canary in the gate.
+static bool reject_non_string_set_element(const Type* elem, const char* method, int line) {
+    if (!elem) return false;
+    if (elem->kind != TYPE_INT && elem->kind != TYPE_FLOAT && elem->kind != TYPE_BOOL)
+        return false;
+
+    const char* kind = elem->kind == TYPE_INT ? "an int"
+                     : elem->kind == TYPE_FLOAT ? "a float" : "a bool";
+    char headline[320], help[512];
+    if (method)
+        snprintf(headline, sizeof(headline),
+                 "HashSet stores strings, and '%s()' was given %s element", method, kind);
+    else
+        snprintf(headline, sizeof(headline),
+                 "HashSet stores strings, and this element is %s", kind);
+    snprintf(help, sizeof(help),
+             "A set element becomes a C string key (strdup/strcmp), so %s is used as an"
+             " address and crashes at run time. Convert it at the call: `.to_string()`."
+             " HashMap keys carry the same restriction.", kind);
+    report_unknown_method(line, headline, NULL, help);
+    had_error = true;
+    return true;
+}
+
+// The set methods whose single element argument this rule owns. `union`,
+// `intersection`, `difference`, `is_subset` and `is_disjoint` are deliberately absent:
+// their argument is another SET, not an element, so they are not this rule's business.
+// `add_int` and `contains_int` ARE here - src/types.c advertises them, lowering them to
+// wyn_hashset_add_int / wyn_hashset_contains_int, symbols no runtime source defines
+// (`nm runtime/libwyn_rt.a` has neither). They are the reason someone would believe
+// int elements are supported, and they answer with an internal codegen error, so the
+// rule takes them too.
+static const char* const set_element_methods[] = {
+    "add", "insert", "contains", "remove", "add_int", "contains_int", NULL
+};
+
+static bool is_set_element_method(const char* method) {
+    for (int i = 0; set_element_methods[i]; i++)
+        if (strcmp(set_element_methods[i], method) == 0) return true;
+    return false;
+}
+
+// `HashSet.insert(s, x)` does not exist in the NAMESPACE spelling at all - the method
+// form `s.insert(x)` does, but `HashSet.insert(s, "a")` is refused with a string element
+// too. So the element type is not that call's problem, and answering "HashSet stores
+// strings" would send the reader to fix the element and hit the same wall again. The
+// unknown-namespace-method rule (#369) owns that call; this one steps aside for it.
+//
+// The question "does this namespace have this method" is asked of that rule's own
+// authority rather than answered here with a second list of the namespace form's
+// methods - a list which would then have to be kept in agreement with it.
+static bool set_method_belongs_to_namespace_rule(Expr* receiver, const char* method) {
+    extern bool is_builtin_module(const char* name);
+    extern int wyn_namespace_method_unknown_spelled(const char*, const char*, const char*);
+    if (!receiver || receiver->type != EXPR_IDENT) return false;
+    char ns[128]; token_to_cstr(ns, sizeof(ns), receiver->token);
+    return is_builtin_module(ns) && wyn_namespace_method_unknown_spelled(ns, method, ".");
+}
+
 Type* check_expr(Expr* expr, SymbolTable* scope) {
     if (!expr) return NULL;
 
@@ -3946,6 +4035,34 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             Token method = expr->method_call.method;
             char method_name[256]; token_to_cstr(method_name, sizeof(method_name), method);
 
+            // A non-string element handed to a set method (V-35). This is deliberately
+            // the FIRST thing checked after the receiver, the args and the method name
+            // are known, because the set methods do not leave this case by one route:
+            // `contains`/`insert`/`remove` return from the signature-table lookup
+            // (types.c has entries for them), `HashSet.contains` returns even earlier
+            // from the module-return table, and `add` has no entry anywhere and falls
+            // through to the end. Hooking any of those spots caught some of the six
+            // names and not the others; hooking here is one site all of them pass.
+            //
+            // ONE SITE, BOTH SPELLINGS: the element is the LAST argument of both
+            // `s.add(x)` and `HashSet.add(s, x)`, because `HashSet` is registered as the
+            // TYPE and so its receiver types TYPE_SET here too. Keying on the last
+            // argument rather than on which spelling was written is what keeps this from
+            // being two rules that have to agree. Args were checked just above, so
+            // expr_type is populated.
+            if (object_type && object_type->kind == TYPE_SET &&
+                expr->method_call.arg_count >= 1 && is_set_element_method(method_name) &&
+                !set_method_belongs_to_namespace_rule(expr->method_call.object,
+                                                      method_name)) {
+                Expr* el = expr->method_call.args[expr->method_call.arg_count - 1];
+                Type* et = el ? el->expr_type : NULL;
+                if (el && !et) et = check_expr(el, scope);
+                if (reject_non_string_set_element(et, method_name, method.line)) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                }
+            }
+
             // `"fmt".format(a, b, ...)` - validate the format string at CHECK
             // time. `.format()` used to be a silent no-op: codegen called a
             // runtime that only understood `{}` and copied everything else
@@ -4971,6 +5088,15 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
         }
         case EXPR_HASHSET_LITERAL: {
             // v1.3.1: {:} creates a hashset with TYPE_SET
+            // V-35: the elements were not visited at all before this, which is how an
+            // int element reached codegen and became `hashset_add(set, 1)`. Every
+            // element is checked (not just the first) because `{:"a", 1}` crashed too.
+            for (int i = 0; i < expr->array.count; i++) {
+                Expr* el = expr->array.elements[i];
+                if (!el) continue;
+                Type* et = check_expr(el, scope);
+                reject_non_string_set_element(et, NULL, el->token.line);
+            }
             Type* set_type = make_type(TYPE_SET);
             expr->expr_type = set_type;
             return set_type;
