@@ -428,6 +428,22 @@ static bool wyn_json_method_c_function(const char* method_name, int arg_count, M
     return false;
 }
 
+// V-36: does this Json method take the HANDLE as its first argument? Every entry in the
+// table above does - Json has one representation, a long long arena index - and
+// `Json_parse` is the only Json runtime function taking a `const char*`, which is why it
+// is absent from that table and so answers false here.
+//
+// Asked of the table itself rather than answered with a list of Json method names in the
+// checker: a Json method added above is then covered by the check-time rule without
+// anyone remembering to add it twice. The argc loop spans the table's whole range (0-2),
+// because the question is about the method, not about one call's arity.
+bool wyn_json_method_takes_handle(const char* method_name) {
+    MethodDispatch d;
+    for (int argc = 0; argc <= 2; argc++)
+        if (wyn_json_method_c_function(method_name, argc, &d)) return true;
+    return false;
+}
+
 // Dispatch method call based on receiver type and method name
 // Returns true if method was found, false otherwise
 bool dispatch_method(const char* receiver_type, const char* method_name, int arg_count, MethodDispatch* out) {

@@ -2371,6 +2371,60 @@ static bool is_set_element_method(const char* method) {
 // The question "does this namespace have this method" is asked of that rule's own
 // authority rather than answered here with a second list of the namespace form's
 // methods - a list which would then have to be kept in agreement with it.
+// V-36: a Json call handed the JSON TEXT where a parsed handle belongs.
+//
+//   s = "{\"a\": 1}"
+//   print(Json.is_valid(s))      # printed FALSE for valid JSON, exit 0
+//   print(Json.get_int(s, "a"))  # printed 0
+//   print(Json.keys(s))          # printed []
+//
+// Json has ONE representation in Wyn: a `long long` index into the runtime's node arena.
+// `Json_parse` is the only Json runtime function that takes a `const char*`; all eleven
+// others take that handle. So passing a string reinterpreted the POINTER as an arena
+// index, which is never in [0, json_node_count) - and every reader therefore returned its
+// not-found value while every writer became a silent no-op. Measured: is_valid false,
+// has 0, get_int 0, get_bool false, keys [], array_len 0, stringify null, and
+// set_int/set_string/set_null/free doing nothing at all.
+//
+// That is the worst shape available - exit 0 with a plausible answer - because a program
+// that simply forgot `Json.parse` is indistinguishable from one that parsed an empty
+// document.
+//
+// The RUNTIME is not at fault and is not changed: json_member_slot and json_find_child
+// both bounds-check the handle, which is why this was a wrong answer and not an
+// out-of-bounds write. The defect is that the checker let a string reach a parameter
+// that cannot accept one.
+//
+// Which methods are covered is asked of types.c's own dispatch table (the one codegen
+// lowers through), so a Json method added there inherits this rule. `parse` is excluded
+// by being absent from that table rather than by being named here.
+static bool reject_json_text_where_handle_expected(Expr* receiver, const char* method,
+                                                   Expr** args, int arg_count,
+                                                   int line, SymbolTable* scope) {
+    extern bool wyn_json_method_takes_handle(const char* method_name);
+    if (!receiver || receiver->type != EXPR_IDENT || !method || arg_count < 1) return false;
+    char ns[64]; token_to_cstr(ns, sizeof(ns), receiver->token);
+    if (strcmp(ns, "Json") != 0) return false;
+    if (!wyn_json_method_takes_handle(method)) return false;
+
+    Expr* first = args[0];
+    Type* t = first ? first->expr_type : NULL;
+    if (first && !t) t = check_expr(first, scope);
+    if (!t || t->kind != TYPE_STRING) return false;
+
+    char headline[320], help[512];
+    snprintf(headline, sizeof(headline),
+             "'Json.%s()' needs a parsed handle, not the JSON text", method);
+    snprintf(help, sizeof(help),
+             "A Json handle is an index into the parsed document, so a string is read as"
+             " an address and every answer comes back empty (`is_valid` false, `get_int`"
+             " 0, `keys` []). Parse once, then pass the handle:"
+             " `doc = Json.parse(text)` then `Json.%s(doc, ...)`.", method);
+    report_unknown_method(line, headline, NULL, help);
+    had_error = true;
+    return true;
+}
+
 static bool set_method_belongs_to_namespace_rule(Expr* receiver, const char* method) {
     extern bool is_builtin_module(const char* name);
     extern int wyn_namespace_method_unknown_spelled(const char*, const char*, const char*);
@@ -4050,6 +4104,18 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // argument rather than on which spelling was written is what keeps this from
             // being two rules that have to agree. Args were checked just above, so
             // expr_type is populated.
+            // A Json call given the text instead of a handle (V-36). Same placement
+            // reason as the set rule below: the Json namespace methods return from
+            // several different lookups further down, so the top of this case is the
+            // only point all of them pass.
+            if (reject_json_text_where_handle_expected(expr->method_call.object, method_name,
+                                                      expr->method_call.args,
+                                                      expr->method_call.arg_count,
+                                                      method.line, scope)) {
+                expr->expr_type = builtin_int;
+                return builtin_int;
+            }
+
             if (object_type && object_type->kind == TYPE_SET &&
                 expr->method_call.arg_count >= 1 && is_set_element_method(method_name) &&
                 !set_method_belongs_to_namespace_rule(expr->method_call.object,
