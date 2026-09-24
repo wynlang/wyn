@@ -304,6 +304,14 @@ int hashmap_len(WynHashMap* map) {
     return count;
 }
 
+// types.c has advertised `map.is_empty()` to the checker all along, lowering it to this
+// name - which nothing defined, so the call passed `wyn check` and then failed to build
+// (release and debug alike, on an empty map and a populated one). Written to mirror
+// wyn_hashset_is_empty exactly, which is the same one-liner over its own len.
+int wyn_hashmap_is_empty(WynHashMap* map) {
+    return hashmap_len(map) == 0;
+}
+
 void hashmap_free(WynHashMap* map) {
     if (!map) return;  // Add null check
     

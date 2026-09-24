@@ -51,9 +51,9 @@ known_broken(){
     # The whole receiver family is dead, not just these names.
     char.is_alpha|char.is_numeric|char.is_alphanumeric|char.is_whitespace) return 0;;
     char.is_uppercase|char.is_lowercase|char.to_upper|char.to_lower) return 0;;
-    # Check passes, build fails: the lowering names wyn_hashmap_is_empty, which nothing
-    # defines. The only entry in this list that is a BUILD break rather than a dead row.
-    map.is_empty) return 0;;
+    # (map.is_empty was here - check passed, build failed on an undefined
+    #  wyn_hashmap_is_empty. The function is now written, so the gate's exactness half
+    #  demanded this row be removed. That is the list working as intended.)
     *) return 1;;
   esac
 }

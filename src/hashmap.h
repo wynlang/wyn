@@ -83,6 +83,9 @@ int    hashmap_index_bool_impl(WynHashMap* map, const char* key, const char* fil
 void hashmap_remove(WynHashMap* map, const char* key);
 bool hashmap_has(WynHashMap* map, const char* key);
 int hashmap_len(WynHashMap* map);
+// The name types.c lowers `map.is_empty()` to. Declared beside hashmap_len for the same
+// reason hashset.h declares wyn_hashset_is_empty beside wyn_hashset_len.
+int wyn_hashmap_is_empty(WynHashMap* map);
 void hashmap_free(WynHashMap* map);
 
 // Legacy compatibility (defaults to int)
