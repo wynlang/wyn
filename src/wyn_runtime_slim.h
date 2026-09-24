@@ -490,6 +490,19 @@ int string_len(const char* str);
 bool string_is_empty(const char* str);
 bool string_starts_with(const char* str, const char* prefix);
 bool string_ends_with(const char* str, const char* suffix);
+
+// The path predicates behind `"p".exists()`, `"p".is_dir()`, `"p".is_file()`. These
+// lower to the BARE names below (src/wyn_interface.c defines them, and they are in the
+// archive), which is a different symbol from the `File.exists(p)` namespace spelling's
+// File_exists above - and NEITHER runtime header declared them. So `--release` failed
+// outright, while a debug build only worked through an IMPLICIT declaration: C assumes
+// `int`, these do return `int`, and it happened to be right. That is luck, not a
+// contract, and it is the same "two views of one function's type" shape that made
+// `"abc".ends_with("z")` return true on x86-64. Declared here AND in wyn_runtime.h so
+// neither build is guessing.
+int _exists(const char* path);
+int _is_dir(const char* path);
+int _is_file(const char* path);
 int string_index_of(const char* str, const char* substr);
 // Ditto: the local copy this replaces had a real bug the archive version does
 // not - when a match was found mid-string it copied the prefix but never the
@@ -1314,6 +1327,19 @@ int wyn_hashmap_get_int(int map, const char* key);
 int wyn_hashmap_has(int map, const char* key);
 int wyn_hashmap_len(int map);
 int wyn_hashmap_new();
+// `map.clear()`. Declared `extern` in wyn_runtime.h:6601 and missing here, so the call
+// built in debug and failed under --release.
+void hashmap_clear(WynHashMap* map);
+// `a.any(f)` / `a.all(f)`. Defined in wyn_runtime.h:6793-6798 and missing here - and
+// these two are exactly what the 2026-08 any/all work added, whose gate never ran
+// --release. The arity-0 registry gate cannot see them either (they take a predicate),
+// which is why they are called out rather than merely fixed.
+long long wyn_arr_any(WynArray arr, long long (*pred)(long long));
+long long wyn_arr_all(WynArray arr, long long (*pred)(long long));
+// `x.to_int()` on an int. `static inline` in wyn_runtime.h:1870, so there is nothing in
+// the archive to link against - it has to be DUPLICATED here, like wyn_malloc above,
+// not declared.
+static inline long long int_to_int(long long n) { return n; }
 int wyn_string_contains(const char* str, const char* substr);
 int wyn_string_ends_with(const char* str, const char* suffix);
 int wyn_string_index_of(const char* str, const char* substr);
