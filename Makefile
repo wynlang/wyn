@@ -453,6 +453,7 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_set_element_type_test.sh
 	@WYN=./wyn bash tests/errors/run_registry_reachable_test.sh
 	@WYN=./wyn bash tests/errors/run_json_handle_test.sh
+	@WYN=./wyn bash tests/errors/run_option_combinator_test.sh
 	@echo "=== Running bug-batch-2 test ==="
 	@WYN=./wyn bash tests/errors/run_bug_batch2_test.sh
 	@echo "=== Running user test-runner test ==="

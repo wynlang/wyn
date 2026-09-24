@@ -282,22 +282,22 @@ static const MethodSignature method_signatures[] = {
     {"option", "is_none", "bool", 0},
     {"option", "unwrap", "int", 0},    // Type depends on Option<T>
     {"option", "unwrap_or", "int", 1}, // Type depends on Option<T>
-    {"option", "expect", "int", 1},    // expect(msg: string) -> T
-    {"option", "or_else", "option", 1}, // or_else(fn: () -> Option<T>) -> Option<T>
-    {"option", "map", "option", 1},    // Higher-order: map(fn) -> Option<U>
-    {"option", "and_then", "option", 1}, // Higher-order: and_then(fn) -> Option<U>
-    {"option", "filter", "option", 1}, // Higher-order: filter(fn) -> Option<T>
+    // V-37: option.expect / or_else / map / and_then / filter were advertised here and
+    // do not exist. Codegen emits the monomorphic value-struct family (OptionInt_map),
+    // which nothing defines; the wyn_optional_* names these rows lowered to belong to a
+    // retired heap-boxed WynOptional* model and take an incompatible representation. The
+    // rows are removed rather than repointed, because repointing would not compile
+    // either. reject_missing_option_combinator() in checker.c now answers these calls
+    // with a real message, and tests/errors/run_option_combinator_test.sh pins both
+    // halves - so re-adding a row without an implementation fails the build.
     
     // Result methods
     {"result", "is_ok", "bool", 0},
     {"result", "is_err", "bool", 0},
     {"result", "unwrap", "int", 0},    // Type depends on Result<T,E>
     {"result", "unwrap_or", "int", 1}, // Type depends on Result<T,E>
-    {"result", "expect", "int", 1},    // expect(msg: string) -> T
-    {"result", "map_err", "result", 1}, // map_err(fn: E -> F) -> Result<T,F>
-    {"result", "or_else", "result", 1}, // or_else(fn: E -> Result<T,F>) -> Result<T,F>
-    {"result", "map", "result", 1},    // Higher-order: map(fn) -> Result<U,E>
-    {"result", "and_then", "result", 1}, // Higher-order: and_then(fn) -> Result<U,E>
+    // V-37, the Result half: expect / map_err / or_else / map / and_then, same story and
+    // the same retired wyn_result_* representation. See the note above.
     
     // Sentinel - marks end of table
     {NULL, NULL, NULL, 0}
@@ -1094,21 +1094,11 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "unwrap_or") == 0 && arg_count == 1) {
             out->c_function = "Option_unwrap_or"; return true;
         }
-        if (strcmp(method_name, "expect") == 0 && arg_count == 1) {
-            out->c_function = "wyn_optional_expect"; return true;
-        }
-        if (strcmp(method_name, "or_else") == 0 && arg_count == 1) {
-            out->c_function = "wyn_optional_or_else"; return true;
-        }
-        if (strcmp(method_name, "map") == 0 && arg_count == 1) {
-            out->c_function = "wyn_optional_map"; return true;
-        }
-        if (strcmp(method_name, "and_then") == 0 && arg_count == 1) {
-            out->c_function = "wyn_optional_and_then"; return true;
-        }
-        if (strcmp(method_name, "filter") == 0 && arg_count == 1) {
-            out->c_function = "wyn_optional_filter"; return true;
-        }
+        // V-37: expect / or_else / map / and_then / filter lowered to wyn_optional_*
+        // here. Those take WynOptional* - the retired heap-boxed model - while codegen
+        // emits the OptionInt/OptionString value-struct family, so the lowering could
+        // never link. Dropped with the signature rows that advertised them; the checker
+        // now rejects the calls with a message naming what Option does have.
         return false;
     }
     
@@ -1126,21 +1116,9 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "unwrap_or") == 0 && arg_count == 1) {
             out->c_function = "Result_unwrap_or"; return true;
         }
-        if (strcmp(method_name, "expect") == 0 && arg_count == 1) {
-            out->c_function = "wyn_result_expect"; return true;
-        }
-        if (strcmp(method_name, "map_err") == 0 && arg_count == 1) {
-            out->c_function = "wyn_result_map_err"; return true;
-        }
-        if (strcmp(method_name, "or_else") == 0 && arg_count == 1) {
-            out->c_function = "wyn_result_or_else"; return true;
-        }
-        if (strcmp(method_name, "map") == 0 && arg_count == 1) {
-            out->c_function = "wyn_result_map"; return true;
-        }
-        if (strcmp(method_name, "and_then") == 0 && arg_count == 1) {
-            out->c_function = "wyn_result_and_then"; return true;
-        }
+        // V-37, the Result half: these lowered to wyn_result_*, which take WynResult* -
+        // the retired heap-boxed model - while codegen emits the ResultInt/ResultString
+        // value-struct family. See the note in the option branch above.
         return false;
     }
     

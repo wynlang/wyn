@@ -2371,6 +2371,101 @@ static bool is_set_element_method(const char* method) {
 // The question "does this namespace have this method" is asked of that rule's own
 // authority rather than answered here with a second list of the namespace form's
 // methods - a list which would then have to be kept in agreement with it.
+// V-37: an Option/Result COMBINATOR the language does not have. types.c advertised ten
+// of them to the checker, so
+//
+//   fn g() -> int? { return Some(1) }
+//   print(g().map(fn(x: int) -> int { return x + 1 }))
+//
+// passed `wyn check` and then died in the C compiler with "unknown method 'OptionInt.map'
+// on namespace 'OptionInt'" - a message that calls a TYPE a namespace and tells the
+// reader to check the spelling of a method types.c itself lists. A wrong diagnosis for a
+// name the compiler advertised is worse than no diagnosis.
+//
+// WHY NONE OF THE TEN IS NEARLY WORKING, which is the part worth writing down. The
+// registry lowers them to `wyn_optional_map` / `wyn_result_map` and friends, and SOME of
+// those names really are in runtime/libwyn_rt.a (wyn_optional_expect,
+// wyn_optional_or_else, wyn_result_map, wyn_result_map_err, wyn_result_and_then). That is
+// a red herring: those take `WynOptional*` / `WynResult*`, a heap-boxed representation
+// that is NOT what codegen emits. Codegen emits the monomorphic value-struct family
+// (`OptionInt_map`, `ResultInt_expect`), which nothing defines. The archive functions
+// belong to a retired parallel model - the same shape as the retired WynJson* pairs model
+// types.c's own comment describes - so pointing the registry at them would not compile
+// either. They are two different representations, and only one of them is live.
+//
+// What the live representation provides was read off the archive rather than guessed
+// (`nm runtime/libwyn_rt.a | grep ' T _Option'`):
+//     Option: Some None is_some is_none unwrap unwrap_or to_string
+//     Result: Ok Err is_ok is_err unwrap unwrap_err unwrap_or to_string
+// The gate pins every one of those, because a rule that rejects the ten must not touch
+// them - and if a combinator is ever really implemented, its reject arm fails and says so.
+//
+// The receiver test goes through get_receiver_type_string(), the same authority the
+// signature-table lookup uses, so this rule sees exactly the receivers that table does -
+// including the TYPE_ENUM spellings of Option and Result, which a `kind ==` test misses.
+static bool reject_missing_option_combinator(const Type* receiver, Token method_tok,
+                                             const char* method, int line) {
+    extern const char* get_receiver_type_string(const Type* type);
+    if (!receiver || !method) return false;
+
+    // The receiver of `g().map(..)` where `g` returns `int?` is neither TYPE_OPTIONAL nor
+    // a TYPE_ENUM named Option: it is a TYPE_STRUCT whose struct_type.name is the
+    // MONOMORPHIC FAMILY NAME - "OptionInt", "OptionString", "ResultInt". That is the name
+    // wyn_option_family() mints and codegen emits methods against, so it is the contract,
+    // but it means get_receiver_type_string() alone answers NULL here (measured: kind=6,
+    // name empty, struct_name=OptionInt). Both routes are consulted, the declared one
+    // first, so the TYPE_OPTIONAL / TYPE_RESULT / TYPE_ENUM spellings are covered too.
+    const char* recv = get_receiver_type_string(receiver);
+    char sname[128] = "";
+    if (!recv && receiver->kind == TYPE_STRUCT && receiver->struct_type.name.length > 0) {
+        token_to_cstr(sname, sizeof(sname), receiver->struct_type.name);
+        if (strncmp(sname, "Option", 6) == 0)      recv = "option";
+        else if (strncmp(sname, "Result", 6) == 0) recv = "result";
+        // A USER struct may be named `Optional...` or `ResultSet`, and if it DEFINES one
+        // of these methods it must keep working - the prefix is not proof of family. The
+        // struct's own definition is the authority, and it is asked before rejecting.
+        if (recv) {
+            Token st = receiver->struct_type.name;
+            if (find_struct_definition(st) &&
+                (struct_has_method(global_scope, st, method_tok) ||
+                 is_field_of_struct(st, method_tok)))
+                return false;
+        }
+    }
+    if (!recv) return false;
+
+    static const char* const option_missing[] = {
+        "map", "and_then", "filter", "expect", "or_else", NULL };
+    static const char* const result_missing[] = {
+        "map", "and_then", "map_err", "expect", "or_else", NULL };
+
+    const char* const* missing;
+    const char* fam;
+    const char* have;
+    if (strcmp(recv, "option") == 0) {
+        missing = option_missing; fam = "Option";
+        have = "is_some(), is_none(), unwrap(), unwrap_or(d) and to_string()";
+    } else if (strcmp(recv, "result") == 0) {
+        missing = result_missing; fam = "Result";
+        have = "is_ok(), is_err(), unwrap(), unwrap_err(), unwrap_or(d) and to_string()";
+    } else return false;
+
+    bool hit = false;
+    for (int i = 0; missing[i]; i++)
+        if (strcmp(missing[i], method) == 0) { hit = true; break; }
+    if (!hit) return false;
+
+    char headline[320], help[512];
+    snprintf(headline, sizeof(headline), "%s does not have '%s()'", fam, method);
+    snprintf(help, sizeof(help),
+             "Wyn's %s supports %s. There is no combinator API yet, so branch on the"
+             " value instead: `if o.is_some() { ... }`, or take a default with"
+             " `o.unwrap_or(d)`.", fam, have);
+    report_unknown_method(line, headline, NULL, help);
+    had_error = true;
+    return true;
+}
+
 // V-36: a Json call handed the JSON TEXT where a parsed handle belongs.
 //
 //   s = "{\"a\": 1}"
@@ -4104,6 +4199,13 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // argument rather than on which spelling was written is what keeps this from
             // being two rules that have to agree. Args were checked just above, so
             // expr_type is populated.
+            // An Option/Result combinator the language does not have (V-37).
+            if (reject_missing_option_combinator(object_type, method, method_name,
+                                                 method.line)) {
+                expr->expr_type = builtin_int;
+                return builtin_int;
+            }
+
             // A Json call given the text instead of a handle (V-36). Same placement
             // reason as the set rule below: the Json namespace methods return from
             // several different lookups further down, so the top of this case is the
