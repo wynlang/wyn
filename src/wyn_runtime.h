@@ -3323,6 +3323,17 @@ WynArray File_read_lines(const char* p) {
     }
     return arr;
 }
+// The path predicates behind the METHOD spellings `"p".exists()`, `"p".is_dir()` and
+// `"p".is_file()`. src/wyn_interface.c defines them and they are in the archive, but no
+// runtime header declared them, so a debug build compiled the call only through an
+// IMPLICIT declaration - C assumes `int`, these do return `int`, and it happened to be
+// right. That is luck, not a contract, and it is the same "two views of one function's
+// type" shape that made `"abc".ends_with("z")` return true on x86-64. Under --release it
+// was not even luck: the call failed to compile.
+int _exists(const char* path);
+int _is_dir(const char* path);
+int _is_file(const char* path);
+
 int File_write(const char* p, const char* d) { return file_write(p, d); }
 bool File_exists(const char* p) { return file_exists(p) ? true : false; }
 int File_delete(const char* p) { return file_delete(p); }

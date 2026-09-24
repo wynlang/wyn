@@ -114,10 +114,23 @@ emit_one(){
     echo '}'; } > "$1"
 }
 
-builds_and_runs(){   # <file> -> 0 if it printed REACHED
-  "$WYNABS" run "$1" 2>&1 | grep -q "REACHED"
+builds_and_runs(){   # <file> -> 0 if it printed REACHED, in the mode MODE names
+  if [ "$MODE" = "release" ]; then
+    "$WYNABS" run --release "$1" 2>&1 | grep -q "REACHED"
+  else
+    "$WYNABS" run "$1" 2>&1 | grep -q "REACHED"
+  fi
 }
 
+# BOTH MODES. `--release` emits wyn_runtime_slim.h instead of wyn_runtime.h, and that
+# header is maintained BY HAND - so a method can be perfectly callable in a debug build
+# and fail to compile in release, which is exactly what happened to `map.clear`,
+# `int.to_int`, `char.to_int`, `"p".exists()`, `"p".is_dir()` and `"p".is_file()`. A
+# debug-only sweep reported all six as fine. The existing release gate
+# (run_release_slim_registry_test.sh) enumerates the NAMESPACE registry, not method
+# spellings, which is why none of them were caught there either.
+for MODE in debug release; do
+echo "== mode: $MODE =="
 echo "-- every advertised arity-0 method is callable ($TOTAL rows, batched per receiver)"
 # One program per receiver keeps the green path to ~11 compiles instead of ~121. Each
 # method gets its OWN fresh receiver inside that program, so a mutating method cannot
@@ -125,7 +138,7 @@ echo "-- every advertised arity-0 method is callable ($TOTAL rows, batched per r
 # so the report still names the exact method.
 for recv in $RECEIVERS; do
   methods=$(awk -v r="$recv" '$1==r {print $2" "$3}' "$TMP/pairs.txt")
-  batch="$TMP/batch_$recv.wyn"
+  batch="$TMP/batch_${MODE}_$recv.wyn"
   n=0
   { echo 'fn reg_opt() -> int? { return Some(1) }'
     echo 'fn reg_res() -> Result<int, string> { return Ok(1) }'
@@ -141,28 +154,29 @@ for recv in $RECEIVERS; do
     echo '}'; } > "$batch"
 
   if [ "$n" -eq 0 ]; then
-    ok "$recv: all rows are on the known-broken list (nothing to call)"
+    ok "[$MODE] $recv: all rows are on the known-broken list (nothing to call)"
     continue
   fi
   if builds_and_runs "$batch"; then
-    ok "$recv: $n advertised methods all callable"
+    ok "[$MODE] $recv: $n advertised methods all callable"
   else
     # Attribute the failure to individual methods.
     while read -r meth ret; do
       [ -z "$meth" ] && continue
       known_broken "$recv.$meth" && continue
-      one="$TMP/one_$recv.$meth.wyn"
+      one="$TMP/one_${MODE}_$recv.$meth.wyn"
       emit_one "$one" "$recv" "$meth" "$ret"
       if ! builds_and_runs "$one"; then
-        why=$("$WYNABS" run "$one" 2>&1 | grep -iE "^Error|Error at line|Unknown method|internal codegen" \
+        relflag=""; [ "$MODE" = "release" ] && relflag="--release"
+        why=$("$WYNABS" run $relflag "$one" 2>&1 | grep -iE "^Error|Error at line|Unknown method|internal codegen" \
               | head -1 | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-90)
-        bad "$recv.$meth is advertised by types.c but not callable :: ${why:-unknown}"
+        bad "[$MODE] $recv.$meth is advertised by types.c but not callable :: ${why:-unknown}"
       fi
     done <<< "$methods"
     # A batch can fail while every method passes alone (an interaction, not a dead row).
     # Say so rather than reporting a clean sweep.
     if [ "$FAIL" -eq 0 ]; then
-      bad "$recv: the batch program failed but every method builds alone - interaction bug"
+      bad "[$MODE] $recv: the batch program failed but every method builds alone - interaction bug"
     fi
   fi
 done
@@ -171,13 +185,43 @@ echo "-- the known-broken list is EXACT (a fixed entry must be removed from it)"
 # Without this half the list becomes a place where defects go to be forgotten.
 while read -r recv meth ret; do
   known_broken "$recv.$meth" || continue
-  one="$TMP/kb_$recv.$meth.wyn"
+  one="$TMP/kb_${MODE}_$recv.$meth.wyn"
   emit_one "$one" "$recv" "$meth" "$ret"
   if builds_and_runs "$one"; then
-    bad "$recv.$meth now WORKS - delete it from known_broken() in this file"
+    bad "[$MODE] $recv.$meth now WORKS - delete it from known_broken() in this file"
   else
-    ok "still broken, still listed: $recv.$meth"
+    ok "[$MODE] still broken, still listed: $recv.$meth"
   fi
 done < "$TMP/pairs.txt"
+
+echo "-- arity-1 methods, hand-written because their argument types cannot be generated"
+# The sweep above can only reach arity-0 rows. `.any(f)` and `.all(f)` are the reason
+# that limit matters: both work in debug, BOTH failed under --release (wyn_arr_any /
+# wyn_arr_all were missing from the slim header), and they are exactly what the 2026-08
+# any/all work added - whose gate never ran --release. A fix with no gate is how that
+# recurs, so the predicate-taking methods this PR touched are pinned here explicitly
+# until the sweep grows an argument-type column and absorbs them.
+#
+# <label> <program-body> <expected-output>
+a1(){
+  f="$TMP/a1_${MODE}_$1.wyn"
+  { echo 'fn main() {'; printf '%b\n' "$2"; echo '}'; } > "$f"
+  if [ "$MODE" = "release" ]; then got=$("$WYNABS" run --release "$f" 2>&1)
+  else got=$("$WYNABS" run "$f" 2>&1); fi
+  got=$(echo "$got" | grep -vE 'Compiled in|^Warning|unused variable' | sed 's/\x1b\[[0-9;]*m//g')
+  if [ "$got" = "$3" ]; then ok "[$MODE] $1"
+  else bad "[$MODE] $1 - got [$(echo "$got" | tr '\n' '|' | cut -c1-90)] want [$3]"; fi
+}
+a1 "array.any"      '  a = [1, 2, 3]\n  print(a.any(fn(x: int) -> bool { return x > 2 }))' 'true'
+a1 "array.any-none" '  a = [1, 2, 3]\n  print(a.any(fn(x: int) -> bool { return x > 9 }))' 'false'
+a1 "array.all"      '  a = [1, 2, 3]\n  print(a.all(fn(x: int) -> bool { return x > 0 }))' 'true'
+a1 "array.all-not"  '  a = [1, 2, 3]\n  print(a.all(fn(x: int) -> bool { return x > 2 }))' 'false'
+a1 "array.map"      '  a = [1, 2, 3]\n  b = a.map(fn(x: int) -> int { return x * 2 })\n  print(b.len())' '3'
+a1 "array.filter"   '  a = [1, 2, 3]\n  b = a.filter(fn(x: int) -> bool { return x > 1 })\n  print(b.len())' '2'
+a1 "array.contains" '  a = [1, 2, 3]\n  print(a.contains(2))' 'true'
+a1 "map.contains"   '  m = {"a": 1}\n  print(m.contains("a"))' 'true'
+a1 "set.contains"   '  s = {:"a"}\n  print(s.contains("a"))' 'true'
+
+done   # MODE
 
 echo ""; echo "registry-reachable: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]
