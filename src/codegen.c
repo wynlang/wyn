@@ -2570,7 +2570,7 @@ int is_registered_option_struct(const char* struct_name) {
 }
 
 // Registry of user-struct names that appear inside a string interpolation, so
-// codegen emits a __wyn_str_<Name> stringifier for exactly those (PLAN_v1.21 S1).
+// codegen emits a __wyn_str_<Name> stringifier for exactly those (S1).
 // Populated by the CHECKER, which is the only pass that necessarily visits every
 // expression AND has its type resolved - emitting a helper for every struct
 // instead put a dead static function in every program that declares one and

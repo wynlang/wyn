@@ -120,7 +120,7 @@ jobs:
       # Budget raised 50 -> 80ms FOR CI ONLY (the local default stays 50ms, which
       # is what a dev machine should hold itself to). Rationale and the readings
       # are at the budget itself in scripts/integration_gates.sh, and the item is
-      # tracked in internal-docs/ROADMAP.md under Tooling / DX.
+      # tracked separately under Tooling / DX.
       #
       # Short version: on the shared macos-15-intel runner, CPU-time accounting
       # also absorbs runqueue competition from co-tenants, so case (c) - the
@@ -142,7 +142,7 @@ jobs:
       #     that was set in the same change, so it was marginal the day it landed;
       #   * a v1.21 release-candidate run failed at 87ms with samples 87/88/81, i.e.
       #     consistently just over rather than a single spike.
-      # PLAN_v1.21 §8 lists this budget as a known open item for exactly this
+      # The release plan lists this budget as a known open item for exactly this
       # reason, and an intermittently-red gate blocks a dev -> main PR while
       # teaching everyone to re-run it, which is how a gate stops being read.
       #
@@ -292,6 +292,42 @@ jobs:
         run: |
           WYN=./wyn.exe python3 tests/lsp/lsp_client.py
         shell: bash
+
+  # This repository is PUBLIC. Private planning documents live in a separate,
+  # private repository, and their paths must never appear in anything published
+  # here - not in source comments, not in test headers, not in docs.
+  #
+  # This is a gate rather than a rule to remember because it was not remembered:
+  # the names had accumulated in 37 tracked files, and separately in PR and issue
+  # bodies, before anyone noticed. A grep is cheap; the habit is not.
+  #
+  # Commit messages cannot be checked here (a squash-merge writes them after this
+  # job runs) and historical ones cannot be edited without rewriting published
+  # history, so keep private paths out of PR bodies in the first place - that is
+  # what a squash-merge turns into the commit message.
+  no-private-paths:
+    name: No private doc paths
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan tracked files for private document references
+        run: |
+          set -uo pipefail
+          # Each pattern is a private path or document name, never a public one.
+          PATTERNS='internal-docs|PLAN_v1\.[0-9]+|SESSION_STATE|VISUAL_WYN_DESIGN|KNOWN_LIMITATIONS\.md|BACKLOG\.md'
+          # Exclude this workflow file itself: it has to name what it forbids.
+          if git grep -nIE "$PATTERNS" -- . ':!.github/workflows/ci.yml' > /tmp/hits.txt; then
+            echo "::error::private document paths found in tracked files"
+            echo
+            echo "These names belong to a private repository and must not appear in this one:"
+            cat /tmp/hits.txt
+            echo
+            echo "Rephrase the reference (e.g. 'tracked separately', 'the release plan')."
+            echo "Ticket ids like V-35 or S1 are fine on their own - it is the document"
+            echo "paths and filenames that must go."
+            exit 1
+          fi
+          echo "clean: no private document paths in tracked files"
 
   # The RC/string/IO bugs live in the RUNTIME; every real UAF so far was
   # found by ASan-compiling the runtime and running programs against it -

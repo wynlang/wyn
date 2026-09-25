@@ -15,7 +15,7 @@
 # worked while `{"k": Some(1)}` did not. Two copies of one rule, one of them
 # incomplete.
 #
-# ACCEPTANCE, per PLAN_v1.22 V-2: a mixed literal is a CLEAN CHECK-TIME error
+# ACCEPTANCE, per V-2: a mixed literal is a CLEAN CHECK-TIME error
 # naming the conflicting types and the line; Option/Result values round-trip.
 #
 # Wyn has no union value type and the read side emits ONE getter for the whole

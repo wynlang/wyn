@@ -1,7 +1,7 @@
 #!/bin/bash
-# THE v1.21 ACCEPTANCE GATE - PLAN_v1.21 §10.
+# THE v1.21 ACCEPTANCE GATE
 #
-# §10 defines ONE test as the measure of the release, not a checklist, and states
+# The release plan defines ONE test as the measure of the release, not a checklist, and states
 # why: "failures concentrate at composition boundaries, so twenty working 25-line
 # programs do not compose into one working 500-line program." Every unit suite was
 # green while the #43 cluster shipped, and again while the seven

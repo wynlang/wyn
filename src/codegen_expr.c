@@ -3448,7 +3448,7 @@ static void codegen_expr_inner(Expr* expr) {
                 // long long(*)(long long, long long)), which compares the int slot
                 // of a WynValue and so could only ever work for an int array - a
                 // struct array was a C type error, i.e. "internal codegen error"
-                // (PLAN_v1.22 V-19). It is now the SAME monomorphized sort as form
+                // (V-19). It is now the SAME monomorphized sort as form
                 // 1, so there is one comparator mechanism rather than an int-only
                 // runtime helper plus a broken lambda path. wyn_array_sort_by stays
                 // exported for ABI reasons; nothing in codegen emits it any more.
@@ -6325,8 +6325,8 @@ static void codegen_expr_inner(Expr* expr) {
                     // A STRUCT value must not go through to_string: that macro's
                     // `default:` arm is int_to_string, so the struct was passed by
                     // value to a `long long` parameter and the generated C failed
-                    // to compile after `wyn check` reported no errors (PLAN_v1.21
-                    // S1). codegen_program emits a __wyn_str_<Name> for each struct
+                    // to compile after `wyn check` reported no errors (S1).
+                    // codegen_program emits a __wyn_str_<Name> for each struct
                     // the CHECKER saw interpolated; call it instead. It returns a
                     // fresh +1 RC string, which is what the release loop below
                     // already assumes for a non-string expression, so ownership

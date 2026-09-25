@@ -1,5 +1,5 @@
 #!/bin/bash
-# Error POSITIONS inside string interpolation - PLAN_v1.22 V-14 (2026-09).
+# Error POSITIONS inside string interpolation - V-14 (2026-09).
 #
 #     print("v=${s.bogus()}")          # on line 5
 #     -> Error at line 1: struct 'S' has no method 'bogus'

@@ -385,7 +385,7 @@ check "and still runs correctly" \
 # This arm used to be spelled plainly ON PURPOSE, with a comment saying the
 # interpolated form `print("${p.frobnicate()}")` reported "Error at line 1" because
 # the method token inside a `${}` carried line 1 - a pre-existing span bug it did not
-# want to measure. That bug is FIXED (PLAN_v1.22 V-14; the sub-lexer is now re-based
+# want to measure. That bug is FIXED (V-14; the sub-lexer is now re-based
 # onto the real file), so both spellings are checked here: the plain one still
 # measures the emitter, and the interpolated one holds the line down so the old
 # behaviour cannot come back through this gate either.

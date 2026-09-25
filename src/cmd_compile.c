@@ -800,7 +800,7 @@ static int compile_file_with_output(const char* filename, const char* output_nam
 
     // -fwrapv: INTEGER OVERFLOW IS DEFINED, NOT UNDEFINED.
     //
-    // PLAN_v1.21 §3 asked for a POSTURE on overflow, noting that `maxint + 1`
+    // The release plan asked for a POSTURE on overflow, noting that `maxint + 1`
     // silently produced a negative number while `"abc".to_int()` panics, and that
     // "signed overflow is UB in C". The second half was the real defect: generated
     // programs were compiled at -O2 with no -fwrapv, so overflow was UNDEFINED and

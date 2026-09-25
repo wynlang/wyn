@@ -27,7 +27,7 @@ typedef struct Grave {
 struct WynHashMap {
     Entry* buckets[HASHMAP_SIZE];
     Grave* graveyard;
-    // Concurrent-mutation flag (PLAN_v1.21 §3), mirroring WynArray.writing.
+    // Concurrent-mutation flag, mirroring WynArray.writing.
     // The struct is opaque - defined here, not in the header - so adding a
     // field needs no layout mirroring, unlike WynArray which is duplicated in
     // wyn_runtime_slim.h and wyn_interface.c.

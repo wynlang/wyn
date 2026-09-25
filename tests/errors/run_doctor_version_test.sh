@@ -28,7 +28,7 @@ else bad "doctor missing compile probe [$out]"; fi
 # environment is genuinely not fully healthy there. What must hold everywhere is
 # that the end-to-end compile probe succeeds - i.e. you can actually build and
 # run a program - which is what this now checks. That the bundled-TCC fast path
-# is macOS-ARM64-only is a real cross-platform gap (see internal-docs), not
+# is macOS-ARM64-only is a real cross-platform gap (see internal planning notes), not
 # something a test should paper over by asserting rc=0 and hoping.
 if echo "$out" | grep -A0 "Compile + run" | grep -q "✓"; then
     ok "doctor's end-to-end compile probe passes"

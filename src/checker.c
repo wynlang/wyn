@@ -253,7 +253,7 @@ static Type* current_self_type = NULL; // receiver type for extension methods
 //
 // Making closures genuinely spawnable is a larger piece (the captured env has to
 // be boxed and refcounted across the boundary) and is out of scope for v1.22 per
-// internal-docs/PLAN_v1.22.md §5. This is the clean error and the workaround.
+// the current plan. This is the clean error and the workaround.
 //
 // One function, called from BOTH spawn forms (the EXPR_SPAWN expression and the
 // STMT_SPAWN statement), because the same rule emitted twice is how the two
@@ -4153,7 +4153,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // comparator's parameters fell back to the `int` default and every
             // field access on them died in the C compiler ("member reference base
             // type 'long long' is not a structure or union") - reported as a bare
-            // "internal codegen error". PLAN_v1.22 V-19.
+            // "internal codegen error". V-19.
             if (object_type && object_type->kind == TYPE_ARRAY &&
                 object_type->array_type.element_type &&
                 expr->method_call.arg_count == 1 &&
@@ -5211,7 +5211,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 // Wyn has no union value type and `m[k]` emits ONE getter for the
                 // whole map, so a mixed literal cannot be "correctly typed"; the
                 // honest outcome is a check-time error naming both types and the
-                // line (PLAN_v1.22 V-2). Deliberately mirrors EXPR_ARRAY's
+                // line (V-2). Deliberately mirrors EXPR_ARRAY's
                 // "elements must have consistent types" rule - a map literal is the
                 // same rule on the value slot.
                 //
@@ -5508,7 +5508,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     // generated C: to_string is a _Generic whose default arm is
                     // int_to_string, so a struct used to be passed by value to a
                     // `long long` parameter and the C compile failed AFTER
-                    // `wyn check` reported no errors (PLAN_v1.21 S1). Recorded
+                    // `wyn check` reported no errors (S1). Recorded
                     // here rather than in codegen because this pass is the one
                     // that necessarily visits every expression with its type
                     // resolved, so no interpolation site can be missed.

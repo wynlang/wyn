@@ -10,7 +10,7 @@
 # for it. So the missing-designer message is the primary user experience here,
 # and it is asserted as hard as the happy path.
 #
-# The spelling is an owner decision (internal-docs/VISUAL_WYN_DESIGN.md): `wyn
+# The spelling is an owner decision (internal planning notes): `wyn
 # ui` was already taken by the interactive command browser, and `design` matches
 # the all-verb style of run/check/fmt/test/watch/build.
 #

@@ -52,7 +52,7 @@ static const MethodSignature method_signatures[] = {
     {"string", "is_numeric", "bool", 0},     // Check if numeric (int or float)
     {"string", "is_int", "bool", 0},         // to_int_checked().is_ok() - the predicate that gates to_int
     {"string", "to_int", "int", 0},          // Parse string to int (PANICS on garbage)
-    // The catchable parses. PLAN_v1.22 V-18: before these there was no
+    // The catchable parses. V-18: before these there was no
     // string->number that could not abort the process, so no CLI could read
     // untrusted input. Uppercase return types are resolved as builtin types by
     // name in checker.c's table mapper, so no per-name special case is needed.

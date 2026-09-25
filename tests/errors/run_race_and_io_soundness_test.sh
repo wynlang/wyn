@@ -327,7 +327,7 @@ fn main() {
 EOF
 expect_runs "read_line on an empty file does not abort" "$TMP/readempty.wyn" "0"
 
-# --- 4. Concurrent HashMap / HashSet mutation (PLAN_v1.21 §3) ---------------
+# --- 4. Concurrent HashMap / HashSet mutation (internal planning notes) ---------------
 # Wyn had THREE different answers to one hazard, which the v1.20 focus group
 # called its sharpest structural inconsistency:
 #     arrays          -> runtime panic naming the remedy

@@ -115,7 +115,7 @@ src/wyn_webview.o: src/wyn_webview.m src/wyn_webview.h
 # --- Vendored mbedTLS (3.6 LTS) -----------------------------------------------
 # In-process TLS, so HTTPS stops shelling out to `openssl s_client` (an RCE: the
 # URL and POST body were spliced into a command string). One vendored library for
-# every target rather than three system-TLS backends - see internal-docs
+# every target rather than three system-TLS backends - see the release plan
 # ROADMAP "OWNER DECISIONS 2026-09-22".
 #
 # Compiled with the UPSTREAM DEFAULT config (vendor/mbedtls/include/mbedtls/
@@ -600,7 +600,7 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_http_server_load_test.sh
 	@echo "=== Running test-port hygiene gate (no test may bind a fixed port) ==="
 	@WYN=./wyn bash tests/errors/run_test_port_hygiene_test.sh
-	@echo "=== Running v1.21 ACCEPTANCE gate (PLAN_v1.21 §10) ==="
+	@echo "=== Running v1.21 ACCEPTANCE gate ==="
 	@# The release's own exit criterion: ONE realistic CLI tool that reads stdin,
 	@# parses JSON, formats numbers, propagates errors across DIFFERENT Result
 	@# families, passes structs across boundaries and uses a HashMap from a

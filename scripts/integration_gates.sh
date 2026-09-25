@@ -287,7 +287,7 @@ validate_idle_cpu() {
     # 50ms is the LOCAL default - what a quiet dev machine should hold itself to
     # (the fixed scheduler measures ~0-20ms on an M3 Pro). CI overrides this to
     # 80ms via WYN_IDLE_CPU_BUDGET_MS; see .github/workflows/ci.yml and the
-    # Tooling / DX item in internal-docs/ROADMAP.md.
+    # Tooling / DX item, tracked separately.
     #
     # WHY CI NEEDS MORE HEAD-ROOM: getrusage-style CPU accounting also absorbs
     # runqueue competition from co-tenants on a shared runner. Readings on

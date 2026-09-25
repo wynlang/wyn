@@ -18,7 +18,7 @@ responses at 128 KB, never decoded chunked bodies, and threw the status line awa
 mbedTLS gives us in-process TLS with X.509 verification, from one code path on all five
 targets (macOS, Linux, Windows, iOS, Android). Owner decision, 2026-09-22 — the reasoning
 and the alternatives that lost (BearSSL, per-platform system TLS, libcurl) are recorded in
-`internal-docs/ROADMAP.md`, section "OWNER DECISIONS 2026-09-22".
+the release plan, "OWNER DECISIONS 2026-09-22".
 
 ## What is vendored, and what is not
 

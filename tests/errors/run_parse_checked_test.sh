@@ -10,7 +10,7 @@
 #
 # so no Wyn CLI could read untrusted input: there was no parse that returns a
 # value you can test, and the only predicate on offer answered a DIFFERENT
-# question than the one the caller was about to ask. PLAN_v1.22 V-18.
+# question than the one the caller was about to ask. V-18.
 #
 # WHAT WAS ADDED
 #     s.to_int_checked()   -> Result<int, string>
@@ -79,7 +79,7 @@ run_wyn() { # run_wyn <file>; sets OUT (stdout+stderr) and RC
 }
 OUT=""; RC=0
 
-# --- 1. the two acceptance lines from PLAN_v1.22 V-18, verbatim --------------
+# --- 1. the two acceptance lines from V-18, verbatim --------------
 cat > "$TMP/accept.wyn" <<'WYN'
 fn main() {
     print("abc".to_int_checked().is_err())

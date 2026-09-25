@@ -5015,7 +5015,7 @@ const char* ResultBool_unwrap_err(ResultBool r) { if (r.tag == 0) { fprintf(stde
 bool ResultBool_unwrap_or(ResultBool r, bool def) { return r.tag == 0 ? r.data.ok_value : def; }
 
 // ---------------------------------------------------------------------------
-// The CATCHABLE half of string->number (PLAN_v1.22 V-18).
+// The CATCHABLE half of string->number (V-18).
 //
 //   s.to_int_checked()   -> Result<int, string>
 //   s.to_float_checked() -> Result<float, string>
