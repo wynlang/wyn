@@ -24,7 +24,7 @@
 # That is why every report-style program was blocked: `.sort()` is correct and
 # complete for int and string arrays, and there was no way to order an array of
 # structs by a field at all - nor to sort DESCENDING by anything, since a key
-# function has no direction. PLAN_v1.22 V-19.
+# function has no direction. V-19.
 #
 # HOW IT IS FIXED
 # The comparator form is monomorphized exactly like the key form next to it:

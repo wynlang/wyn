@@ -64,8 +64,8 @@ void init_lexer(const char* source) {
 // parser extracts into its own buffer and lexes separately. init_lexer() starts
 // that buffer at line 1, so without this every token of every interpolated
 // sub-expression reported line 1, and since `${}` is the idiomatic formatter that
-// meant most real diagnostics pointed at the first line of the file (PLAN_v1.22
-// V-14; gated by tests/errors/run_interp_error_line_test.sh). Call it AFTER
+// meant most real diagnostics pointed at the first line of the file (V-14;
+// gated by tests/errors/run_interp_error_line_test.sh). Call it AFTER
 // init_lexer() and BEFORE the first token is scanned.
 void lexer_set_line(int line) {
     if (line > 0) lexer.line = line;

@@ -1,4 +1,4 @@
-// v1.21 ACCEPTANCE TEST - the single measure PLAN_v1.21 §10 defines for the release.
+// v1.21 ACCEPTANCE TEST - the single measure the release plan defines.
 //
 // WHY THIS FILE EXISTS, and why it is one program rather than a checklist:
 // "failures concentrate at composition boundaries, so twenty working 25-line
@@ -196,7 +196,7 @@ fn pad_right(s: string, width: int) -> string {
 // §10 requires "uses a HashMap from a spawned handler". An AWAITED spawn is used
 // deliberately: each task returns its own count and the parent sums them, so the
 // tally is deterministic. A fire-and-forget spawn writing one shared global map
-// would be the UNPROTECTED case PLAN_v1.21 §3 is about (HashMap mutation has no
+// would be the UNPROTECTED case the plan is about (HashMap mutation has no
 // write barrier), and an acceptance test must not be flaky about it.
 
 fn tally_slice(entries: [Entry], from: int, to: int) -> int {

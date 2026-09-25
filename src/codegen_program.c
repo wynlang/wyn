@@ -258,7 +258,7 @@ static void emit_struct_eq_helpers(Program* prog) {
 // `to_string` is a _Generic macro whose `default:` arm is int_to_string, so a
 // struct argument was passed BY VALUE to a `long long` parameter: interpolation
 // type-checked clean and then died in the generated C with "passing 'P' to
-// parameter of incompatible type 'long long'" (PLAN_v1.21 S1). println(struct)
+// parameter of incompatible type 'long long'" (S1). println(struct)
 // already renders `P { x: 1, y: 2 }`, but it does so by emitting inline printf
 // calls that print directly and yield no string, so interpolation - which needs
 // a char* - cannot reuse it.
@@ -1072,7 +1072,7 @@ void codegen_program(Program* prog) {
     emit_enum_eq_helpers(prog);
     emit_struct_eq_helpers(prog);
     // Per-struct stringifiers, so `"${p}"` has a char* path instead of falling
-    // through to_string's `default: int_to_string` arm (PLAN_v1.21 S1).
+    // through to_string's `default: int_to_string` arm (S1).
     //
     // Three steps, and the order is load-bearing. A struct with an `S?` field
     // calls OptionS_to_string, and OptionS_to_string calls __wyn_str_S, so each

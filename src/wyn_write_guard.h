@@ -3,7 +3,7 @@
 // Concurrent structural-mutation guard for the COLLECTION types.
 //
 // WHY: Wyn had three different answers to one hazard - concurrent mutation of
-// shared state - and PLAN_v1.21 §3 called that inconsistency the sharpest
+// shared state - and the release plan called that inconsistency the sharpest
 // structural criticism of the v1.20 posture:
 //
 //   arrays          -> runtime panic naming the remedy   (WYN_ARR_WRITE_ENTER)

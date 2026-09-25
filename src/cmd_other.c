@@ -1150,7 +1150,7 @@ int cmd_fix_file(const char* file, int check_only, int* out_pipe_warns) {
 // until they ask for it - say how to get it instead of failing obscurely.
 //
 // Spelling and semantics are owner decisions recorded in
-// internal-docs/VISUAL_WYN_DESIGN.md: `wyn ui` was already taken (the
+// Owner decision: `wyn ui` was already taken (the
 // interactive command browser), `design` fits the all-verb style, and the form
 // is a JSON document rather than code so that both the designer and an AI
 // assistant edit the same model.

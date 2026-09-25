@@ -21,7 +21,7 @@
 # clean message.
 #
 # NOT IN SCOPE: making closures genuinely spawnable. That needs the captured env
-# boxed and refcounted across the boundary (internal-docs/PLAN_v1.22.md §5 lists it
+# boxed and refcounted across the boundary (internal planning notes lists it
 # as out of scope for v1.22). This ships the clean error and the workaround.
 set -uo pipefail
 WYN="${WYN:-./wyn}"

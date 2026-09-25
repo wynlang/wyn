@@ -17,7 +17,7 @@
 // Anything the pass cannot order keeps its source position, so it can only REORDER what
 // already worked.
 //
-// This is the "S2" item from internal-docs/PLAN_v1.21.md.
+// This is the "S2" item from internal planning notes.
 
 // The reported shape: the user is named before the type it contains.
 struct Outer { inner: Inner, tag: string }

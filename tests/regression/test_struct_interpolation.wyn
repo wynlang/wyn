@@ -1,6 +1,6 @@
 // "${p}" on a STRUCT value type-checked clean and then failed the C compile
 // with "passing 'P' to parameter of incompatible type 'long long'"
-// (PLAN_v1.21 S1). to_string is a _Generic macro whose `default:` arm is
+// (S1). to_string is a _Generic macro whose `default:` arm is
 // int_to_string, so the struct was passed by value to a long long parameter.
 // println(p) already rendered a struct, but by emitting inline printf calls that
 // print directly and yield no string, so interpolation had nothing to call.

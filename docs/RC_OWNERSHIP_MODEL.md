@@ -511,7 +511,7 @@ double-free of shared subtrees); `make test` 0 fail.
 Struct-field-shared-string (§4.4) and array-copy-shared (§4.5) are the same root.
 Do **not** hand-patch each; note them as the motivation for the eventual **Option
 C** escape analysis and defer to a dedicated epic (this is where prior attempts
-over-reached). Record in `internal-docs/ROADMAP.md`.
+over-reached). Record it in the release plan.
 
 **Defer explicitly:** the legacy `arc_runtime.c` / `WynObject` system (dead for
 strings/enums) — leave untouched; consider removal in a separate cleanup once

@@ -66,8 +66,8 @@
 // mingw's real <io.h> for every translation unit at once and stops the next file
 // that includes <unistd.h> from re-breaking the Windows release build. This -include
 // shim only patches the one symbol we tripped over; the shadowing is still there and
-// can bite again with a different symbol (_setmode, _fileno, _mkdir, ...). Tracked in
-// internal-docs/PLAN_v1.21.md §8. Only 4 files include our "io.h", so the rename is
+// can bite again with a different symbol (_setmode, _fileno, _mkdir, ...). Tracked
+// separately. Only 4 files include our "io.h", so the rename is
 // small - it was deliberately not done during the release to keep the diff minimal.
 //
 // Harmless everywhere else: the whole thing is behind _WIN32, and the declaration

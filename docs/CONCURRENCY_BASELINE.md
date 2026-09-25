@@ -1,7 +1,6 @@
 # Concurrency baseline (S0) — awaited-concurrency path
 
-**Stage:** S0 of the coroutine-backed await epic (see
-`repos/internal-docs/ROADMAP.md` → "Coroutine-backed await").
+**Stage:** S0 of the coroutine-backed await epic.
 **Purpose:** pin down and document the CURRENT behavior of the awaited-concurrency
 path (`spawn`+`await`, `await_all`, `parallel { }`) so S1/S2 have a regression
 baseline. **No scheduler/spawn/coroutine/future logic was changed in S0** — this

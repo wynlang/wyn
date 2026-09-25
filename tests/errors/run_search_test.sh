@@ -18,7 +18,7 @@ elif echo "$out" | grep -q "no packages matched"; then
 else
   # Real results: contract checks
   echo "$out" | grep -q "wyn pkg add web" && ok "official package listed with add command" || bad "web missing from results"
-  echo "$out" | grep -qE "wyn pkg add (wyn|internal-docs|site|sample-apps)$" && bad "infra repo leaked into results" || ok "infra repos filtered"
+  echo "$out" | grep -qE "wyn pkg add (wyn|site|sample-apps)$" && bad "infra repo leaked into results" || ok "infra repos filtered"
   [ $code -eq 0 ] && ok "exit 0 on results" || bad "exit code $code"
 
   # filtered search narrows results

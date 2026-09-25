@@ -126,3 +126,9 @@ fuzz_out/
 # has to name mbedtls specifically rather than ignoring vendor/*/lib.)
 vendor/mbedtls/obj/
 vendor/mbedtls/lib/
+
+# Scratch files used when authoring commit messages / PR bodies from a tool.
+# These are never part of the source tree; one was swept in by `git add -A`.
+.commit_msg.tmp
+.pr_body.tmp
+.issues.json
