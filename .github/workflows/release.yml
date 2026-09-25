@@ -484,9 +484,19 @@ jobs:
           echo "--- release body ($(wc -l < RELEASE_BODY.md) lines) ---"
           cat RELEASE_BODY.md
 
+      # PRERELEASE vs LATEST. Without this, a `-rc` tag published as a full release
+      # and became GitHub's "latest" - which matters concretely, because
+      # `wyn upgrade` resolves /repos/wynlang/wyn/releases/latest (src/main.c), and
+      # that endpoint EXCLUDES prereleases. So the flag is the difference between
+      # "a candidate you download deliberately" and "every existing install is
+      # offered an untested build".
+      #
+      # Keyed off the tag rather than a workflow input so it cannot be forgotten at
+      # the moment of tagging, which is the only moment it matters.
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
+          prerelease: ${{ contains(github.ref_name, '-rc') }}
           files: |
             wyn-linux-x64/wyn-linux-x64.tar.gz
             wyn-linux-arm64/wyn-linux-arm64.tar.gz
