@@ -4997,6 +4997,29 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         Type* json_type = make_type(TYPE_JSON);
                         expr->expr_type = json_type;
                         return json_type;
+                    } else if (strcmp(return_type_str, "set") == 0) {
+                        // This chain handled string/int/float/bool/named/array/json/void
+                        // and NOT the two collection names, so a method the table
+                        // declares as returning `set` or `map` fell through to the int
+                        // default at the end. That is why `a.union(b).len()` reported
+                        // "Unknown method 'len' for type 'int'": the set-algebra half of
+                        // the HashSet API produced a value nothing could be done with,
+                        // for union, intersection, difference and symmetric_difference
+                        // alike. The runtime functions were there all along.
+                        Type* set_type = make_type(TYPE_SET);
+                        expr->expr_type = set_type;
+                        return set_type;
+                    } else if (strcmp(return_type_str, "map") == 0) {
+                        // Same gap, the map half. No caller reaches it today (the rows
+                        // that declare `map` - filter_keys, map_values - are refused
+                        // earlier as unknown methods on a map receiver), but leaving one
+                        // of the pair out is how this recurs: the next row added with a
+                        // `map` return would silently type as int.
+                        Type* map_type = make_type(TYPE_MAP);
+                        map_type->map_type.key_type = builtin_string;
+                        map_type->map_type.value_type = NULL;
+                        expr->expr_type = map_type;
+                        return map_type;
                     } else if (strcmp(return_type_str, "void") == 0) {
                         expr->expr_type = builtin_void;
                         return builtin_void;

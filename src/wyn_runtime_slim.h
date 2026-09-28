@@ -1351,7 +1351,7 @@ void int_times(long long n, long long (*fn)(void));
 // allowlisting them would leave four lowerings that compile in debug and cannot compile in
 // release the moment someone finds the spelling that reaches them.
 long long array_find_fn(WynArray arr, long long (*fn)(long long));
-WynArray array_flat_map(WynArray arr, long long (*fn)(long long));
+WynArray array_flat_map(WynArray arr, WynArray (*fn)(long long));
 WynArray array_sort_copy(WynArray arr);
 char* char_to_string(char x);
 // `x.to_int()` on an int. `static inline` in wyn_runtime.h:1870, so there is nothing in

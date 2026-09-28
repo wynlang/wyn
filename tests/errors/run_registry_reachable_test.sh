@@ -44,16 +44,20 @@ bad(){ echo "  FAIL  $1"; FAIL=$((FAIL+1)); }
 # THAT LIES; the fix is either to implement the method or to delete the row.
 known_broken(){
   case "$1" in
-    # Advertised, then refused by the checker itself - no lowering exists at all.
-    string.to_bytes|map.entries|set.to_array) return 0;;
-    # `char` is `int` in Wyn (checker.c: "char is int in Wyn"), so a char-annotated
-    # value resolves against the INT receiver table and never reaches these rows.
-    # The whole receiver family is dead, not just these names.
-    char.is_alpha|char.is_numeric|char.is_alphanumeric|char.is_whitespace) return 0;;
-    char.is_uppercase|char.is_lowercase|char.to_upper|char.to_lower) return 0;;
-    # (map.is_empty was here - check passed, build failed on an undefined
-    #  wyn_hashmap_is_empty. The function is now written, so the gate's exactness half
-    #  demanded this row be removed. That is the list working as intended.)
+    # EMPTY, and that is the point: every entry this list ever held has been resolved
+    # rather than tolerated.
+    #   map.is_empty      the function was written (wyn_hashmap_is_empty)
+    #   string.to_bytes   its dispatch had an EMPTY body and `bytes` carried the
+    #                     assignment twice - a botched edit; both spellings now lower
+    #   map.entries       no runtime function existed; the advertising row was removed
+    #   set.to_array      ditto
+    #   char.*  (8 rows)  unreachable by construction - `char` IS `int` in Wyn, so a
+    #                     char-typed value resolves against the int table and never
+    #                     reached a "char" row. The ten rows were removed; a single
+    #                     character is a 1-length string, which the string receiver
+    #                     already serves.
+    # Each removal was forced by the exactness half below, which fails on an entry that
+    # has started working - so this list cannot quietly become a place defects go to die.
     *) return 1;;
   esac
 }

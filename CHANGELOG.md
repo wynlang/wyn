@@ -111,6 +111,27 @@ Read this list before upgrading a test suite - several change program **output**
   `.to_string()`) were one spelling away from the same failure and are now declared too.
 - **`map.is_empty()` could not compile at all** - the lowering named a function nothing
   defined, in every mode.
+- **`a.flat_map(f)` segfaulted** - on the shipped v1.21.0 as well as here. The runtime
+  took a mapper returning `long long` and dereferenced the result as an array pointer,
+  while codegen emits one returning the array by value; struct-return and integer-return
+  are different ABIs, so it read whatever was in the return register. `--release` printed
+  a plausible answer, which was luck, not correctness.
+- **The set-algebra half of HashSet returned something unusable.** `a.union(b).len()` gave
+  "Unknown method 'len' for type 'int'": the checker's return-type chain mapped
+  string/int/float/bool/array/json/void and neither of the two collection names, so every
+  row declaring `set` (union, intersection, difference, symmetric_difference) fell through
+  to the int default. The runtime functions were there all along.
+- **A lambda could not declare an Option, array or generic return type.** The annotation
+  consumed exactly one identifier, so `-> int?`, `-> [int]` and `-> Result<int, string>`
+  left tokens behind and the error blamed the body. `-> int?` is why a function returning
+  an Option could not be written as a lambda at all.
+- **`"abc".to_bytes()` was refused** while `.bytes()` worked - its dispatch had an empty
+  body and `bytes` carried the assignment twice, a botched edit. Both spellings now lower
+  to the same runtime function, which had been present the whole time.
+- **Ten dead `char` methods removed from the registry.** `char` IS `int` in Wyn, so a
+  char-annotated value resolves against the int receiver table and never reached a row
+  keyed `char`: the whole family was unreachable by construction. A single character is a
+  1-length string (`"abc"[0]`), which the string receiver already serves.
 - **A computed string returned inside a struct or array was freed too early.**
 - **A Result or Option built inline into a local lost its payload type**, as did an
   `impl` method returning one, a `Result<T,E>` struct field, and a reassignment.
