@@ -128,6 +128,14 @@ Read this list before upgrading a test suite - several change program **output**
 - **`"abc".to_bytes()` was refused** while `.bytes()` worked - its dispatch had an empty
   body and `bytes` carried the assignment twice, a botched edit. Both spellings now lower
   to the same runtime function, which had been present the whole time.
+- **`s::add("b")` reached the C compiler.** The `::` lowering joins the qualifier and the
+  method into one C symbol, so a local variable was treated as a namespace and emitted
+  `s_add`. It now says to use `.` - which works - and names the dot form. `::` on a module
+  or an enum is untouched, which is the common correct case.
+- **`o = m.get(k)` then `o.unwrap_or(d)` was an internal codegen error.** `map.get()` does
+  not return an Option: it returns the value, and the zero value for a missing key. The
+  chained `m.get(k).unwrap_or(d)` works because it lowers as one operation; storing the
+  result first lost that. Now a clean message naming both the cause and `m.contains(k)`.
 - **Ten dead `char` methods removed from the registry.** `char` IS `int` in Wyn, so a
   char-annotated value resolves against the int receiver table and never reached a row
   keyed `char`: the whole family was unreachable by construction. A single character is a
@@ -167,6 +175,10 @@ Not user-facing, but they are why the list above is as long as it is:
   `a.every(f)` and `3.times(f)` all sat in that blind spot, and the last two survived
   the change that fixed the first two. This one is a text check instead: it reads the
   headers and the dispatch tables and needs no call at all, so it covers every arity.
+- **The Windows regex engine is now executed by CI.** Wyn ships two engines - a bundled
+  NFA under `_WIN32`, POSIX `regcomp` elsewhere - sharing only the `\d \w \s` expansion,
+  and no gate had ever run the Windows one, on a runner that was already building Windows.
+  A 26-arm contract now runs in the Windows portable subset as well as on POSIX.
 - **No test may bind a fixed port**, so the suite can run twice at once.
 - The internal test suite is **311 tests, 0 failures**; the sample-app corpus is
   **~998 tests across 39 projects, 0 failures**, verified against a v1.21.0 baseline

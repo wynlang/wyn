@@ -230,6 +230,15 @@ jobs:
             fi
           }
 
+          # THE WINDOWS REGEX ENGINE. Wyn ships TWO: src/wyn_runtime.h selects the
+          # bundled NFA (src/wyn_regex.h, wre_*) under _WIN32 and POSIX
+          # regcomp/regexec everywhere else. Only the \d \w \s expansion is shared.
+          # Until this line, NO gate had ever executed the Windows engine - so every
+          # regex-using Wyn program could behave differently there and nothing would
+          # notice, on a runner that was already building and testing Windows.
+          # The gate asserts only what any ERE engine must do, so a failure here is a
+          # real divergence rather than a matter of taste, and the arm names the case.
+          run_suite tests/errors/run_regex_contract_test.sh
           run_suite tests/golden/run_golden_tests.sh
           run_suite tests/errors/run_removed_syntax_test.sh
           run_suite tests/errors/run_checker_soundness_test.sh
