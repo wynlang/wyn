@@ -864,9 +864,13 @@ void register_int_array_var(const char* name) {
 // "internal codegen error". Order-dependent -- swap the two functions and it
 // compiles. Same leak and same fix as the three tables that already reset; this
 // is the fourth of that family to bite.
+static void reset_unpacked_array_vars(void);
 void reset_int_array_vars(void) {
     for (int i = 0; i < int_array_var_count; i++) free(int_array_var_names[i]);
     int_array_var_count = 0;
+    // The per-function "declared generic" record is the same kind of table and has
+    // to forget at the same boundary; see register_unpacked_array_var.
+    reset_unpacked_array_vars();
 }
 int is_int_array_var(const char* name) {
     for (int i = 0; i < int_array_var_count; i++) {
@@ -919,6 +923,116 @@ int is_int_array_vetoed(const char* name) {
         if (strcmp(int_array_veto_names[i], name) == 0) return 1;
     }
     return 0;
+}
+
+// --- THE authority for the packed-array question --------------------------
+//
+// Does this array variable use the packed WynIntArray representation
+// (long long*) rather than the generic WynArray (tagged WynValue*)?
+//
+// THREE independent name tables each owned a piece of that answer - the `[int]`
+// opt-in (is_int_array_var), the veto above, and the spawn-future table
+// (is_spawn_array) - and nothing joined them. So the declaration, the
+// initializer expression, the element accessors and the for-in lowering each
+// decided it from a DIFFERENT subset and disagreed:
+//
+//   var ts: [int] = []                     declaration asked the VETO   -> WynArray
+//   for i in 0..2 { ts.push(spawn f()) }   initializer asked SPAWN      -> WynIntArray
+//   r = await_all(ts)
+//   => WynArray ts = ({ WynIntArray __arr_6 = int_array_new(); ... });  C type error
+//
+//   var ts = []                            declaration asked SPAWN      -> WynIntArray
+//   for i in 0..2 { ts.push(spawn f()) }
+//   for t in ts { await t }                for-in asked the [int] OPT-IN-> WynArray
+//   => WynArray __iter_array = ts;                                      C type error
+//
+// `wyn check` passed both - the disagreement is invented after checking - and the
+// annotation only chose WHICH consumer broke. Building a task list in a loop is
+// the only way to write N concurrent tasks for a non-constant N, so neither
+// spelling worked for that.
+//
+// The VETO WINS over both opt-ins. It exists precisely because a variable used in
+// a way WynIntArray cannot express must fall back to the generic representation;
+// that is a correctness constraint, not a preference.
+//
+// `annotated_int` is the one fact only the DECLARATION site has - that the
+// annotation reads `[int]` - and only before it registers the variable.
+// Names the function CURRENTLY BEING EMITTED declared as a generic WynArray.
+// Consulted before the program-wide tables and reset at each function boundary
+// together with the [int] table, so a declaration's decision governs every use in
+// its own function and cannot be overridden by a same-named array elsewhere.
+//
+// The two opt-in tables are keyed on the variable NAME alone, and the spawn-future
+// one is program-wide with no reset, so without this record:
+//
+//     fn a() { var xs = []; for i in 0..2 { xs.push(spawn nap(5)) } ... }
+//     fn b() { var xs = ["p", "q"]; print("first=${xs[0]}") }
+//
+// b's declaration correctly refused the packed form (its elements are strings) but
+// b's ACCESSORS still found "xs" in the spawn-future table and emitted
+// int_array_get - the same store/load disagreement one layer down.
+static char** array_unpacked_names = NULL;
+static int array_unpacked_count = 0;
+static int array_unpacked_cap = 0;
+static void register_unpacked_array_var(const char* name) {
+    for (int i = 0; i < array_unpacked_count; i++)
+        if (strcmp(array_unpacked_names[i], name) == 0) return;
+    WYN_ENSURE_CAP(array_unpacked_names, array_unpacked_count, array_unpacked_cap);
+    array_unpacked_names[array_unpacked_count++] = strdup(name);
+}
+static int is_unpacked_array_var(const char* name) {
+    for (int i = 0; i < array_unpacked_count; i++)
+        if (strcmp(array_unpacked_names[i], name) == 0) return 1;
+    return 0;
+}
+static void reset_unpacked_array_vars(void) {
+    for (int i = 0; i < array_unpacked_count; i++) free(array_unpacked_names[i]);
+    array_unpacked_count = 0;
+}
+
+int is_spawn_array(const char* name);
+int wyn_array_is_packed_ex(const char* name, int annotated_int) {
+    if (!name || !*name) return 0;
+    // This function's own declaration wins over both program-wide opt-ins.
+    if (is_unpacked_array_var(name)) return 0;
+    if (is_int_array_vetoed(name)) return 0;
+    return (annotated_int || is_int_array_var(name) || is_spawn_array(name)) ? 1 : 0;
+}
+int wyn_array_is_packed(const char* name) {
+    return wyn_array_is_packed_ex(name, 0);
+}
+
+// Decide a DECLARATION's C representation AND record it, so every later site gets
+// the same answer out of one table instead of re-deriving it from a different
+// subset. Callers cannot forget the registration step - the inferred spawn-array
+// case never did it, which is why the for-in site had to consult a second table,
+// and then didn't. Same shape as wyn_option_family(), for the same reason.
+//
+// `init_type` is the initializer's checked type when known. A packed array is a
+// long long*, so it can only hold ints: an array whose ELEMENT TYPE is known to be
+// something else must never be packed, whatever the name tables say. Both those
+// tables are keyed on the variable NAME alone and neither is function-scoped, so a
+// same-named array in an unrelated function inherits the answer:
+//
+//     fn a() { var xs = []; for i in 0..2 { xs.push(spawn nap(5)) } ... }
+//     fn b() { var xs = ["p", "q"]; print("first=${xs[0]}") }
+//
+// b's xs was declared WynIntArray and its two string literals were stored as
+// (long long)(intptr_t)"p", so `xs[0]` printed 4378051595. Before the sites above
+// agreed, that program did not compile at all - which hid it.
+const char* wyn_array_decl_c_type(const char* name, int annotated_int, Type* init_type) {
+    int packed = wyn_array_is_packed_ex(name, annotated_int);
+    if (packed && init_type && init_type->kind == TYPE_ARRAY) {
+        Type* el = init_type->array_type.element_type;
+        // NULL/unknown stays eligible: an empty `[]` that will be filled with
+        // futures is exactly that case, and it is the shape this all exists for.
+        if (el && el->kind != TYPE_INT && el->kind != TYPE_BOOL) packed = 0;
+    }
+    // RECORD the decision either way, so the initializer expression and every
+    // accessor in this function read it back instead of re-deriving it.
+    if (!packed) { register_unpacked_array_var(name); return "WynArray"; }
+    if (!is_int_array_var(name)) register_int_array_var(name);
+    return "WynIntArray";
 }
 void register_str_array_var(const char* name) {
     for (int i = 0; i < str_array_var_count; i++)

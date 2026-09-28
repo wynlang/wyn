@@ -806,18 +806,19 @@ void codegen_stmt(Stmt* stmt) {
                     // agree by construction instead of emitting C that mixes the
                     // two (check-passes-then-codegen-fails, or worse a silent
                     // wrong answer for `xs[i] = v`). See codegen.c's veto block.
-                    if (is_int_array) {
-                        char _vvn[128]; token_to_cstr(_vvn, sizeof(_vvn), stmt->var.name);
-                        extern int is_int_array_vetoed(const char*);
-                        if (is_int_array_vetoed(_vvn)) is_int_array = false;
-                    }
-                    if (is_int_array) {
-                        c_type = "WynIntArray";
+                    //
+                    // Via THE authority, which also folds in the spawn-future
+                    // table and records the answer, so the initializer expression
+                    // and every accessor read the same decision. This branch used
+                    // to ask the veto ALONE while the initializer asked the
+                    // spawn-future table alone: `var ts: [int] = []` + a loop of
+                    // `ts.push(spawn f())` emitted
+                    // `WynArray ts = ({ WynIntArray ... })`.
+                    {
                         char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
-                        extern void register_int_array_var(const char*);
-                        register_int_array_var(_vn);
-                    } else {
-                        c_type = "WynArray";
+                        extern const char* wyn_array_decl_c_type(const char*, int, Type*);
+                        c_type = wyn_array_decl_c_type(_vn, is_int_array ? 1 : 0,
+                                    stmt->var.init ? stmt->var.init->expr_type : NULL);
                     }
                     needs_arc_management = false;
                 } else if (stmt->var.type->type == EXPR_CALL) {
@@ -1044,14 +1045,15 @@ void codegen_stmt(Stmt* stmt) {
                         c_type = "long long";
                     }
                 } else if (stmt->var.init->type == EXPR_ARRAY || stmt->var.init->type == EXPR_LIST_COMP) {
-                    // Check if this array holds spawn futures (detected in pre-scan)
+                    // Representation via THE authority (codegen.c): it folds the
+                    // spawn-future table, the [int] opt-in and the veto into one
+                    // answer and records it. This branch used to consult the
+                    // spawn-future table ALONE and ignore the veto, the mirror
+                    // image of the annotated branch above.
                     char _vn[256]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
-                    if (is_spawn_array(_vn)) {
-                        c_type = "WynIntArray";
-                    } else {
-                        c_type = "WynArray";
-                        register_array_var(_vn);
-                    }
+                    extern const char* wyn_array_decl_c_type(const char*, int, Type*);
+                    c_type = wyn_array_decl_c_type(_vn, 0, stmt->var.init->expr_type);
+                    if (strcmp(c_type, "WynArray") == 0) register_array_var(_vn);
                     needs_arc_management = false;
                 } else if (stmt->var.init->type == EXPR_MAP) {
                     // Map type - use the typedef
@@ -2510,11 +2512,14 @@ void codegen_stmt(Stmt* stmt) {
             if (needs_arc_management) {
                 codegen_expr(stmt->var.init);
             } else {
-                // Set spawn/int array flag for WynIntArray emission
+                // Emit the initializer in the representation the DECLARATION above
+                // just chose, via THE authority - which has recorded it, so the two
+                // cannot disagree. (This site used to OR the spawn-future and [int]
+                // tables while the declaration consulted the veto instead.)
                 bool _was_int_array = codegen_emit_int_array;
                 { char _vn[256]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
-                  extern int is_int_array_var(const char*);
-                  if (is_spawn_array(_vn) || is_int_array_var(_vn)) codegen_emit_int_array = true; }
+                  extern int wyn_array_is_packed(const char*);
+                  if (wyn_array_is_packed(_vn)) codegen_emit_int_array = true; }
                 codegen_expr(stmt->var.init);
                 codegen_emit_int_array = _was_int_array;
             }
@@ -4802,11 +4807,15 @@ void codegen_stmt(Stmt* stmt) {
                         break;
                     }
                 }
-                // Check if iterating over a WynIntArray
+                // Check if iterating over a WynIntArray - via THE authority, so this
+                // lowering covers every variable that IS one. It used to ask the
+                // [int] opt-in table alone, so an array of spawn futures (declared
+                // WynIntArray by the spawn-future table) fell through to the generic
+                // arm below and emitted `WynArray __iter_array = ts;`.
                 if (stmt->for_stmt.array_expr->type == EXPR_IDENT) {
                     char _ian[128]; token_to_cstr(_ian, sizeof(_ian), stmt->for_stmt.array_expr->token);
-                    extern int is_int_array_var(const char*);
-                    if (is_int_array_var(_ian)) {
+                    extern int wyn_array_is_packed(const char*);
+                    if (wyn_array_is_packed(_ian)) {
                         emit("{\n"); push_scope();
                         emit("    WynIntArray __iter_iarr = "); codegen_expr(stmt->for_stmt.array_expr); emit(";\n");
                         emit("    for (long long __i = 0; __i < __iter_iarr.count; __i++) {\n");
