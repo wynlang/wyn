@@ -1,5 +1,161 @@
 # Changelog
 
+## v1.22.0-rc1 (2026-09-26) - "A Verdict You Can Trust" (release candidate)
+
+**A release candidate, not a final release.** It is published as a prerelease so it can be
+exercised against real code before v1.22.0. `wyn upgrade` resolves GitHub's *latest
+release*, which excludes prereleases, so it will not move anyone onto this build - you
+have to download it deliberately.
+
+Two of the fixes here are **remote code execution**. Upgrade for those alone.
+
+The rest of the release has one theme: when Wyn tells you something, it should be true.
+That covers three kinds of lie - a wrong answer at exit 0, a `wyn check` that passes and
+then fails to build, and a diagnostic that blames you for the compiler's own gap.
+
+### Two RCEs: `Crypto.md5` and every HTTPS request
+
+Both spliced caller-controlled text into a shell command:
+
+```wyn
+Crypto.md5(untrusted)              // ran `openssl dgst -md5` via popen
+Http.post("https://...", body)     // ran `openssl s_client` with the URL and body
+```
+
+Both built the command with the caller's text inside single quotes, so a single quote in
+the input broke out of the argument. Anything reaching either one - a filename, a form
+field, a webhook payload - could run arbitrary commands.
+
+`Crypto.md5` is now a native RFC 1321 implementation, and HTTPS now uses an in-process
+TLS stack (vendored **mbedTLS 3.6 LTS**) that verifies against the
+platform trust store and fails closed. Replacing `openssl s_client` also removed a
+**128 KB response cap** and silent **chunked-transfer truncation** - so large or chunked
+responses were being cut short without an error.
+
+### Printing a struct, map, Option or array printed a memory address
+
+```wyn
+p = Point { x: 1, y: 2 }
+print(p)            // -> 4345226036
+m = {"a": 1}
+print(m)            // -> 4345228112
+print([[1,2],[3]])  // -> one address per inner array
+```
+
+Every aggregate shape was affected: structs, maps, Options, Results, `Some(<Struct>)`,
+`Some(Some(x))`, nested arrays, arrays of structs or Options, and a Result with a struct
+payload. Some printed a pointer, some failed to build outright - and interpolation
+(`"${p}"`) already worked, which is why this looked like a formatting nit rather than a
+cluster of separate bugs.
+
+### `"abc".ends_with("z")` returned `true` on x86-64
+
+`wyn_runtime_slim.h` declared eight functions `int` where the archive defines them
+`bool`. That is a return-type mismatch across translation units - undefined behaviour -
+and on x86-64 a `bool` return sets only the low byte of `eax`, so reading it as a full
+`int` picked up whatever was in the upper bytes. Affected `string_is_empty`,
+`string_starts_with`, `string_ends_with`, `File_exists`, `File_is_dir`, `File_is_file`,
+`Regex_match` and `regex_match`, **under `--release` only**. Invisible on arm64 and on
+11 of 12 CI jobs.
+
+### Regex `\d`, `\w` and `\s` matched the letter, not the class
+
+`\d` matched a literal `d`. Every character-class pattern in every Wyn program was
+quietly wrong.
+
+### `Json.stringify(Json.parse(s))` segfaulted
+
+JSON parsing and JSON building were two disjoint object models, so a document could not
+be read, modified and written back. They are now one model, and a **parse failure is
+reportable** instead of indistinguishable from an empty document.
+
+### Behaviour changes
+
+Read this list before upgrading a test suite - several change program **output**.
+
+1. **Bool-returning calls print `true`/`false`, not `1`/`0`.** About 35 spellings,
+   including `is_some`, `is_ok`, `is_even`, `is_alpha`, `is_nan`, `File.exists`,
+   `HashSet.contains`, `Json.is_valid` and `Json.get_bool`, in both the `.` and `::`
+   forms, through a variable, and inside `${}`. **Anything asserting on `1`/`0` output
+   needs updating.** `if` conditions are unchanged.
+2. **`spawn` on a closure is a check error.** It previously compiled and returned `0`,
+   because the captured environment was never carried across the boundary.
+3. **A map literal with mixed value types is a check error** -
+   `{"host": "localhost", "port": 8080}`. One map holds one value type.
+4. **A non-string HashSet element is a check error.** `{:1, 2}` previously **segfaulted
+   on construction**, even if the set was never used. HashSet elements and HashMap keys
+   are strings; convert with `.to_string()`.
+5. **`Json.<method>(text)` is a check error.** Passing the JSON *text* where a parsed
+   handle belongs used to return the empty-document answer for every call - `is_valid`
+   false, `get_int` 0, `keys` `[]` - so a program that forgot `Json.parse` looked like
+   one that parsed an empty document. Parse once, pass the handle.
+6. **Ten Option/Result combinators are rejected at check time** - `map`, `and_then`,
+   `filter`, `map_err`, `expect`, `or_else`. They were advertised and never existed;
+   they used to pass `wyn check` and fail in the C compiler. Option and Result support
+   `is_some`/`is_none`/`is_ok`/`is_err`/`unwrap`/`unwrap_err`/`unwrap_or`/`to_string`.
+7. **Option/Result predicates on a number or bool are rejected** - `5.is_err()`.
+8. **An unknown namespace method or an unknown CLI flag is an error.** `wyn build
+   x.wyn --wasm` used to print a success tick over a *native* binary.
+9. **`wyn test` prints one truthful summary** and exits non-zero when it finds no test
+   files, instead of reporting success over zero tests.
+
+### Also fixed
+
+- **`wyn run --release` could not compile 205 stdlib calls**, then blamed the user for
+  the spelling. Eight further method spellings also failed under `--release` alone:
+  `map.clear()`, `"p".exists()`, `"p".is_dir()`, `"p".is_file()`, `n.to_int()`,
+  `c.to_int()` on a `char`, `a.any(f)` and `a.all(f)`. The three path predicates had
+  only ever worked in debug through an *implicit declaration* - C assumes `int`, they
+  return `int`, and it happened to be right.
+- **`map.is_empty()` could not compile at all** - the lowering named a function nothing
+  defined, in every mode.
+- **A computed string returned inside a struct or array was freed too early.**
+- **A Result or Option built inline into a local lost its payload type**, as did an
+  `impl` method returning one, a `Result<T,E>` struct field, and a reassignment.
+- **A `match` on an Option or Result must now cover both halves.**
+- **Bare `none` types as an Option**, not an int.
+- **Errors inside `${...}` report their own line** instead of line 1 - and `${}` is the
+  idiomatic formatter, so most real diagnostics pointed at the top of the file.
+- **`print()` and `--release println()` interleaved mid-line across tasks.**
+- **`App.*` programs failed to link in every release** - `src/wyn_webview.o` was never
+  shipped, so they worked only from a source checkout.
+- **A precompiled header the C compiler refuses no longer fails the build.**
+
+### Added
+
+- **`sort_by(cmp)`** - sort an array of structs with a comparator.
+- **A string→number parse that cannot abort the process.** `"abc".to_int()` panics by
+  design; the new catchable form returns a reportable failure.
+- **JSON Schema derivation from a Wyn type**, for AI/tool-calling payloads - and it
+  refuses types it cannot express rather than emitting a schema that lies.
+- **`.len()` is now O(1)** for 36 string constructors that were O(n).
+
+### Gates added
+
+Not user-facing, but they are why the list above is as long as it is:
+
+- **Every method the registry advertises must be callable** - in debug *and*
+  `--release`. This found `map.is_empty`, the six release-only failures, and eleven
+  registry rows that advertise methods the compiler then refuses.
+- **No test may bind a fixed port**, so the suite can run twice at once.
+- The internal test suite is **311 tests, 0 failures**; the sample-app corpus is
+  **~998 tests across 39 projects, 0 failures**, verified against a v1.21.0 baseline
+  build to confirm none of the above changed a working program's behaviour beyond the
+  list in "Behaviour changes".
+
+### Known limitations in this RC
+
+- **`map.get()` returns the value directly, so a missing key returns `0`** (or `""`) -
+  indistinguishable from a stored zero. Use `m.contains(k)` to test presence. The
+  inline `m.get(k).unwrap_or(d)` works; storing the result first does not.
+- HashSet elements and HashMap keys must be strings.
+- No Option/Result combinator API (see behaviour change 6).
+- `a.union(b)` on sets returns a value the checker types as `int`, so the result cannot
+  be used.
+- The `::` spelling on a collection variable (`s::add("x")`) does not compile.
+
+Open issues are tracked at https://github.com/wynlang/wyn/issues.
+
 ## v1.21.0 (2026-08-26) - "The Soundness Release"
 
 **If a program passes `wyn check`, it must build.** That was the theme, and it is what
