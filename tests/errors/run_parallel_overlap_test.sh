@@ -16,6 +16,32 @@
 # through to a plain sequential emit under a `/* parallel */` comment. The block
 # named after parallelism was, for those shapes, a no-op.
 #
+# THE SECOND DEFECT THIS GATES: a call to a NAMESPACED BUILTIN was never dispatched
+# in ANY position, in either spelling, because dispatch needed a wrapper named after
+# the callee:
+#
+#   parallel { Time.sleep(200) x8 }     1,618ms - 8x200ms, no overlap at all. This
+#                                       is the exact shape the concurrency guide
+#                                       offered as the reassuring I/O-wait example.
+#   spawn Time.sleep(200)               returned after 204ms: SYNCHRONOUS.
+#   var f = spawn Time.sleep(200)       emitted `Future* f = NULL` - the call was
+#                                       DROPPED. `await f` returned 0 after 0ms and
+#                                       nothing ever slept.
+#   spawn Time::sleep(200)              emitted `__spawn_wrapper_Time::sleep_1`,
+#                                       which is not a C identifier: did not build.
+#   spawn print("hi")                   emitted `wynfn_print(...)`, undeclared: did
+#                                       not build.
+#
+# Both spellings are covered here because they are DIFFERENT AST shapes -
+# `Time::sleep(x)` folds into one identifier containing "::" and arrives as a call,
+# `Time.sleep(x)` arrives as a method call on the namespace - and they reached
+# different dispatch sites. Fixing one silently leaves the other.
+#
+# NOT covered, because it is not yet dispatched: a method call on a VALUE
+# (`obj.run(1)`), whose receiver cannot be copied into a per-site args box without
+# losing mutations made through its address. Those arms are deliberately absent
+# rather than asserted-sequential, so implementing them does not red this gate.
+#
 # WHY THE BRANCHES SLEEP INSTEAD OF COMPUTING. Two traps, both hit while writing
 # this file, and both of which make a CPU-bound fixture report success on a broken
 # compiler:
@@ -106,6 +132,74 @@ fn battery(rep: int) -> int {
     }
     var t9 = DateTime.micros()
     print("SPAWN \${(t9 - t8) / 1000} 0")
+
+    // (5) bare NAMESPACED BUILTIN, dot spelling - the shape the concurrency guide
+    //     offers as its I/O-wait example. Four branches, so a regression reads as
+    //     4x rather than 2x.
+    var t10 = DateTime.micros()
+    parallel {
+        Time.sleep($NAP)
+        Time.sleep($((NAP+1)))
+        Time.sleep($((NAP+2)))
+        Time.sleep($((NAP+3)))
+    }
+    var t11 = DateTime.micros()
+    print("NSDOT \${(t11 - t10) / 1000} 0")
+
+    // (6) the SAME calls in the :: spelling. A different AST shape reaching a
+    //     different dispatch site, so it needs its own arm.
+    var t12 = DateTime.micros()
+    parallel {
+        Time::sleep($NAP)
+        Time::sleep($((NAP+1)))
+        Time::sleep($((NAP+2)))
+        Time::sleep($((NAP+3)))
+    }
+    var t13 = DateTime.micros()
+    print("NSCOLON \${(t13 - t12) / 1000} 0")
+
+    // (7) explicit spawn of a builtin inside the block, both spellings. The ::
+    //     form did not even COMPILE before (__spawn_wrapper_Time::sleep_1).
+    var t14 = DateTime.micros()
+    parallel {
+        spawn Time.sleep($NAP)
+        spawn Time::sleep($((NAP+1)))
+    }
+    var t15 = DateTime.micros()
+    print("NSSPAWN \${(t15 - t14) / 1000} 0")
+
+    // (8) fire-and-forget spawn of a builtin must RETURN AT ONCE. Before, the
+    //     "spawn" was emitted as a plain call and this measured a full branch.
+    var t16 = DateTime.micros()
+    spawn Time.sleep($NAP)
+    var t17 = DateTime.micros()
+    print("FIREFORGET \${(t17 - t16) / 1000} 0")
+
+    // (9) spawn EXPRESSION of a builtin. Two separate properties: the spawn must
+    //     return at once, AND the await must really wait for it. Before, \`fut\` was
+    //     a literal NULL and the call was dropped, so BOTH numbers were 0 - which
+    //     is why the await bound below has a FLOOR as well as a ceiling.
+    var t18 = DateTime.micros()
+    var fut = spawn Time.sleep($NAP)
+    var t19 = DateTime.micros()
+    var fv = await fut
+    var t20 = DateTime.micros()
+    print("SPAWNEXPR \${(t19 - t18) / 1000} \${fv}")
+    print("SPAWNEXPRAWAIT \${(t20 - t18) / 1000} \${fv}")
+
+    // (10) EVERY dispatched branch must actually RUN. A wall-clock reading of ~1x
+    //      cannot tell "four branches overlapped" from "one ran and three were
+    //      dropped" - so these four bare builtin calls have an observable effect
+    //      each. One is interpolated, which makes its argument a FRESH +1 string:
+    //      that is the reference the site box retains and the wrapper releases, so
+    //      this arm also covers the string-argument ownership path.
+    var tag = "d"
+    parallel {
+        print("EFFECT-a")
+        print("EFFECT-b")
+        print("EFFECT-c")
+        print("EFFECT-\${tag}")
+    }
     return rep
 }
 
@@ -130,65 +224,109 @@ fn main() -> int {
 }
 WYN
 
-# Built with --release on purpose: -O2 is where CSE lives, so a fixture that only
-# looks right unoptimised would hide the very artifact described above.
-if ! (cd "$TMP" && perl -e 'alarm(300); exec @ARGV' -- "$WYN" build --release "$TMP/par.wyn") \
-        > "$TMP/build.log" 2>&1; then
-    bad "fixture builds --release"
-    grep -m3 -iE "error" "$TMP/build.log" | sed 's/^/        /'
-    echo ""; echo "parallel-overlap: $PASS pass, $FAIL fail"; exit 1
-fi
-[ -x "$TMP/par" ] || { bad "fixture binary produced"; echo "parallel-overlap: $PASS pass, $FAIL fail"; exit 1; }
+# BOTH modes. --release matters because -O2 is where CSE lives, so a fixture that
+# only looks right unoptimised would hide the artifact described above; plain mode
+# matters because the two use DIFFERENT runtime headers (wyn_runtime.h vs
+# wyn_runtime_slim.h), so a runtime symbol added for one and not the other builds in
+# exactly one of them.
+run_mode() {  # $1 = "" | "--release" ; $2 = label
+    local flags="$1" label="$2" dir="$TMP/$2"
+    mkdir -p "$dir"; cp "$TMP/par.wyn" "$dir/par.wyn"
+    if ! (cd "$dir" && perl -e 'alarm(600); exec @ARGV' -- "$WYN" build $flags "$dir/par.wyn") \
+            > "$dir/build.log" 2>&1; then
+        bad "[$label] fixture builds"
+        grep -m3 -iE "error" "$dir/build.log" | sed 's/^/        /'
+        return
+    fi
+    [ -x "$dir/par" ] || { bad "[$label] fixture binary produced"; return; }
 
-# Discard the first run: macOS scans a freshly built binary on first exec and that
-# alone has produced multi-second readings on a 30ms program.
-"$TMP/par" >/dev/null 2>&1
-out="$TMP/par.out"
-perl -e 'alarm(300); exec @ARGV' -- "$TMP/par" > "$out" 2>&1 || { bad "fixture runs"; echo "parallel-overlap: $PASS pass, $FAIL fail"; exit 1; }
+    # Discard the first run: macOS scans a freshly built binary on first exec and
+    # that alone has produced multi-second readings on a 30ms program.
+    "$dir/par" >/dev/null 2>&1
+    local out="$dir/par.out"
+    perl -e 'alarm(600); exec @ARGV' -- "$dir/par" > "$out" 2>&1 || { bad "[$label] fixture runs"; return; }
 
-# MIN across reps - each key is printed once per rep.
-read_ms(){ awk -v k="$1" '$1==k { if (m=="" || $2+0 < m+0) m=$2 } END{print m}' "$out"; }
-read_val(){ awk -v k="$1" '$1==k {print $3; exit}' "$out"; }
+    # MIN across reps - each key is printed once per rep.
+    read_ms(){ awk -v k="$1" '$1==k { if (m=="" || $2+0 < m+0) m=$2 } END{print m}' "$out"; }
+    read_val(){ awk -v k="$1" '$1==k {print $3; exit}' "$out"; }
 
-BASE=$(read_ms BASE)
-if [ -z "$BASE" ]; then
-    bad "baseline reading present"; cat "$out" | sed 's/^/        /'
-    echo ""; echo "parallel-overlap: $PASS pass, $FAIL fail"; exit 1
-fi
-# A baseline too small to measure makes every ratio meaningless - say so rather
-# than passing four arms on noise.
-if [ "$BASE" -lt 50 ]; then
-    bad "baseline too small to compare against (${BASE}ms - raise NAP)"
-    echo ""; echo "parallel-overlap: $PASS pass, $FAIL fail"; exit 1
-fi
+    local BASE; BASE=$(read_ms BASE)
+    if [ -z "$BASE" ]; then
+        bad "[$label] baseline reading present"; sed 's/^/        /' "$out"; return
+    fi
+    # A baseline too small to measure makes every ratio meaningless - say so rather
+    # than passing every arm on noise.
+    if [ "$BASE" -lt 50 ]; then
+        bad "[$label] baseline too small to compare against (${BASE}ms - raise NAP)"; return
+    fi
 
-check(){  # $1=key  $2=label
-    local ms; ms=$(read_ms "$1")
-    if [ -z "$ms" ]; then bad "$2 (no reading)"; return; fi
-    # ms*10 <= BASE*RATIO_NUM  i.e.  ms <= 1.6 * BASE
-    if [ $((ms * 10)) -le $((BASE * RATIO_NUM)) ]; then
-        ok "$2 overlaps (${ms}ms vs ${BASE}ms for one branch)"
+    check(){  # $1=key  $2=label
+        local ms; ms=$(read_ms "$1")
+        if [ -z "$ms" ]; then bad "[$label] $2 (no reading)"; return; fi
+        # ms*10 <= BASE*RATIO_NUM  i.e.  ms <= 1.6 * BASE
+        if [ $((ms * 10)) -le $((BASE * RATIO_NUM)) ]; then
+            ok "[$label] $2 overlaps (${ms}ms vs ${BASE}ms for one branch)"
+        else
+            bad "[$label] $2 did NOT overlap: ${ms}ms vs ${BASE}ms for one branch (bound 1.6x; 2x means sequential)"
+        fi
+    }
+    # A spawn that DISPATCHES returns in microseconds; one emitted as a plain call
+    # returns after a full branch. A quarter of a branch separates those by 4x.
+    check_immediate(){  # $1=key  $2=label
+        local ms; ms=$(read_ms "$1")
+        if [ -z "$ms" ]; then bad "[$label] $2 (no reading)"; return; fi
+        if [ $((ms * 4)) -le "$BASE" ]; then
+            ok "[$label] $2 returns immediately (${ms}ms vs ${BASE}ms for the call)"
+        else
+            bad "[$label] $2 ran INLINE: returned after ${ms}ms, the call itself is ${BASE}ms"
+        fi
+    }
+    # The await must really have waited. The FLOOR is the load-bearing half: the old
+    # `Future* f = NULL` lowering dropped the call and returned 0 instantly, which a
+    # ceiling-only bound reads as a pass.
+    check_waited(){  # $1=key  $2=label
+        local ms; ms=$(read_ms "$1")
+        if [ -z "$ms" ]; then bad "[$label] $2 (no reading)"; return; fi
+        if [ $((ms * 10)) -ge $((BASE * 8)) ] && [ $((ms * 10)) -le $((BASE * RATIO_NUM)) ]; then
+            ok "[$label] $2 waited for the task (${ms}ms vs ${BASE}ms)"
+        else
+            bad "[$label] $2 did not wait for the task: ${ms}ms, expected 0.8-1.6x of ${BASE}ms"
+        fi
+    }
+
+    check ASSIGN   "assignment to a variable declared outside the block"
+    check BARE     "a bare call statement"
+    check VARDECL  "a new declaration inside the block"
+    check SPAWN    "an explicit spawn"
+    check NSDOT    "bare namespaced builtins, Ns.method() spelling"
+    check NSCOLON  "bare namespaced builtins, Ns::method() spelling"
+    check NSSPAWN  "explicit spawn of namespaced builtins, both spellings"
+    check_immediate FIREFORGET "fire-and-forget spawn of a builtin"
+    check_immediate SPAWNEXPR  "spawn EXPRESSION of a builtin"
+    check_waited    SPAWNEXPRAWAIT "await of a spawned builtin"
+
+    # Overlap is worthless if the answers change: both branches must have run and the
+    # join must have written their results back into the OUTER variables. nap returns
+    # its argument, so the sum is exactly NAP + NAP+1 and nothing else.
+    local want asum; want=$(( NAP + NAP + 1 )); asum=$(read_val ASSIGN)
+    if [ "${asum:-x}" = "$want" ]; then
+        ok "[$label] the join writes both results back into the outer variables (sum=$asum)"
     else
-        bad "$2 did NOT overlap: ${ms}ms vs ${BASE}ms for one branch (bound 1.6x; 2x means sequential)"
+        bad "[$label] the join writes both results back: want $want, got '${asum:-}'"
+    fi
+
+    # Every dispatched branch RAN. Without this, "one branch ran and three were
+    # dropped" is indistinguishable from perfect overlap.
+    local missing=""
+    for k in a b c d; do grep -q "^EFFECT-$k$" "$out" || missing="$missing $k"; done
+    if [ -z "$missing" ]; then
+        ok "[$label] all four dispatched builtin branches ran (EFFECT-a..d present)"
+    else
+        bad "[$label] dispatched branches that never ran:$missing"
     fi
 }
 
-check ASSIGN  "assignment to a variable declared outside the block"
-check BARE    "a bare call statement"
-check VARDECL "a new declaration inside the block"
-check SPAWN   "an explicit spawn"
-
-# Overlap is worthless if the answers change. Both branches must still have run and
-# produced the values the sequential version would.
-# Overlap is worthless if the answers change: both branches must have run and the
-# join must have written their results back into the OUTER variables. nap returns
-# its argument, so the sum is exactly NAP + NAP+1 and nothing else.
-want=$(( NAP + NAP + 1 ))
-asum=$(read_val ASSIGN)
-if [ "${asum:-x}" = "$want" ]; then
-    ok "the join writes both results back into the outer variables (sum=$asum)"
-else
-    bad "the join writes both results back: want $want, got '${asum:-}'"
-fi
+run_mode ""          debug
+run_mode "--release" release
 
 echo ""; echo "parallel-overlap: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]
