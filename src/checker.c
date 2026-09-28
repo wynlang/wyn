@@ -3813,6 +3813,59 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                             free(arg_types);
                             return builtin_int;
                         }
+                        // `s::add("b")` where `s` holds a VALUE. The `::` lowering
+                        // concatenates the qualifier into a C symbol - it emitted `s_add`
+                        // and failed in the C compiler with "undeclared function 's_add'",
+                        // i.e. the compiler treating a local variable as a namespace.
+                        //
+                        // `.` is the spelling for a value and it works, so this says so
+                        // instead of letting it reach the C compiler. It cannot simply be
+                        // lowered like `.`: `::` on a MODULE is the common, correct case -
+                        // `tui::display_width(s)` and friends appear in 110 files - so the
+                        // module tests above must all pass first.
+                        //
+                        // Gated on the type NOT being int, and that is not fussiness: an
+                        // `import` registers the module name as an int-typed placeholder
+                        // symbol, so an int-typed qualifier is indistinguishable from a
+                        // module here. `x::foo()` on an int variable therefore still
+                        // reaches the C compiler, which is the pre-existing behaviour and
+                        // is noted in the gate.
+                        extern int is_enum_type(const char*);
+                        if (_rsym && _rsym->type &&
+                            !is_builtin_module(qual_module) &&
+                            !is_module_loaded(qual_module) &&
+                            !checking_same_module(qual_module) &&
+                            // ...and the qualifier is not a TYPE NAME. `User::default()`
+                            // calling a `fn User.default()` is a static function on a type
+                            // and is documented (book ch.11); a struct or enum name resolves
+                            // to a symbol here exactly as a variable does, so without this
+                            // the rule rejected it. Found by running the book's snippets
+                            // against the packaged artifact - the corpus sweep could not see
+                            // it, because the snippets live in markdown rather than .wyn.
+                            // The same carve-out as the namespace rule's, for the same reason.
+                            !find_struct_definition(_rtok) &&
+                            !is_enum_type(qual_module)) {
+                            TypeKind k = _rsym->type->kind;
+                            if (k == TYPE_SET || k == TYPE_MAP || k == TYPE_ARRAY ||
+                                k == TYPE_STRING || k == TYPE_STRUCT || k == TYPE_JSON ||
+                                k == TYPE_OPTIONAL || k == TYPE_RESULT) {
+                                char hl[320], help[512];
+                                snprintf(hl, sizeof(hl),
+                                         "use '.' to call a method on a value: '%s.%s()', not '%s::%s()'",
+                                         qual_module, qual_func, qual_module, qual_func);
+                                snprintf(help, sizeof(help),
+                                         "'::' qualifies a MODULE or an enum (`tui::pad_to(..)`,"
+                                         " `Color::Red`), and it lowers by joining the two names into"
+                                         " one C symbol - here that would be '%s_%s', which does not"
+                                         " exist. '%s' is a local value, so use the dot form.",
+                                         qual_module, qual_func, qual_module);
+                                report_unknown_method(expr->call.callee->token.line, hl, NULL, help);
+                                had_error = true;
+                                expr->expr_type = builtin_int;
+                                free(arg_types);
+                                return builtin_int;
+                            }
+                        }
                     }
                     // Module-qualified function - check for known return types
                     if (strcmp(qual_module, "C_Parser") == 0) {
@@ -4997,6 +5050,29 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         Type* json_type = make_type(TYPE_JSON);
                         expr->expr_type = json_type;
                         return json_type;
+                    } else if (strcmp(return_type_str, "set") == 0) {
+                        // This chain handled string/int/float/bool/named/array/json/void
+                        // and NOT the two collection names, so a method the table
+                        // declares as returning `set` or `map` fell through to the int
+                        // default at the end. That is why `a.union(b).len()` reported
+                        // "Unknown method 'len' for type 'int'": the set-algebra half of
+                        // the HashSet API produced a value nothing could be done with,
+                        // for union, intersection, difference and symmetric_difference
+                        // alike. The runtime functions were there all along.
+                        Type* set_type = make_type(TYPE_SET);
+                        expr->expr_type = set_type;
+                        return set_type;
+                    } else if (strcmp(return_type_str, "map") == 0) {
+                        // Same gap, the map half. No caller reaches it today (the rows
+                        // that declare `map` - filter_keys, map_values - are refused
+                        // earlier as unknown methods on a map receiver), but leaving one
+                        // of the pair out is how this recurs: the next row added with a
+                        // `map` return would silently type as int.
+                        Type* map_type = make_type(TYPE_MAP);
+                        map_type->map_type.key_type = builtin_string;
+                        map_type->map_type.value_type = NULL;
+                        expr->expr_type = map_type;
+                        return map_type;
                     } else if (strcmp(return_type_str, "void") == 0) {
                         expr->expr_type = builtin_void;
                         return builtin_void;
@@ -5089,6 +5165,43 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     expr->expr_type = builtin_int;
                     return builtin_int;
                 }
+            }
+
+            // `unwrap_or` on a scalar VARIABLE. V-28 deliberately left `unwrap_or` out of
+            // its set, because `m.get(k).unwrap_or(d)` has a real lowering ahead of the
+            // blind fallback and does build. But BREAKING that chain across a variable
+            //
+            //     o = m.get("a")
+            //     print(o.unwrap_or(9))     // internal codegen error
+            //
+            // loses the lowering and reaches the C compiler. Measured: that is the ONLY
+            // remaining broken shape - the inline chain works, a string-valued map already
+            // gives a clean "string has no method 'unwrap_or'", and a real Option in a
+            // variable works because it types as a STRUCT (OptionInt), not as a scalar.
+            //
+            // Keying on the receiver being an IDENT is what separates the two: the inline
+            // chain's receiver is a CALL, so it is untouched. That keeps V-28's promise
+            // (it never rejects something that builds) while closing the one hole.
+            if (object_type && expr->method_call.object &&
+                expr->method_call.object->type == EXPR_IDENT &&
+                strcmp(method_name, "unwrap_or") == 0 &&
+                (object_type->kind == TYPE_INT || object_type->kind == TYPE_FLOAT ||
+                 object_type->kind == TYPE_BOOL)) {
+                char hl[320], help[512];
+                const char* rk = object_type->kind == TYPE_INT ? "int"
+                               : object_type->kind == TYPE_FLOAT ? "float" : "bool";
+                snprintf(hl, sizeof(hl),
+                         "'unwrap_or()' needs an Option or Result receiver, not %s", rk);
+                snprintf(help, sizeof(help),
+                         "`map.get(k)` does not return an Option - it returns the value"
+                         " directly, and the zero value for a missing key. The chained form"
+                         " `m.get(k).unwrap_or(d)` works because it is lowered as one"
+                         " operation; storing the result first loses that. Either keep it on"
+                         " one line, or test presence with `m.contains(k)` before reading.");
+                report_unknown_method(method.line, hl, NULL, help);
+                had_error = true;
+                expr->expr_type = object_type;
+                return object_type;
             }
 
             // An Option/Result predicate on an int/float/bool receiver: reject at check

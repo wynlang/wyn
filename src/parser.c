@@ -1371,12 +1371,49 @@ static Expr* primary() {
         
         expect(TOKEN_RPAREN, "Expected ')' after lambda parameters");
         
-        // Parse optional return type annotation
+        // Parse optional return type annotation.
+        //
+        // This consumed exactly ONE identifier, so any return type spelled with more than
+        // a bare name left tokens behind and the very next check reported
+        // "Expected '=>' or '{' after lambda signature" - pointing at the body, for a
+        // fault in the signature:
+        //
+        //   fn() -> int?              consumed `int`, left `?`
+        //   fn(x: int) -> [int]       consumed nothing, `[` is not an identifier
+        //   fn() -> Result<int, str>  consumed `Result`, left `<...`
+        //
+        // The first of those makes `Option.or_else`/`and_then` unwritable with a lambda at
+        // all, since they take a function returning an Option.
+        //
+        // Deliberately NOT parse_type(): line 1253's comment records that it consumes `|`
+        // for unions, and here the token after the type is the body's `{` or `=>`, which
+        // this must not swallow. So this skips the type's SHAPE and nothing beyond it - the
+        // annotation is discarded either way (the lambda's type comes from its body and
+        // from context), so shape is all that is needed.
         if (match(TOKEN_ARROW)) {
-            // Skip return type annotation for now (simplified)
-            if (check(TOKEN_IDENT)) {
+            if (check(TOKEN_LBRACKET)) {
+                // [T] or [[T]] - balanced, so a nested array type is consumed whole.
+                int depth = 0;
+                do {
+                    if (check(TOKEN_LBRACKET)) depth++;
+                    else if (check(TOKEN_RBRACKET)) depth--;
+                    advance();
+                } while (depth > 0 && !check(TOKEN_EOF));
+            } else if (check(TOKEN_IDENT)) {
                 advance();
+                // Generic arguments: Result<int, string>, Option<[int]>. Balanced on the
+                // angle brackets for the same reason.
+                if (check(TOKEN_LT)) {
+                    int depth = 0;
+                    do {
+                        if (check(TOKEN_LT)) depth++;
+                        else if (check(TOKEN_GT)) depth--;
+                        advance();
+                    } while (depth > 0 && !check(TOKEN_EOF));
+                }
             }
+            // The `?` of an optional type, after either shape above.
+            if (check(TOKEN_QUESTION)) advance();
         }
         
         // Support both => and { } syntax

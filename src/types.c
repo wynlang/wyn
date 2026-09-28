@@ -171,16 +171,16 @@ static const MethodSignature method_signatures[] = {
     {"bool", "xor", "bool", 1},
     
     // Char methods
-    {"char", "to_string", "string", 0},
-    {"char", "to_int", "int", 0},
-    {"char", "is_alpha", "bool", 0},
-    {"char", "is_numeric", "bool", 0},
-    {"char", "is_alphanumeric", "bool", 0},
-    {"char", "is_whitespace", "bool", 0},
-    {"char", "is_uppercase", "bool", 0},
-    {"char", "is_lowercase", "bool", 0},
-    {"char", "to_upper", "char", 0},
-    {"char", "to_lower", "char", 0},
+    // The `char` RECEIVER rows lived here and were unreachable by construction: checker.c
+    // maps the `char` annotation straight to builtin_int ("char is int in Wyn"), so a
+    // char-typed value resolves against the INT receiver table and never reaches a row
+    // keyed "char". Measured: `var c: char = 97; c.is_uppercase()` gives "Unknown method
+    // 'is_uppercase' for type 'int'". Ten rows, all dead.
+    //
+    // Removed rather than implemented: giving Wyn a real `char` type is a language change,
+    // and the alternative already works - a single character is a 1-length string, which
+    // is what `"abc"[0]` returns, and the string receiver has is_alpha/upper/lower.
+    // `c.to_string()` and `c.to_int()` keep working via the int rows.
     
     // Array/Vec methods (receiver type will be "array" for now)
     {"array", "len", "int", 0},
@@ -244,7 +244,10 @@ static const MethodSignature method_signatures[] = {
     {"map", "set_int", "void", 2},
     {"map", "stringify", "string", 0},
     {"map", "remove", "void", 1},
-    {"map", "contains", "bool", 1},
+    // (a second {"map","contains","bool",1} row lived here and was DEAD - lookup is
+    //  first-match-wins and the int row above shadows it. The int typing is load-bearing:
+    //  callers pass m.contains(k) to assert_eq_int. Converging it to bool is a breaking
+    //  change and is tracked separately, not smuggled in here.)
     {"map", "len", "int", 0},
     {"map", "is_empty", "bool", 0},
     {"map", "values", "array", 0},
@@ -252,7 +255,6 @@ static const MethodSignature method_signatures[] = {
     {"map", "get_or_default", "int", 2},  // Returns value or default
     {"map", "update", "void", 2},         // Update value with function (defer - needs lambdas)
     {"map", "merge", "void", 1},          // Merge with another map
-    {"map", "entries", "array", 0},       // Returns array of [key, value] pairs
     {"map", "for_each", "void", 1},       // for_each(fn) - iterate with function
     {"map", "filter_keys", "map", 1},     // filter_keys(fn) -> map
     {"map", "map_values", "map", 1},      // map_values(fn) -> map
@@ -271,7 +273,6 @@ static const MethodSignature method_signatures[] = {
     {"set", "is_superset", "bool", 1},
     {"set", "is_disjoint", "bool", 1},
     {"set", "symmetric_difference", "set", 1},  // Elements in either but not both
-    {"set", "to_array", "array", 0},            // Convert to array
     {"set", "from_array", "set", 1},            // Create from array
     {"set", "filter", "set", 1},                // filter(fn) -> set
     {"set", "map", "set", 1},                   // map(fn) -> set
@@ -495,10 +496,14 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "chars") == 0 && arg_count == 0) {
             out->c_function = "string_chars"; return true;
         }
+        // Both spellings, one lowering. `to_bytes` had an EMPTY body here and `bytes`
+        // carried the assignment TWICE (the second line unreachable) - a botched edit, and
+        // the reason `"abc".to_bytes()` was refused while `"abc".bytes()` worked, even
+        // though string_to_bytes has been in the runtime archive all along.
         if (strcmp(method_name, "to_bytes") == 0 && arg_count == 0) {
+            out->c_function = "string_to_bytes"; return true;
         }
         if (strcmp(method_name, "bytes") == 0 && arg_count == 0) {
-            out->c_function = "string_to_bytes"; return true;
             out->c_function = "string_to_bytes"; return true;
         }
         if (strcmp(method_name, "pad_left") == 0 && arg_count == 2) {

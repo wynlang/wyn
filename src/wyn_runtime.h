@@ -1257,10 +1257,19 @@ int array_every(WynArray arr, long long (*fn)(long long)) {
     for (int i = 0; i < arr.count; i++) if (!fn(arr.data[i].data.int_val)) return 0;
     return 1;
 }
-WynArray array_flat_map(WynArray arr, long long (*fn)(long long)) {
+// SEGFAULTED for every caller, on the shipped v1.21.0 as well as on dev. The parameter
+// was typed `long long (*fn)(long long)` and the return value was then DEREFERENCED as a
+// WynArray* - but codegen emits the mapper as a function returning WynArray BY VALUE
+// (`WynArray __lambda_1(long long)`). Struct-return and integer-return are different ABIs,
+// so the "pointer" was whatever happened to be in the return register. `--release` printed
+// a plausible answer, which was luck rather than correctness: both modes were undefined.
+//
+// The signature now says what codegen actually passes, and the sub-array is used directly
+// instead of being dereferenced.
+WynArray array_flat_map(WynArray arr, WynArray (*fn)(long long)) {
     WynArray result = array_new();
     for (int i = 0; i < arr.count; i++) {
-        WynArray sub = *(WynArray*)(intptr_t)fn(arr.data[i].data.int_val);
+        WynArray sub = fn(arr.data[i].data.int_val);
         for (int j = 0; j < sub.count; j++) array_push_int(&result, sub.data[j].data.int_val);
     }
     return result;
