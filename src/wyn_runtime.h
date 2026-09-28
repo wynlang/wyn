@@ -369,6 +369,29 @@ char* regex_replace(const char* str, const char* pattern, const char* replacemen
 bool Regex_match(const char* s, const char* p) { return regex_match(s, p); }
 char* Regex_replace(const char* s, const char* p, const char* r) { return regex_replace(s, p, r); }
 int Regex_find(const char* s, const char* p) { int ms, me; wre_find(s, p, &ms, &me); return ms; }
+// `Regex.find` lowers to the LOWERCASE regex_find - check the generated C, not the
+// name in the source - and that function existed only in the POSIX branch: it was
+// added to the "Regex extensions" section far below, inside `#ifndef _WIN32`, and
+// this block never got a copy. Regex_find with a capital R does exist here, which
+// is why the gap survived: the symbol looked present. Nothing emits the capital
+// form, so every Windows build of a program calling Regex.find failed while the
+// other 25 arms of tests/errors/run_regex_contract_test.sh passed.
+//
+// Verified by cross-compiling the generated C with x86_64-w64-mingw32-gcc 12:
+// before this line, "implicit declaration of function 'regex_find'; did you mean
+// 'Regex_find'?" and `nm -u` on the object reports `U regex_find` - a link failure
+// on GCC 12, a hard compile error on GCC 14+.
+//
+// `long long`, matching the POSIX definition and the declaration in
+// wyn_runtime_slim.h. An `int` definition behind a `long long` declaration is the
+// width mismatch that made `"abc".ends_with("z")` return true on x86-64 under
+// --release; `wyn run --release` on Windows would read this through slim.
+long long regex_find(const char* str, const char* pattern) {
+    int ms, me;
+    wre_find(str, pattern, &ms, &me);
+    return ms;  // wre_find leaves -1 for "no match" AND for a bad pattern, same
+                // as the POSIX branch returning -1 from a failed regcomp.
+}
 char* regex_find_all(const char* str, const char* pattern) {
     struct wre_nfa nfa;
     if (!wre_compile(&nfa, pattern)) return wyn_strdup("");
