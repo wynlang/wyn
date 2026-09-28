@@ -947,6 +947,7 @@ bool ResultString_is_ok(ResultString r);
 bool ResultString_is_err(ResultString r);
 const char* ResultString_unwrap(ResultString r);
 const char* ResultString_unwrap_err(ResultString r);
+const char* ResultString_unwrap_or(ResultString r, const char* def);
 OptionInt OptionInt_Some(int value);
 OptionInt OptionInt_None();
 bool OptionInt_is_some(OptionInt o);

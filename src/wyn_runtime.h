@@ -4978,6 +4978,14 @@ bool ResultString_is_ok(ResultString r) { return r.tag == 0; }
 bool ResultString_is_err(ResultString r) { return r.tag == 1; }
 const char* ResultString_unwrap(ResultString r) { if (r.tag == 1) { fprintf(stderr, "Error: unwrap() called on Err: %s\n", r.data.err_value); exit(1); } return r.data.ok_value; }
 const char* ResultString_unwrap_err(ResultString r) { if (r.tag == 0) { fprintf(stderr, "Error: unwrap_err() called on Ok\n"); exit(1); } return r.data.err_value; }
+const char* ResultString_unwrap_or(ResultString r, const char* def) { return r.tag == 0 ? r.data.ok_value : def; }
+// The one hole in the 8-family x 8-method matrix: every other family had
+// unwrap_or, and ResultString did not. The gap was invisible because the checker
+// typed `Result<string, E>.unwrap_or(d)` as int - the method_signatures row says
+// "int" for the whole Result family - so codegen emitted ResultInt_unwrap_or and
+// read the string pointer back as a long long. Fixing the type is what made the
+// missing function appear as a link error rather than a wrong value.
+
 
 typedef struct { int tag; int value; } OptionInt;
 OptionInt OptionInt_Some(int value) { OptionInt o; o.tag = 1; o.value = value; return o; }
