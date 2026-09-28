@@ -32,7 +32,20 @@ rx(){
   d="$TMP/r$PASS$FAIL"; mkdir -p "$d"
   { echo 'fn main() {'; printf '%b\n' "$2"; echo '}'; } > "$d/a.wyn"
   for mode in debug release; do
-    if [ "$mode" = release ]; then got=$("$WYNABS" run --release "$d/a.wyn" 2>&1); else got=$("$WYNABS" run "$d/a.wyn" 2>&1); fi
+    # BUILD then EXEC, rather than `wyn run`.
+    #
+    # `wyn run` compiles and then launches the program itself, and on Windows that launch
+    # failed from this harness with cmd.exe's "'.' is not recognized as an internal or
+    # external command" - so every arm reported that string instead of the program's
+    # output. Building and executing the artifact here works on both platforms and, more
+    # importantly, keeps the gate measuring the REGEX ENGINE rather than the launcher.
+    rm -f "$d/a" "$d/a.exe"
+    if [ "$mode" = release ]; then bout=$("$WYNABS" build --release "$d/a.wyn" 2>&1); else bout=$("$WYNABS" build "$d/a.wyn" 2>&1); fi
+    if [ -x "$d/a.exe" ]; then got=$("$d/a.exe" 2>&1)
+    elif [ -x "$d/a" ]; then got=$("$d/a" 2>&1)
+    else
+      bad "[$mode] $1 - build produced no executable [$(printf '%s' "$bout" | sed 's/\x1b\[[0-9;]*m//g' | tr '\n' '|' | cut -c1-90)]"; continue
+    fi
     got=$(printf '%s' "$got" | sed 's/\x1b\[[0-9;]*m//g' | grep -vE 'Compiled in|^Warning|unused variable')
     if [ "$got" = "$3" ]; then ok "[$mode] $1"
     else bad "[$mode] $1 - got [$(echo "$got" | tr '\n' '|' | cut -c1-80)] want [$(echo "$3" | tr '\n' '|')]"; fi
