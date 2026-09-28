@@ -1336,6 +1336,24 @@ void hashmap_clear(WynHashMap* map);
 // which is why they are called out rather than merely fixed.
 long long wyn_arr_any(WynArray arr, long long (*pred)(long long));
 long long wyn_arr_all(WynArray arr, long long (*pred)(long long));
+// `a.every(f)` and `3.times(f)`. Same omission as the two above, found the same way and
+// missed by the same gate: the registry-reachable sweep only generates arity-0 calls, and
+// both of these take a function. `3.times(f)` is the sharper miss - it has an explicit
+// allow arm in run_scalar_option_method_test.sh, but that arm runs in DEFAULT mode, so a
+// green gate sat over a release path that could not compile. Both are plain functions in
+// wyn_runtime.h (1256, 1268) and in the archive, so a declaration is all that is needed.
+int array_every(WynArray arr, long long (*fn)(long long));
+void int_times(long long n, long long (*fn)(void));
+// The same omission for four more types.c dispatch targets - `a.find(f)`, `a.flat_map(f)`,
+// `a.sort()` and a char's `.to_string()`. Unlike the two above I could NOT get a Wyn call
+// to reach these (the spellings I tried resolve elsewhere or do not parse), so they are
+// latent rather than demonstrated. Declared anyway: a declaration costs one line, whereas
+// allowlisting them would leave four lowerings that compile in debug and cannot compile in
+// release the moment someone finds the spelling that reaches them.
+long long array_find_fn(WynArray arr, long long (*fn)(long long));
+WynArray array_flat_map(WynArray arr, long long (*fn)(long long));
+WynArray array_sort_copy(WynArray arr);
+char* char_to_string(char x);
 // `x.to_int()` on an int. `static inline` in wyn_runtime.h:1870, so there is nothing in
 // the archive to link against - it has to be DUPLICATED here, like wyn_malloc above,
 // not declared.

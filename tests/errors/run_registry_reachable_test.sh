@@ -205,7 +205,8 @@ echo "-- arity-1 methods, hand-written because their argument types cannot be ge
 # <label> <program-body> <expected-output>
 a1(){
   f="$TMP/a1_${MODE}_$1.wyn"
-  { echo 'fn main() {'; printf '%b\n' "$2"; echo '}'; } > "$f"
+  { echo 'fn reg_nop() -> int { return 1 }'
+    echo 'fn main() {'; printf '%b\n' "$2"; echo '}'; } > "$f"
   if [ "$MODE" = "release" ]; then got=$("$WYNABS" run --release "$f" 2>&1)
   else got=$("$WYNABS" run "$f" 2>&1); fi
   got=$(echo "$got" | grep -vE 'Compiled in|^Warning|unused variable' | sed 's/\x1b\[[0-9;]*m//g')
@@ -219,6 +220,13 @@ a1 "array.all-not"  '  a = [1, 2, 3]\n  print(a.all(fn(x: int) -> bool { return 
 a1 "array.map"      '  a = [1, 2, 3]\n  b = a.map(fn(x: int) -> int { return x * 2 })\n  print(b.len())' '3'
 a1 "array.filter"   '  a = [1, 2, 3]\n  b = a.filter(fn(x: int) -> bool { return x > 1 })\n  print(b.len())' '2'
 a1 "array.contains" '  a = [1, 2, 3]\n  print(a.contains(2))' 'true'
+# `every` and `times` are the two that survived the .any/.all fix: both take a function,
+# so the generated sweep cannot reach them, and both compiled in debug while failing under
+# --release on a missing slim-header declaration. run_slim_header_parity_test.sh now
+# catches that class statically; these arms pin the behaviour.
+a1 "array.every"     '  a = [1, 2, 3]\n  print(a.every(fn(x: int) -> bool { return x > 0 }))' 'true'
+a1 "array.every-not" '  a = [1, 2, 3]\n  print(a.every(fn(x: int) -> bool { return x > 2 }))' 'false'
+a1 "int.times"       '  3.times(reg_nop)\n  print("ticked")' 'ticked'
 a1 "map.contains"   '  m = {"a": 1}\n  print(m.contains("a"))' 'true'
 a1 "set.contains"   '  s = {:"a"}\n  print(s.contains("a"))' 'true'
 
