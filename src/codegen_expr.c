@@ -3040,7 +3040,10 @@ static void codegen_expr_inner(Expr* expr) {
                 method.length == 4 && memcmp(method.start, "push", 4) == 0 &&
                 expr->method_call.arg_count == 1) {
                 char _on[256]; token_to_cstr(_on, sizeof(_on), expr->method_call.object->token);
-                if (is_spawn_array(_on)) {
+                // THE authority (codegen.c): every accessor must agree with the
+                // representation the declaration chose. These gates used to ask one
+                // table each - three different subsets across five sites.
+                if (wyn_array_is_packed(_on)) {
                     emit("int_array_push(&(");
                     codegen_expr(expr->method_call.object);
                     emit("), (long long)(");
@@ -3300,8 +3303,8 @@ static void codegen_expr_inner(Expr* expr) {
             // WynIntArray dispatch - typed [int] arrays
             if (expr->method_call.object->type == EXPR_IDENT) {
                 char _ian[128]; token_to_cstr(_ian, sizeof(_ian), expr->method_call.object->token);
-                extern int is_int_array_var(const char*);
-                if (is_int_array_var(_ian)) {
+                extern int wyn_array_is_packed(const char*);
+                if (wyn_array_is_packed(_ian)) {
                     Token m = expr->method_call.method;
                     if (m.length == 4 && memcmp(m.start, "push", 4) == 0) {
                         emit("int_array_push(&("); codegen_expr(expr->method_call.object); emit("), ");
@@ -3403,7 +3406,7 @@ static void codegen_expr_inner(Expr* expr) {
                     // Check if this is a spawn array (WynIntArray)
                     if (expr->method_call.object->type == EXPR_IDENT) {
                         char _on[256]; token_to_cstr(_on, sizeof(_on), expr->method_call.object->token);
-                        if (is_spawn_array(_on)) {
+                        if (wyn_array_is_packed(_on)) {
                             emit("int_array_push(&(");
                             codegen_expr(expr->method_call.object);
                             emit("), (long long)(");
@@ -4766,7 +4769,7 @@ static void codegen_expr_inner(Expr* expr) {
                         // Check if this is a spawn array (WynIntArray)
                         if (expr->method_call.object->type == EXPR_IDENT) {
                             char _on[256]; token_to_cstr(_on, sizeof(_on), expr->method_call.object->token);
-                            if (is_spawn_array(_on)) {
+                            if (wyn_array_is_packed(_on)) {
                                 emit("int_array_push(&("); codegen_expr(expr->method_call.object); emit("), (long long)("); codegen_expr(expr->method_call.args[0]); emit("))"); break;
                             }
                         }
@@ -5098,8 +5101,8 @@ static void codegen_expr_inner(Expr* expr) {
                 // Check if this is a spawn array (WynIntArray)
                 if (expr->index.array->type == EXPR_IDENT) {
                     char _on[256]; token_to_cstr(_on, sizeof(_on), expr->index.array->token);
-                    extern int is_int_array_var(const char*);
-                    if (is_spawn_array(_on) || is_int_array_var(_on)) {
+                    extern int wyn_array_is_packed(const char*);
+                    if (wyn_array_is_packed(_on)) {
                         emit("int_array_get(");
                         codegen_expr(expr->index.array);
                         emit(", ");
