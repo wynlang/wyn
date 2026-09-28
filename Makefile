@@ -575,6 +575,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_await_all_type_test.sh
 	@echo "=== Running parallel{} synthesized-Expr initialisation gate ==="
 	@WYN=./wyn bash tests/errors/run_parallel_synth_expr_init_test.sh
+	@echo "=== Running parallel{} branch-overlap gate ==="
+	@WYN=./wyn bash tests/errors/run_parallel_overlap_test.sh
 	@echo "=== Running crucible-P0 (fatal-by-default) test ==="
 	@WYN=./wyn bash tests/errors/run_crucible_p0_test.sh
 	@echo "=== Running checked string->number parse gate (V-18) ==="
