@@ -84,6 +84,22 @@ is_timeout_rc() {
     return 1
 }
 
+# A hard crash, as opposed to a nonzero exit from a failed assertion. Worth
+# separating because the evidence you need differs: a failed assertion names
+# itself in the output, a crash does not - you need to know where the program
+# got to.
+is_fault_rc() {
+    case "$1" in 134|136|138|139) return 0 ;; esac
+    return 1
+}
+fault_name() {
+    case "$1" in
+        134) echo "SIGABRT" ;; 136) echo "SIGFPE" ;;
+        138) echo "SIGBUS"  ;; 139) echo "SIGSEGV" ;;
+        *)   echo "signal $(($1 - 128))" ;;
+    esac
+}
+
 # Classify one test file. Writes "<STATUS>\t<detail>" to $TMPDIR_/<name>.result.
 run_one() {
     local file="$1"
@@ -140,14 +156,41 @@ run_one() {
 
     if is_timeout_rc "$run_rc"; then
         printf 'HANG\trun killed by watchdog after %ss (rc=%s)\n' "$((t1 - t0))" "$run_rc" > "$result_file"
+    elif is_fault_rc "$run_rc"; then
+        # A crash needs the program's LAST state, not a keyword search. The old
+        # branch grepped -iE 'FAILED|...' and kept `head -2` for every nonzero
+        # exit, which on a test that passes its assertions and then dies matched
+        # the first two `Failed:  0` summary tallies and reported THOSE as the
+        # diagnosis - so the one intermittent SIGSEGV this suite has ever
+        # produced arrived as "Failed: 0 Failed: 0", pointing at nothing and
+        # actively suggesting a teardown crash that the output did not support.
+        # Report the signal by name, the last section banner (which names the
+        # block the program was in) and the tail of the output, and keep the
+        # whole log next to the test for a CI artifact upload.
+        local crash_log="$SUITE_DIR/$name.crash.log"
+        printf '%s\n' "$run_out" > "$crash_log"
+        local last_section last_lines
+        last_section=$(printf '%s\n' "$run_out" | grep -E '=== Test Suite:' | tail -1)
+        last_lines=$(printf '%s\n' "$run_out" | grep -v '^[[:space:]]*$' | tail -3 | tr '\n' '|')
+        printf 'FAIL\trun died on %s (rc=%s) after %ss | in section: %s | last output: %s | full log: %s\n' \
+            "$(fault_name "$run_rc")" "$run_rc" "$((t1 - t0))" \
+            "${last_section:-<none printed>}" "${last_lines:-<no output>}" "$crash_log" \
+            > "$result_file"
     elif [ "$run_rc" -ne 0 ]; then
+        # Every failed assertion prints "  ✗ <msg> (expected: X, got: Y)"
+        # (src/test_runtime.c), so ✗ finds the real diagnosis. 'FAILED' used to be
+        # in this pattern and only ever matched the PASSING tally line
+        # "Failed:  0", crowding the actual failures out of `head -2`.
         printf 'FAIL\trun rc=%s after %ss: %s\n' "$run_rc" "$((t1 - t0))" \
-            "$(echo "$run_out" | grep -iE 'FAILED|✗|Segmentation|Abort|panic|error' | head -2 | tr '\n' ' ')" \
+            "$(echo "$run_out" | grep -E '✗|panic|Segmentation' | head -2 | tr '\n' ' ')" \
             > "$result_file"
     else
         printf 'PASS\t-\n' > "$result_file"
     fi
 }
+
+# Crash logs from a previous run would be mistaken for this run's evidence.
+rm -f "$SUITE_DIR"/*.crash.log 2>/dev/null
 
 FILES=()
 for f in "$SUITE_DIR"/*.wyn; do
@@ -276,6 +319,17 @@ if [ -n "$NEW_BREAK" ]; then
     echo "  -> This is a regression. Fix it, or (only if it is genuinely"
     echo "     pre-existing) add it to tests/stdlib/known_failures.txt."
     rc=1
+    # An intermittent crash may not happen again, so dump the whole captured
+    # output here and now. A one-line summary of a run you cannot repeat is not
+    # enough to work with - that is the lesson of the one SIGSEGV this suite has
+    # produced, which was reported as two tally lines and nothing else.
+    for cl in "$SUITE_DIR"/*.crash.log; do
+        [ -f "$cl" ] || continue
+        echo ""
+        echo "--- full output of the crashed run: $(basename "$cl") ---"
+        cat "$cl"
+        echo "--- end $(basename "$cl") ---"
+    done
 fi
 if [ -n "$FIXED" ]; then
     echo ""
