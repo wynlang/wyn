@@ -22,6 +22,8 @@ void wyn_rc_retain(const void* ptr);
 void wyn_rc_release(const void* ptr);
 void wyn_rc_set_length(const void* ptr, unsigned int len);
 unsigned int wyn_rc_get_length(const void* ptr);
+#define WYN_RC_NOT_CACHEABLE 0xFFFFFFFFu
+unsigned int wyn_rc_length_probe(const void* ptr);
 
 // Abort-on-OOM allocators, verbatim from wyn_runtime.h:42-44. `static inline` in
 // both headers, so there is nothing in the archive to link - they must be

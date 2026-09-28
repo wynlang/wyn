@@ -34,6 +34,25 @@
 #  - The UTF-8 arm cannot fail from the defect (a strlen IS the right answer, just
 #    slow). It is here to catch the FIX caching a wrong number, which is the only
 #    way this change could produce a silent wrong answer.
+#  - The LITERAL arm is correctness-only, deliberately. A literal lives in rodata
+#    and can never hold a cached length, so it always takes the strlen path and
+#    cannot regress in the O(n) direction this file's ratio arms watch for. What it
+#    CAN regress is constant factor, and that happened: filling the cache on a miss
+#    (the fix described above) originally called wyn_rc_get_length then
+#    wyn_rc_set_length, validating the RC header twice, and a literal misses every
+#    call - so literals paid for a cache they can never use. Measured, macOS arm64,
+#    1M calls on a 44-char literal, shipped -O2 artifacts:
+#
+#        v1.21.0 (no memoization)          1.54ms
+#        v1.22.0-rc1 (memoized, 2 checks)  2.69ms   <- 1.75x slower
+#        one-validation probe              1.55ms   <- restored
+#
+#    That is NOT gated by a ratio arm here on purpose: the signal is 1.75x, so the
+#    bound would have to sit near 1.4x to catch it, which is far too tight to run on
+#    a shared runner without flaking. A gate that is permanently amber teaches people
+#    to ignore this file. The property is covered by the committed benchmark harness
+#    instead; this arm only asserts the literal receiver still returns the right
+#    number through the new probe path, including the WYN_RC_NOT_CACHEABLE sentinel.
 #
 # NOTE FOR ANYONE RE-RUNNING THIS: string_length lives in the RUNTIME, precompiled
 # into runtime/libwyn_rt.a. After editing wyn_runtime.h you must
@@ -115,6 +134,16 @@ fn main() {
     spun = unit.repeat(k)           // a constructor that DID cache
     print("UTF8 \${built.len()} \${spun.len()} \${unit.len() * k} \${built.len()}")
     print("UTF8TAIL \${built.substring(unit.len() * k - 3, unit.len() * k)}")
+
+    // --- literal receiver: never cacheable, must still be correct -----------
+    // Goes through the same probe as an RC string but hits the
+    // WYN_RC_NOT_CACHEABLE sentinel, so a sentinel confused with a real length
+    // would show up here as a wrong number or an empty-string verdict.
+    lit = "héllo wörld ✓"
+    empty = ""
+    print("LIT \${lit.len()} \${lit.len()} \${empty.len()} \${"abc".len()}")
+    // Same bytes, one cacheable and one not: they must agree.
+    print("LITVSRC \${lit.len()} \${lit.repeat(1).len()}")
 }
 WYN
 
@@ -198,5 +227,26 @@ WYN
     else bad "wyn build agrees with wyn run (want '35000 35000', got '$out2')"; fi
 }
 build_test
+
+# --- a literal receiver returns the right length through the probe ------------
+lit=$(awk '$1=="LIT" {print $2, $3, $4, $5}' "$out")
+set -- $lit
+if [ $# -ne 4 ]; then
+    bad "literal receiver .len() (no reading)"
+elif [ "$1" = "17" ] && [ "$2" = "17" ] && [ "$3" = "0" ] && [ "$4" = "3" ]; then
+    ok "literal receiver .len() is correct and stable ($1 bytes, empty=0, abc=3)"
+else
+    bad "literal receiver .len(): got '$1' '$2' empty='$3' abc='$4' (want 17 17 0 3)"
+fi
+
+# A cacheable and a non-cacheable string with identical bytes must agree - this is
+# what a sentinel leaking into the returned value would break.
+lvr=$(awk '$1=="LITVSRC" {print $2, $3}' "$out")
+set -- $lvr
+if [ $# -eq 2 ] && [ "$1" = "$2" ]; then
+    ok "literal and RC-managed copies of the same bytes agree ($1)"
+else
+    bad "literal vs RC-managed length disagree: literal='${1:-}' rc='${2:-}'"
+fi
 
 echo ""; echo "len-cache: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]
