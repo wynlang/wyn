@@ -62,7 +62,7 @@ cat > "$TMP/par.wyn" <<WYN
 // External sleep, so neither CSE nor dead-code elimination can touch a call to it.
 fn nap(ms: int) -> int { Time.sleep(ms); return ms }
 
-fn main() -> int {
+fn battery(rep: int) -> int {
     // Baseline: one branch. Printed so it cannot be dead-store eliminated.
     var t0 = DateTime.micros()
     var base = nap($NAP)
@@ -106,6 +106,26 @@ fn main() -> int {
     }
     var t9 = DateTime.micros()
     print("SPAWN \${(t9 - t8) / 1000} 0")
+    return rep
+}
+
+fn main() -> int {
+    // WARM-UP, discarded. The coroutine scheduler's worker pool spins up lazily, so
+    // the FIRST parallel block in a process pays for that startup. All four blocks
+    // below lower to byte-identical C - the same wyn_spawn_async_traced pair and the
+    // same future_get_consume pair - so without this the arm that fails is simply
+    // whichever one happens to run first. That is exactly how this gate failed on a
+    // macOS CI runner: the first block measured 298ms against a 170ms baseline while
+    // the other three overlapped, and nothing about the lowering differed.
+    parallel {
+        spawn nap(10)
+        spawn nap(10)
+    }
+    // Two reps; the shell takes the MIN per key. Contention only ever adds time, so
+    // the minimum is the closest reading to the real cost on a shared runner.
+    var r1 = battery(1)
+    var r2 = battery(2)
+    if r1 + r2 != 3 { print("battery did not run twice") }
     return 0
 }
 WYN
@@ -126,8 +146,9 @@ fi
 out="$TMP/par.out"
 perl -e 'alarm(300); exec @ARGV' -- "$TMP/par" > "$out" 2>&1 || { bad "fixture runs"; echo "parallel-overlap: $PASS pass, $FAIL fail"; exit 1; }
 
-read_ms(){ awk -v k="$1" '$1==k {print $2}' "$out"; }
-read_val(){ awk -v k="$1" '$1==k {print $3}' "$out"; }
+# MIN across reps - each key is printed once per rep.
+read_ms(){ awk -v k="$1" '$1==k { if (m=="" || $2+0 < m+0) m=$2 } END{print m}' "$out"; }
+read_val(){ awk -v k="$1" '$1==k {print $3; exit}' "$out"; }
 
 BASE=$(read_ms BASE)
 if [ -z "$BASE" ]; then
