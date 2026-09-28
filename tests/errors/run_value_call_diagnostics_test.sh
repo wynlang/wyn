@@ -84,6 +84,12 @@ modcase(){
 }
 modcase
 allow "namespace :: call"  'fn main() {\n  print(Math::abs(0 - 3))\n}' '3'
+# A STATIC FUNCTION ON A TYPE. `fn User.default()` called as `User::default()` is
+# documented (book ch.11) and worked before this rule - which rejected it, because a struct
+# name resolves to a symbol here exactly as a variable does. Caught only by running the
+# BOOK's snippets against the packaged artifact: the 12,106-file corpus sweep cannot see
+# them, because they live in markdown rather than in .wyn files. That is the arm.
+allow "static fn on a struct type" 'struct User {\n  name: string,\n  age: int\n}\nfn User.default() -> User {\n  return User { name: "Guest", age: 0 }\n}\nfn main() {\n  u = User::default()\n  print(u.name)\n}' 'Guest'
 allow "enum :: variant"    'enum Color { Red, Green }\nfn main() {\n  c = Color::Red\n  match c {\n    Color::Red => print("red"),\n    Color::Green => print("green")\n  }\n}' 'red'
 # The documented limit: an int-typed qualifier cannot be told apart from an imported
 # module name, so this shape is NOT rejected. Recorded so the boundary is deliberate.

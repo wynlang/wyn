@@ -3830,10 +3830,21 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         // module here. `x::foo()` on an int variable therefore still
                         // reaches the C compiler, which is the pre-existing behaviour and
                         // is noted in the gate.
+                        extern int is_enum_type(const char*);
                         if (_rsym && _rsym->type &&
                             !is_builtin_module(qual_module) &&
                             !is_module_loaded(qual_module) &&
-                            !checking_same_module(qual_module)) {
+                            !checking_same_module(qual_module) &&
+                            // ...and the qualifier is not a TYPE NAME. `User::default()`
+                            // calling a `fn User.default()` is a static function on a type
+                            // and is documented (book ch.11); a struct or enum name resolves
+                            // to a symbol here exactly as a variable does, so without this
+                            // the rule rejected it. Found by running the book's snippets
+                            // against the packaged artifact - the corpus sweep could not see
+                            // it, because the snippets live in markdown rather than .wyn.
+                            // The same carve-out as the namespace rule's, for the same reason.
+                            !find_struct_definition(_rtok) &&
+                            !is_enum_type(qual_module)) {
                             TypeKind k = _rsym->type->kind;
                             if (k == TYPE_SET || k == TYPE_MAP || k == TYPE_ARRAY ||
                                 k == TYPE_STRING || k == TYPE_STRUCT || k == TYPE_JSON ||
