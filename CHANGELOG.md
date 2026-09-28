@@ -102,11 +102,13 @@ Read this list before upgrading a test suite - several change program **output**
 ### Also fixed
 
 - **`wyn run --release` could not compile 205 stdlib calls**, then blamed the user for
-  the spelling. Eight further method spellings also failed under `--release` alone:
+  the spelling. Ten further method spellings also failed under `--release` alone:
   `map.clear()`, `"p".exists()`, `"p".is_dir()`, `"p".is_file()`, `n.to_int()`,
-  `c.to_int()` on a `char`, `a.any(f)` and `a.all(f)`. The three path predicates had
-  only ever worked in debug through an *implicit declaration* - C assumes `int`, they
-  return `int`, and it happened to be right.
+  `c.to_int()` on a `char`, `a.any(f)`, `a.all(f)`, **`a.every(f)`** and
+  **`3.times(f)`**. The three path predicates had only ever worked in debug through an
+  *implicit declaration* - C assumes `int`, they return `int`, and it happened to be
+  right. Four more lowerings (`a.find(f)`, `a.flat_map(f)`, `a.sort()` and a `char`'s
+  `.to_string()`) were one spelling away from the same failure and are now declared too.
 - **`map.is_empty()` could not compile at all** - the lowering named a function nothing
   defined, in every mode.
 - **A computed string returned inside a struct or array was freed too early.**
@@ -137,6 +139,13 @@ Not user-facing, but they are why the list above is as long as it is:
 - **Every method the registry advertises must be callable** - in debug *and*
   `--release`. This found `map.is_empty`, the six release-only failures, and eleven
   registry rows that advertise methods the compiler then refuses.
+- **Both runtime headers must declare every lowering a Wyn call can reach.** The gate
+  above compiles a real call per method, which is the strongest evidence available - but
+  it can only generate calls for methods taking no arguments, because the registry
+  records an argument *count* and not argument *types*. `a.any(f)`, `a.all(f)`,
+  `a.every(f)` and `3.times(f)` all sat in that blind spot, and the last two survived
+  the change that fixed the first two. This one is a text check instead: it reads the
+  headers and the dispatch tables and needs no call at all, so it covers every arity.
 - **No test may bind a fixed port**, so the suite can run twice at once.
 - The internal test suite is **311 tests, 0 failures**; the sample-app corpus is
   **~998 tests across 39 projects, 0 failures**, verified against a v1.21.0 baseline

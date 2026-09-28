@@ -452,6 +452,7 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_scalar_option_method_test.sh
 	@WYN=./wyn bash tests/errors/run_set_element_type_test.sh
 	@WYN=./wyn bash tests/errors/run_registry_reachable_test.sh
+	@bash tests/errors/run_slim_header_parity_test.sh
 	@WYN=./wyn bash tests/errors/run_json_handle_test.sh
 	@WYN=./wyn bash tests/errors/run_option_combinator_test.sh
 	@echo "=== Running bug-batch-2 test ==="
