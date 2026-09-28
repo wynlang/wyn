@@ -66,7 +66,11 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
                     char _pfn[256];
                     token_to_cstr(_pfn, sizeof(_pfn), _bs->var.init->call.callee->token);
                     if (get_function_return_type(_pfn)) {
-                        Expr _sp;
+                        // Zeroed for the same reason as codegen_stmt.c's synthesized
+                        // spawn Exprs: only three fields are assigned below, and any
+                        // consumer that reads another one (e.g. expr_type) must see 0
+                        // rather than stack residue.
+                        Expr _sp = {0};
                         _sp.type = EXPR_SPAWN;
                         _sp.spawn.call = _bs->var.init;
                         _sp._codegen_temp_id = -1;
