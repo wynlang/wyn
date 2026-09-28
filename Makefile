@@ -573,6 +573,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_checker_soundness_test.sh
 	@echo "=== Running await_all element-typing gate ==="
 	@WYN=./wyn bash tests/errors/run_await_all_type_test.sh
+	@echo "=== Running Option/Result family completeness gate ==="
+	@WYN=./wyn bash tests/errors/run_option_result_family_test.sh
 	@echo "=== Running parallel{} synthesized-Expr initialisation gate ==="
 	@WYN=./wyn bash tests/errors/run_parallel_synth_expr_init_test.sh
 	@echo "=== Running parallel{} branch-overlap gate ==="

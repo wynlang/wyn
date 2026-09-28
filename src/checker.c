@@ -4961,6 +4961,23 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         expr->expr_type = wrapped;
                         return wrapped;
                     }
+                    // `unwrap_or` RETURNS the wrapped value, so its type is the wrapped
+                    // type - and that is known right here, for every family and every
+                    // spelling. This used to be returned only on the error path above,
+                    // so a well-typed call fell through to the method_signatures lookup,
+                    // whose row is `{"result", "unwrap_or", "int", 1}` - a single
+                    // concrete type standing in for "depends on Result<T, E>". The result
+                    // was that `Result<string, E>.unwrap_or("fb")` typed as int, and
+                    // calling a string method on it failed with "Unknown method 'upper'
+                    // for type 'int'".
+                    //
+                    // Option escaped that only by accident: its receiver is usually the
+                    // monomorphic TYPE_STRUCT family (OptionString), for which
+                    // get_receiver_type_string() answers NULL, so the table was never
+                    // consulted for it at all. Returning the wrapped type here makes both
+                    // families agree on purpose rather than by which route they took.
+                    expr->expr_type = wrapped;
+                    return wrapped;
                 }
             }
 
