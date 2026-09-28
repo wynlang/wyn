@@ -317,6 +317,8 @@ jobs:
   no-private-paths:
     name: No private doc paths
     runs-on: ubuntu-latest
+    # A checkout and one git grep: ~6 seconds.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Scan tracked files for private document references
@@ -344,6 +346,9 @@ jobs:
   sanitize-runtime:
     name: ASan runtime
     runs-on: ubuntu-latest
+    # Normally ~1.6 min. See the note on the TSan job below for why every job
+    # here carries a budget rather than inheriting GitHub's 6-hour default.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
@@ -359,6 +364,12 @@ jobs:
   sanitize-runtime-tsan:
     name: TSan runtime
     runs-on: ubuntu-latest
+    # This job normally finishes in ~1.3 min, but it once hung at teardown -
+    # after the final test had already printed - and with no budget of its own
+    # it inherited GitHub's 6-hour default and sat for 1h47m holding a runner.
+    # A concurrency test that deadlocks stops producing output, so the only
+    # thing that can end it is a timeout. 15 min is ~10x the observed median.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
@@ -371,6 +382,8 @@ jobs:
   cross-compile-ios:
     name: Cross-compile (iOS)
     runs-on: macos-15
+    # Normally ~0.7 min.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Build
@@ -391,6 +404,8 @@ jobs:
   cross-compile-android:
     name: Cross-compile (Android)
     runs-on: ubuntu-latest
+    # Normally ~0.9 min.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
@@ -409,6 +424,8 @@ jobs:
   build-runtime-libs:
     name: Build runtime (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
+    # Slowest target is ~1.8 min. Applies per matrix leg, not to the set.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
