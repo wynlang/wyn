@@ -2865,7 +2865,15 @@ void codegen_stmt(Stmt* stmt) {
             // Storage for synthesized implicit-spawn Exprs. These are written back
             // into s->var.init, which the joining pass below re-reads, so they must
             // outlive the loop iteration that creates them.
-            Expr implicit_spawns[64];
+            //
+            // ZERO-INITIALISED, and that is load-bearing: a synthesized Expr only ever
+            // has `type`, `spawn.call` and `_codegen_temp_id` assigned, so every other
+            // field - notably `expr_type`, which codegen_expr() now dereferences on
+            // EVERY expression via cg_expr_is_bool_typed() - would otherwise be
+            // whatever the reused stack frame happened to hold. That read is a garbage
+            // pointer dereference at -O2 and usually benign at -g, i.e. a crash that
+            // only appears in the build we ship.
+            Expr implicit_spawns[64] = {0};
             int implicit_spawn_count = 0;
 
             for (int i = 0; i < stmt->block.count; i++) {
@@ -2904,7 +2912,8 @@ void codegen_stmt(Stmt* stmt) {
                 // lowering, capturing the future with no value var (empty name →
                 // joined for the barrier only).
                 if (s->type == STMT_SPAWN && s->spawn.call && joined_count < 64) {
-                    Expr spawn_expr; spawn_expr.type = EXPR_SPAWN;
+                    Expr spawn_expr = {0};   // see implicit_spawns above: MUST be zeroed
+                    spawn_expr.type = EXPR_SPAWN;
                     spawn_expr.spawn.call = s->spawn.call;
                     spawn_expr._codegen_temp_id = -1;
                     snprintf(joined_names[joined_count], 128, "%s", "");   // no binding
