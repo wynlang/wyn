@@ -10,7 +10,7 @@
 // EXPECT: 3
 // EXPECT: 0
 // EXPECT: 8
-// EXPECT: 1
+// EXPECT: true
 // EXPECT: 42
 // EXPECT: -1
 struct User { name: string, age: int }

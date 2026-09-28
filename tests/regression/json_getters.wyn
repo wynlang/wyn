@@ -1,9 +1,14 @@
 // Regression: Json.get_string used to pass check then fail to LINK ("call to
 // undeclared function 'Json_get_string'"). Also Json.keys now returns [string]
 // so it can be iterated / len'd. get_int/get_bool/get_float still work.
+// Json.get_bool now prints `true`, not `1` (V-30). Its two spellings disagreed:
+// `d.get_bool(k)` was registered bool and `Json.get_bool(d, k)` int, so once a
+// bool-typed call started rendering as true/false from one authority the namespace
+// spelling would have been the only one still saying `1`. Json.has stays int on
+// purpose - see the note beside it in types.c.
 // EXPECT: alice
 // EXPECT: 30
-// EXPECT: 1
+// EXPECT: true
 // EXPECT: 9.5
 // EXPECT: 4
 // EXPECT: name

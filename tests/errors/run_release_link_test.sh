@@ -181,12 +181,21 @@ WYN
 
 # HashMap / HashSet: real functions in the archive, but the slim header declared
 # none of them, so any program touching a map failed to compile under --release.
-# (HashSet.contains returns the runtime's int 1/0, not a bool - that is existing
-# behaviour on BOTH paths, so it is pinned here as-is rather than "corrected".)
+#
+# `set=true`, not `set=1`, as of V-30. This comment used to read "HashSet.contains
+# returns the runtime's int 1/0, not a bool - that is existing behaviour on BOTH
+# paths, so it is pinned here as-is rather than corrected", and pinning it as-is was
+# the right call at the time: the rendering came from hashset_contains being declared
+# `int`, one runtime helper among sixteen. It is a bool in Wyn
+# ({"set","contains","bool"} in types.c) and a bool-typed call is now rendered from
+# one authority (cg_expr_is_bool_typed), so it prints like a bool here, in the dotted
+# and `::` namespace spellings, and through a variable. `m.has` already printed
+# `true` because hashmap_has happens to be declared `bool`; the two agree now for a
+# reason rather than by accident.
 check "HashMap and HashSet work under --release" "one=1
 has=true
 len=2
-set=1
+set=true
 setlen=2" <<'WYN'
 fn main() {
     var m = HashMap.new()

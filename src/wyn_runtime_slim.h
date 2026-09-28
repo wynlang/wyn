@@ -37,21 +37,26 @@ static inline void* wyn_realloc(void* p, size_t n) { void* q = realloc(p, n); if
 // instead of failing loudly, so both headers take the values from the single
 // canonical definition here. wyn_runtime.h:170 includes this same file.
 #include "arc_runtime.h"
-// The HashMap / HashSet / Json entry points are plain functions living in
-// hashmap.c / hashset.c / json.c, i.e. real symbols in libwyn_rt.a. Include
+// The HashMap / HashSet entry points are plain functions living in
+// hashmap.c / hashset.c, i.e. real symbols in libwyn_rt.a. Include
 // their canonical headers rather than restating the prototypes, for the same
 // drift reason as arc_runtime.h above: a hand-copied signature that disagreed
 // (int vs long long, missing const) would compile and then corrupt arguments.
 // Without these, --release rejected every program that touched a HashMap,
 // HashSet or Json with `call to undeclared function 'hashmap_new'`.
+//
+// Json has no such header any more: it is one node arena addressed by a
+// `long long` handle, declared in the Json block below. src/json.c held a SECOND
+// representation (a WynJson* struct of key/value pairs); this file's Json
+// declarations were already the handle spelling while that file defined the
+// pointer one, i.e. the exact signature drift this comment warns about, surviving
+// only because a pointer happens to fit in a long long.
 #include "hashmap.h"
 #include "hashset.h"
-#include "json.h"
 
 // Forward declarations for opaque types
 typedef struct WynHashMap WynHashMap;
 typedef struct WynHashSet WynHashSet;
-typedef struct WynJson WynJson;
 typedef struct WynOptional WynOptional;
 typedef struct WynArena WynArena;
 typedef struct HttpResponse HttpResponse;
@@ -84,10 +89,22 @@ typedef struct { int start; int end; int current; } WynRange;
 typedef struct { const char* message; const char* type; } WynError;
 typedef struct { WynArray arr; } Queue;
 typedef struct { WynArray arr; } Stack;
-typedef struct { int tag; union { int ok_value; const char* err_value; } data; } ResultInt;
+// Ok payload is long long, matching wyn_runtime.h: Wyn's `int` is 64-bit, and an
+// `int` slot here truncated every Ok above 2^31. Layouts MUST stay in sync with
+// the full header or --release reads the wrong bytes.
+typedef struct { int tag; union { long long ok_value; const char* err_value; } data; } ResultInt;
 typedef struct { int tag; union { const char* ok_value; const char* err_value; } data; } ResultString;
 typedef struct { int tag; int value; } OptionInt;
 typedef struct { int tag; const char* value; } OptionString;
+// Float and bool payload families. These were absent, so a program using
+// `float?` / `bool?` / `Result<float,…>` / `Result<bool,…>` did not compile
+// under --release at all while building fine on the default path - the same
+// class of fat-header/slim-header drift that hid the println atomicity fix in
+// v1.21. Layouts mirror wyn_runtime.h; keep in sync.
+typedef struct { int tag; double value; } OptionFloat;
+typedef struct { int tag; bool value; } OptionBool;
+typedef struct { int tag; union { double ok_value; const char* err_value; } data; } ResultFloat;
+typedef struct { int tag; union { bool ok_value; const char* err_value; } data; } ResultBool;
 typedef struct {
     long long value;
     pthread_mutex_t lock;
@@ -161,26 +178,39 @@ void Http_close_client(int fd);
 void Http_close_server(int fd);
 int Http_status(int req);
 
-// Json
+// Json - one node arena, one `long long` handle. Every signature here must match
+// wyn_runtime.h exactly; `Json_has` used to be declared `int` here against a
+// `long long` definition, and `Json_new` `long long` against a `WynJson*` one.
 long long Json_new(void);
 void Json_set(long long j, const char* key, const char* val);
 void Json_set_string(long long j, const char* key, const char* val);
 void Json_set_int(long long j, const char* key, long long val);
-// `int v`, matching wyn_runtime.h:3555 - the handle keeps this file's long long
-// spelling (a WynJson* is pointer-sized) but the value width must not drift.
-void Json_set_bool(long long j, const char* key, int val);
+void Json_set_float(long long j, const char* key, double val);
+void Json_set_bool(long long j, const char* key, long long val);
+void Json_set_null(long long j, const char* key);
 char* Json_get_string(long long j, const char* key);
 long long Json_get_int(long long j, const char* key);
 char* Json_stringify(long long j);
 long long Json_parse(const char* s);
-int Json_has(long long j, const char* key);
+long long Json_is_valid(long long j);
+long long Json_has(long long j, const char* key);
+void Json_free(long long j);
 char* Json_to_pretty_string(long long j);
+// The lowercase free-function spelling, aliases of the above.
+long long json_parse(const char* text);
+long long json_new(void);
+char* json_get_string(long long j, const char* key);
+long long json_get_int(long long j, const char* key);
+void json_set_string(long long j, const char* key, const char* val);
+void json_set_int(long long j, const char* key, long long val);
+char* json_stringify(long long j);
+void json_free(long long j);
 
 // File
 char* File_read(const char* path);
 WynArray File_read_lines(const char* path);
 int File_write(const char* path, const char* content);
-int File_exists(const char* path);
+bool File_exists(const char* path);
 int File_delete(const char* path);
 char* File_cwd(void);
 
@@ -216,9 +246,9 @@ int Env_set(const char* key, const char* val);
 WynClosure wyn_closure_new(void* fn, void* env);
 int wyn_closure_call_int(WynClosure c, int arg);
 const char* wyn_string_concat_safe(const char* left, const char* right);
-int regex_match(const char* str, const char* pattern);
+bool regex_match(const char* str, const char* pattern);
 char* regex_replace(const char* str, const char* pattern, const char* replacement);
-int Regex_match(const char* s, const char* p);
+bool Regex_match(const char* s, const char* p);
 char* Regex_replace(const char* s, const char* p, const char* r);
 int Regex_find(const char* s, const char* p);
 char* regex_find_all(const char* str, const char* pattern);
@@ -446,9 +476,33 @@ int string_is_numeric(const char* str);
 char* string_capitalize(const char* str);
 char* string_reverse(const char* str);
 int string_len(const char* str);
-int string_is_empty(const char* str);
-int string_starts_with(const char* str, const char* prefix);
-int string_ends_with(const char* str, const char* suffix);
+// `bool`, matching the DEFINITIONS in wyn_runtime.h. These three, plus File_exists,
+// File_is_dir, File_is_file, Regex_match and regex_match, were declared `int` here
+// while the archive defines them `bool` - a return-type mismatch across translation
+// units, which is undefined behaviour, not a harmless widening. On arm64 the return
+// register happened to hold a clean 0/1 and nothing was visible; on x86-64 a `bool`
+// return sets only the low byte of eax, so reading it as a full `int` picked up the
+// upper garbage and `"abc".ends_with("z")` came back TRUE under --release. Found by
+// run_bool_in_print_test.sh on the macos-15-intel runner, on the second push - the
+// arm64 dev box and every other CI job were green. Same "two declarations of one
+// function disagree about bool" shape this branch is fixing elsewhere; the remedy is
+// the same, make them agree.
+bool string_is_empty(const char* str);
+bool string_starts_with(const char* str, const char* prefix);
+bool string_ends_with(const char* str, const char* suffix);
+
+// The path predicates behind `"p".exists()`, `"p".is_dir()`, `"p".is_file()`. These
+// lower to the BARE names below (src/wyn_interface.c defines them, and they are in the
+// archive), which is a different symbol from the `File.exists(p)` namespace spelling's
+// File_exists above - and NEITHER runtime header declared them. So `--release` failed
+// outright, while a debug build only worked through an IMPLICIT declaration: C assumes
+// `int`, these do return `int`, and it happened to be right. That is luck, not a
+// contract, and it is the same "two views of one function's type" shape that made
+// `"abc".ends_with("z")` return true on x86-64. Declared here AND in wyn_runtime.h so
+// neither build is guessing.
+int _exists(const char* path);
+int _is_dir(const char* path);
+int _is_file(const char* path);
 int string_index_of(const char* str, const char* substr);
 // Ditto: the local copy this replaces had a real bug the archive version does
 // not - when a match was found mid-string it copied the prefix but never the
@@ -556,6 +610,30 @@ void print_str_no_nl(const char* s);
 void print_bool_no_nl(bool b);
 void print_array(WynArray arr);
 void print_array_no_nl(WynArray arr);
+// print() buffers the whole line and emits ONE fwrite, so concurrent spawns
+// cannot interleave mid-line. Defined in wyn_runtime.h, exported through
+// libwyn_rt.a; declared here because --release includes this header instead.
+// WynStrBuf's layout is duplicated from wyn_runtime.h, which is the definition
+// site. C11 permits an identical typedef redeclaration, so including both headers
+// in one translation unit is safe. The _Static_assert below fails the build if
+// the two ever diverge - a silent layout mismatch would corrupt the caller's
+// stack frame, because the functions are compiled against the fat header and
+// called from code compiled against this one.
+#ifndef WYN_STRBUF_DEFINED
+#define WYN_STRBUF_DEFINED
+typedef struct { char* buf; size_t len; size_t cap; } WynStrBuf;
+#endif
+typedef struct { WynStrBuf sb; } WynOut;
+_Static_assert(sizeof(WynStrBuf) == sizeof(char*) + 2 * sizeof(size_t),
+               "WynStrBuf layout diverged from wyn_runtime.h");
+void wyn_out_begin(WynOut* o);
+void wyn_out_str(WynOut* o, const char* s);
+void wyn_out_int(WynOut* o, long long v);
+void wyn_out_float(WynOut* o, double v);
+void wyn_out_bool(WynOut* o, bool v);
+void wyn_out_elem(WynOut* o, WynValue v);
+void wyn_out_array(WynOut* o, WynArray arr);
+void wyn_out_flush(WynOut* o);
 void print_value(WynValue v);
 void print_hex(int x);
 void print_bin(int x);
@@ -629,6 +707,14 @@ long long str_ascii(const char* s);
 const char* String_char_from_int(long long n);
 int str_parse_int_failed(int result);
 double str_parse_float(const char* s);
+// The ONE acceptance rule behind to_int / to_int_checked / is_int (and the float
+// trio). These MUST be declared here too: `--release` emits
+// `#include "wyn_runtime_slim.h"` instead of the full header, so a builtin that
+// exists only in wyn_runtime.h works under `wyn run` and `wyn build` and then
+// fails to compile under `wyn run --release`. That has happened before.
+int wyn_parse_int_core(const char* s, long long* out);
+int wyn_parse_float_core(const char* s, double* out);
+bool str_is_int(const char* s);
 int abs_val(int x);
 int pow_int(int base, int exp);
 int clamp(int x, int min_val, int max_val);
@@ -659,8 +745,8 @@ int file_move(const char* src, const char* dst);
 int File_copy(const char* s, const char* d);
 int File_move(const char* s, const char* d);
 long long File_size(const char* p);
-int File_is_dir(const char* p);
-int File_is_file(const char* p);
+bool File_is_dir(const char* p);
+bool File_is_file(const char* p);
 int File_mkdir(const char* p);
 char* File_list_dir(const char* p);
 int File_append(const char* p, const char* d);
@@ -845,31 +931,73 @@ int bit_clear(int x, int pos);
 int bit_toggle(int x, int pos);
 int bit_check(int x, int pos);
 int bit_count(int x);
-ResultInt ResultInt_Ok(int value);
+ResultInt ResultInt_Ok(long long value);
 ResultInt ResultInt_Err(const char* msg);
-int ResultInt_is_ok(ResultInt r);
-int ResultInt_is_err(ResultInt r);
-int ResultInt_unwrap(ResultInt r);
+bool ResultInt_is_ok(ResultInt r);
+bool ResultInt_is_err(ResultInt r);
+long long ResultInt_unwrap(ResultInt r);
 const char* ResultInt_unwrap_err(ResultInt r);
 long long ResultInt_unwrap_or(ResultInt r, long long def);
+ResultInt str_to_int_checked(const char* s);
 ResultString ResultString_Ok(const char* value);
 ResultString ResultString_Err(const char* msg);
-int ResultString_is_ok(ResultString r);
-int ResultString_is_err(ResultString r);
+bool ResultString_is_ok(ResultString r);
+bool ResultString_is_err(ResultString r);
 const char* ResultString_unwrap(ResultString r);
 const char* ResultString_unwrap_err(ResultString r);
 OptionInt OptionInt_Some(int value);
 OptionInt OptionInt_None();
-int OptionInt_is_some(OptionInt o);
-int OptionInt_is_none(OptionInt o);
+bool OptionInt_is_some(OptionInt o);
+bool OptionInt_is_none(OptionInt o);
 int OptionInt_unwrap(OptionInt o);
 int OptionInt_unwrap_or(OptionInt o, int def);
 OptionString OptionString_Some(const char* value);
 OptionString OptionString_None();
-int OptionString_is_some(OptionString o);
-int OptionString_is_none(OptionString o);
+bool OptionString_is_some(OptionString o);
+bool OptionString_is_none(OptionString o);
 const char* OptionString_unwrap(OptionString o);
 const char* OptionString_unwrap_or(OptionString o, const char* def);
+OptionFloat OptionFloat_Some(double value);
+OptionFloat OptionFloat_None();
+bool OptionFloat_is_some(OptionFloat o);
+bool OptionFloat_is_none(OptionFloat o);
+double OptionFloat_unwrap(OptionFloat o);
+double OptionFloat_unwrap_or(OptionFloat o, double def);
+OptionBool OptionBool_Some(bool value);
+OptionBool OptionBool_None();
+bool OptionBool_is_some(OptionBool o);
+bool OptionBool_is_none(OptionBool o);
+bool OptionBool_unwrap(OptionBool o);
+bool OptionBool_unwrap_or(OptionBool o, bool def);
+ResultFloat str_to_float_checked(const char* s);
+ResultFloat ResultFloat_Ok(double value);
+ResultFloat ResultFloat_Err(const char* msg);
+bool ResultFloat_is_ok(ResultFloat r);
+bool ResultFloat_is_err(ResultFloat r);
+double ResultFloat_unwrap(ResultFloat r);
+const char* ResultFloat_unwrap_err(ResultFloat r);
+double ResultFloat_unwrap_or(ResultFloat r, double def);
+ResultBool ResultBool_Ok(bool value);
+ResultBool ResultBool_Err(const char* msg);
+bool ResultBool_is_ok(ResultBool r);
+bool ResultBool_is_err(ResultBool r);
+bool ResultBool_unwrap(ResultBool r);
+const char* ResultBool_unwrap_err(ResultBool r);
+bool ResultBool_unwrap_or(ResultBool r, bool def);
+// The eight renderers every print spelling routes to. Definitions are in
+// wyn_runtime.h and reach the archive through runtime_exports.c, so these are
+// declarations - not slim-header copies. A copy here is exactly how --release
+// kept its own stale println for a whole release cycle.
+// Used by the per-program Result renderers codegen emits.
+char* wyn_rc_sprintf(const char* fmt, ...);
+char* OptionInt_to_string(OptionInt o);
+char* OptionString_to_string(OptionString o);
+char* OptionFloat_to_string(OptionFloat o);
+char* OptionBool_to_string(OptionBool o);
+char* ResultInt_to_string(ResultInt r);
+char* ResultString_to_string(ResultString r);
+char* ResultFloat_to_string(ResultFloat r);
+char* ResultBool_to_string(ResultBool r);
 long long Task_value(long long initial);
 long long Task_get(long long handle);
 void Task_set(long long handle, long long value);
@@ -1047,7 +1175,24 @@ char* array_to_string(WynArray arr);
     WynArray: print_array, \
     default: print_int_no_nl)(x)
 
-#define println(x) do { print(x); printf("\n"); } while(0)
+#define wyn_out_append(o, x) _Generic((x), \
+    int: wyn_out_int, \
+    long: wyn_out_int, \
+    long long: wyn_out_int, \
+    float: wyn_out_float, \
+    double: wyn_out_float, \
+    char*: wyn_out_str, \
+    const char*: wyn_out_str, \
+    bool: wyn_out_bool, \
+    WynArray: wyn_out_array, \
+    default: wyn_out_int)(o, x)
+
+// Was: do { print(x); printf("\n"); } while(0) - TWO libc calls, so under
+// --release println had exactly the interleaving bug the fat header fixed for
+// the default path (libc locks one printf per-FILE, not a sequence). Measured
+// on the default path: 8 spawns x 200 lines gave 362-690 malformed lines of
+// 1600 with the two-call shape, 0 with one call. Buffer, then emit once.
+#define println(x) do { WynOut __wl; wyn_out_begin(&__wl); wyn_out_append(&__wl, x); wyn_out_str(&__wl, "\n"); wyn_out_flush(&__wl); } while(0)
 
 #define to_string(x) _Generic((x), \
     int: int_to_string, \
@@ -1060,6 +1205,327 @@ char* array_to_string(WynArray arr);
     bool: bool_to_string, \
     WynArray: array_to_string, \
     default: int_to_string)(x)
+
+
+// ─── DECLARATIONS THE REGISTRY BLESSES AND THIS HEADER HAD LOST (V-8) ────────
+//
+// Everything below is a function the checker's builtin registry accepts, that
+// src/wyn_runtime.h declares, that runtime/libwyn_rt.a defines - and that THIS
+// header did not declare. `wyn run --release` is the only path that compiles
+// against this file, so each omission was a program that built fine under
+// `wyn check`, `wyn run` and `wyn build --release` and failed under
+// `wyn run --release` alone. Worse, src/main.c read clang's "call to undeclared
+// function 'Time_now_millis'" and told the user to check their spelling, which
+// is the compiler blaming the user for its own missing entry.
+//
+// 107 of them, found by enumerating the registry with `wyn dump-builtins` and
+// compiling one address-of probe per header - not by reading either file.
+// tests/errors/run_release_slim_registry_test.sh now does exactly that on every
+// run, so the next omission fails CI instead of a user's build.
+//
+// The list is a symptom of the design: this header is a HAND-MAINTAINED SECOND
+// COPY of wyn_runtime.h's declarations, and every such pair in this repo has
+// drifted. The gate makes the drift visible; it does not remove the second copy.
+
+// Color
+char* Color_blue(const char* s);
+char* Color_bold(const char* s);
+char* Color_cyan(const char* s);
+char* Color_dim(const char* s);
+char* Color_gray(const char* s);
+char* Color_green(const char* s);
+char* Color_magenta(const char* s);
+char* Color_red(const char* s);
+char* Color_underline(const char* s);
+char* Color_yellow(const char* s);
+
+// Crypto
+char* Crypto_sha1(const char* data);
+char* Crypto_sha1_base64(const char* data);
+
+// Http
+HttpResponse* Http_post(const char* url, const char* body, const char* content_type);
+char* Http_read_request(long long client_fd_ll);
+char* Http_req_body(const char* raw);
+const char* Http_header(HttpResponse* resp, const char* name);
+int Http_fd(const char* raw);
+long long Http_accept_fd(int server_fd);
+void Http_free(HttpResponse* resp);
+
+// Socket
+char* Socket_read_line(int sock);
+int Socket_poll_read(int sock, int timeout_ms);
+int Socket_set_nonblocking(int sock);
+int Socket_set_timeout(int sock, int seconds);
+
+// Test
+int Test_summary();
+
+// Time
+long long Time_now_millis();
+
+// Url
+char* Url_decode(const char* str);
+char* Url_encode(const char* str);
+
+// json - the lowercase spellings. `long long` handles, NOT `WynJson*`: #364 replaced
+// the pointer-to-struct model with one node arena addressed by a handle, and removed
+// the WynJson typedef from this header. These four were first written here against
+// the old spelling and every --release compile then died with
+//     error: unknown type name 'WynJson'
+// which is the same drift the Json block above warns about, one release later. Copied
+// from wyn_runtime.h:6309-6314, which is the authority.
+long long json_new(void);
+char* json_stringify(long long j);
+void json_set_int(long long j, const char* key, long long val);
+void json_set_string(long long j, const char* key, const char* val);
+
+// str
+char** str_split(const char* s, const char* delim, int* count);
+
+// wyn
+char* wyn_array_join(int* arr, int len, const char* separator);
+char* wyn_crypto_base64_decode(const char* data, size_t* out_len);
+char* wyn_crypto_base64_encode(const char* data, size_t len);
+char* wyn_crypto_random_hex(size_t len);
+char* wyn_crypto_xor_cipher(const char* data, size_t len, const char* key, size_t key_len);
+char* wyn_str_replace(const char* str, const char* old, const char* new);
+char* wyn_str_substring(const char* str, int start, int end);
+char* wyn_string_join(char** strings, int count, const char* delim);
+char* wyn_string_pad_left(const char* str, int width, const char* pad_char);
+char* wyn_string_pad_right(const char* str, int width, const char* pad_char);
+char* wyn_string_repeat(const char* str, int n);
+char* wyn_string_reverse(const char* str);
+char* wyn_string_to_lower(const char* str);
+char* wyn_string_to_upper(const char* str);
+char* wyn_string_trim(const char* str);
+char* wyn_time_format(long timestamp);
+char** wyn_string_split(const char* str, const char* delim, int* count);
+double wyn_array_average(int* arr, int len);
+double wyn_math_abs(double x);
+double wyn_math_ceil(double x);
+double wyn_math_floor(double x);
+double wyn_math_max(double a, double b);
+double wyn_math_min(double a, double b);
+double wyn_math_pow(double base, double exp);
+double wyn_math_round(double x);
+double wyn_math_sqrt(double x);
+int wyn_array_all(int* arr, int len, int (*pred)(int));
+int wyn_array_any(int* arr, int len, int (*pred)(int));
+int wyn_array_contains(int* arr, int len, int value);
+int wyn_array_find(int* arr, int len, int (*pred)(int), int* found);
+int wyn_array_find_index(int* arr, int len, int (*pred)(int));
+int wyn_array_first(int* arr, int len, int* found);
+int wyn_array_index_of(int* arr, int len, int value);
+int wyn_array_is_empty(int* arr, int len);
+int wyn_array_last(int* arr, int len, int* found);
+int wyn_array_last_index_of(int* arr, int len, int value);
+int wyn_array_max(int* arr, int len);
+int wyn_array_min(int* arr, int len);
+int wyn_array_sum(int* arr, int len);
+int wyn_hashmap_get_int(int map, const char* key);
+int wyn_hashmap_has(int map, const char* key);
+int wyn_hashmap_len(int map);
+int wyn_hashmap_new();
+// `map.clear()`. Declared `extern` in wyn_runtime.h:6601 and missing here, so the call
+// built in debug and failed under --release.
+void hashmap_clear(WynHashMap* map);
+// `a.any(f)` / `a.all(f)`. Defined in wyn_runtime.h:6793-6798 and missing here - and
+// these two are exactly what the 2026-08 any/all work added, whose gate never ran
+// --release. The arity-0 registry gate cannot see them either (they take a predicate),
+// which is why they are called out rather than merely fixed.
+long long wyn_arr_any(WynArray arr, long long (*pred)(long long));
+long long wyn_arr_all(WynArray arr, long long (*pred)(long long));
+// `a.every(f)` and `3.times(f)`. Same omission as the two above, found the same way and
+// missed by the same gate: the registry-reachable sweep only generates arity-0 calls, and
+// both of these take a function. `3.times(f)` is the sharper miss - it has an explicit
+// allow arm in run_scalar_option_method_test.sh, but that arm runs in DEFAULT mode, so a
+// green gate sat over a release path that could not compile. Both are plain functions in
+// wyn_runtime.h (1256, 1268) and in the archive, so a declaration is all that is needed.
+int array_every(WynArray arr, long long (*fn)(long long));
+void int_times(long long n, long long (*fn)(void));
+// The same omission for four more types.c dispatch targets - `a.find(f)`, `a.flat_map(f)`,
+// `a.sort()` and a char's `.to_string()`. Unlike the two above I could NOT get a Wyn call
+// to reach these (the spellings I tried resolve elsewhere or do not parse), so they are
+// latent rather than demonstrated. Declared anyway: a declaration costs one line, whereas
+// allowlisting them would leave four lowerings that compile in debug and cannot compile in
+// release the moment someone finds the spelling that reaches them.
+long long array_find_fn(WynArray arr, long long (*fn)(long long));
+WynArray array_flat_map(WynArray arr, WynArray (*fn)(long long));
+WynArray array_sort_copy(WynArray arr);
+char* char_to_string(char x);
+// `x.to_int()` on an int. `static inline` in wyn_runtime.h:1870, so there is nothing in
+// the archive to link against - it has to be DUPLICATED here, like wyn_malloc above,
+// not declared.
+static inline long long int_to_int(long long n) { return n; }
+int wyn_string_contains(const char* str, const char* substr);
+int wyn_string_ends_with(const char* str, const char* suffix);
+int wyn_string_index_of(const char* str, const char* substr);
+int wyn_string_last_index_of(const char* str, const char* substr);
+int wyn_string_len(const char* str);
+int wyn_string_starts_with(const char* str, const char* prefix);
+int wyn_time_day(long timestamp);
+int wyn_time_hour(long timestamp);
+int wyn_time_minute(long timestamp);
+int wyn_time_month(long timestamp);
+int wyn_time_second(long timestamp);
+int wyn_time_year(long timestamp);
+int* wyn_array_concat(int* arr1, int len1, int* arr2, int len2, int* out_len);
+int* wyn_array_slice(int* arr, int start, int end, int* out_len);
+int* wyn_array_unique(int* arr, int len, int* out_len);
+long long wyn_time_now_micros();
+long long wyn_time_now_millis();
+long wyn_time_now();
+long wyn_time_parse(const char* str);
+uint32_t wyn_crypto_hash32(const char* data, size_t len);
+uint64_t wyn_crypto_hash64(const char* data, size_t len);
+void wyn_array_fill(int* arr, int len, int value);
+void wyn_array_reverse(int* arr, int len);
+void wyn_array_sort(int* arr, int len);
+void wyn_crypto_md5(const char* data, size_t len, char* output);
+void wyn_crypto_random_bytes(char* buffer, size_t len);
+void wyn_crypto_sha256(const char* data, size_t len, char* output);
+void wyn_hashmap_free(int map);
+void wyn_hashmap_insert_int(int map, const char* key, int value);
+void wyn_time_sleep(int seconds);
+void wyn_time_sleep_micros(int micros);
+void wyn_time_sleep_millis(int millis);
+
+// Round two of the same omission, found only after the gate learned to enumerate
+// NAMESPACES as well as global symbols - `Base64.encode` is not a global symbol, so
+// the first pass reported green while `wyn run --release` still could not compile
+// it. Each line's trailing comment names the header the signature was copied from.
+char* Args_get(const char* name);   // wyn_runtime.h
+bool Args_has(const char* name);   // wyn_runtime.h
+WynArray Args_positional();   // wyn_runtime.h
+void Audio_close();   // gui.h
+void Audio_init();   // gui.h
+long long Audio_load(const char* path);   // gui.h
+void Audio_play(long long id);   // gui.h
+void Audio_stop();   // gui.h
+char* Base64_decode(const char* data);   // wyn_runtime.h
+char* Base64_encode(const char* data);   // wyn_runtime.h
+char* Bcrypt_hash(const char* password);   // wyn_runtime.h
+bool Bcrypt_verify(const char* password, const char* hash);   // wyn_runtime.h
+unsigned int Crypto_hash32(const char* data);   // wyn_runtime.h
+unsigned long long Crypto_hash64(const char* data);   // wyn_runtime.h
+void Csv_write(const char* path, WynArray rows);   // wyn_runtime.h
+char* File_basename(const char* p);   // wyn_runtime.h
+int File_create_dir(const char* p);   // wyn_runtime.h
+int File_create_dir_all(const char* p);   // wyn_runtime.h
+char* File_dirname(const char* p);   // wyn_runtime.h
+char* File_extension(const char* p);   // wyn_runtime.h
+int File_file_size(const char* p);   // wyn_runtime.h
+char* File_get_cwd(void);   // wyn_runtime.h
+long File_modified_time(const char* p);   // wyn_runtime.h
+char* File_path_join(const char* a, const char* b);   // wyn_runtime.h
+int File_remove_dir_all(const char* p);   // wyn_runtime.h
+int File_rmdir(const char* p);   // wyn_runtime.h
+void HashMap_clear(int map);   // wyn_runtime.h
+int HashMap_contains(int map, const char* key);   // wyn_runtime.h
+void HashMap_free(int map);   // wyn_runtime.h
+int HashMap_get(int map, const char* key);   // wyn_runtime.h
+void HashMap_insert(int map, const char* key, int value);   // wyn_runtime.h
+int HashMap_len(int map);   // wyn_runtime.h
+int HashMap_remove(int map, const char* key);   // wyn_runtime.h
+long long Math_checked_add(long long a, long long b);   // wyn_runtime.h
+long long Math_checked_mul(long long a, long long b);   // wyn_runtime.h
+long long Math_checked_sub(long long a, long long b);   // wyn_runtime.h
+void Shared_set(long long handle, long long value);   // wyn_runtime.h
+long long Shared_sub(long long handle, long long delta);   // wyn_runtime.h
+char* System_shell_escape(const char* s);   // wyn_runtime.h
+long long Task_select_n(const long long* chans, int n);   // wyn_runtime.h
+OptionInt Task_try_recv_opt(long long handle);   // wyn_runtime.h
+char* Toml_get(long long handle, const char* key);   // wyn_runtime.h
+long long Toml_parse(const char* text);   // wyn_runtime.h
+long long Toml_parse_file(const char* path);   // wyn_runtime.h
+char* Uuid_v4();   // wyn_runtime.h
+int Web_delete(const char* p, int h);   // wyn_runtime.h
+int Web_get(const char* p, int h);   // wyn_runtime.h
+int Web_match(const char* method, const char* path);   // wyn_runtime.h
+int Web_post(const char* p, int h);   // wyn_runtime.h
+int Web_put(const char* p, int h);   // wyn_runtime.h
+char* Web_render(const char* name, const char* vars);   // wyn_runtime.h
+int Web_route(const char* method, const char* pattern, int handler_id);   // wyn_runtime.h
+int Web_route_count(void);   // wyn_runtime.h
+void Web_templates(const char* dir);   // wyn_runtime.h
+
+// System.argc / System.arg are `static inline` in wyn_runtime.h (thin aliases for
+// wyn_get_argc / wyn_get_argv), so there is no archive symbol to declare and they
+// must be duplicated here, like file_append and Task_cancel.
+int wyn_get_argc(void);
+const char* wyn_get_argv(int index);
+static inline int System_argc(void) { return wyn_get_argc(); }
+static inline const char* System_arg(int index) { return wyn_get_argv(index); }
+
+// Ptr (src/wyn_runtime.h) - the one-cell escape hatch the registry blesses.
+void* Ptr_cell(void);
+void Ptr_free(void* cell);
+void* Ptr_read(void* cell);
+void Ptr_write(void* cell, void* value);
+
+// Gui (src/gui.h, which wyn_runtime.h #includes). gui.h carries DEFINITIONS in
+// both of its arms - the SDL2 one under WYN_USE_GUI and a no-op stub under #else -
+// so the archive defines every one of these whether SDL2 is present or not, and a
+// declaration here is all --release was missing. Signatures copied from the SDL2
+// arm; the stub arm agrees with it symbol for symbol.
+void Gui_button(long long x, long long y, long long w, long long h, const char* label);
+long long Gui_button_clicked(long long bx, long long by, long long bw, long long bh, long long mx, long long my);
+void Gui_circle(long long cx, long long cy, long long radius);
+void Gui_clear(long long r, long long g, long long b);
+void Gui_color(long long r, long long g, long long b);
+long long Gui_create(const char* title, long long width, long long height);
+void Gui_delay(long long ms);
+void Gui_destroy();
+void Gui_draw_sprite(long long id, long long x, long long y);
+void Gui_draw_sprite_scaled(long long id, long long x, long long y, long long w, long long h);
+long long Gui_height();
+long long Gui_key_pressed(long long keycode);
+void Gui_label(long long x, long long y, const char* text, long long scale);
+void Gui_line(long long x1, long long y1, long long x2, long long y2);
+long long Gui_load_sprite(const char* bmp_path);
+long long Gui_mouse_down();
+long long Gui_mouse_x();
+long long Gui_mouse_y();
+void Gui_panel(long long x, long long y, long long w, long long h);
+void Gui_point(long long x, long long y);
+char* Gui_poll();
+void Gui_present();
+void Gui_progress(long long x, long long y, long long w, long long h, long long pct);
+void Gui_rect(long long x, long long y, long long w, long long h);
+void Gui_rect_outline(long long x, long long y, long long w, long long h);
+long long Gui_running();
+void Gui_text(long long x, long long y, const char* text, long long scale);
+void Gui_text_input(long long x, long long y, long long w, long long h);
+void Gui_text_input_activate(long long active);
+void Gui_text_input_clear();
+long long Gui_text_input_key(long long keycode);
+void Gui_text_input_set(const char* text);
+char* Gui_text_input_value();
+long long Gui_ticks();
+long long Gui_width();
+
+// Task.cancel / Task.is_cancelled are `static inline` in wyn_runtime.h, so there is
+// no archive symbol to declare - they have to be duplicated here, arm for arm,
+// exactly like file_append below and wyn_malloc above. The Windows arm is a no-op
+// in wyn_runtime.h too (synchronous-spawn stub), and must stay one here or a
+// --release build for Windows would reference a future_cancel that does not exist.
+void future_cancel(Future* f);
+int  wyn_current_task_cancelled(void);
+#ifndef _WIN32
+static inline void Task_cancel(void* handle) { future_cancel((Future*)handle); }
+static inline long long Task_is_cancelled(void) { return wyn_current_task_cancelled(); }
+#else
+static inline void Task_cancel(void* handle) { (void)handle; }
+static inline long long Task_is_cancelled(void) { return 0; }
+#endif
+
+// file_append is `static inline` in wyn_runtime.h (a spelling alias for
+// File_append), so there is no archive symbol to declare - it has to be
+// duplicated here the same way wyn_malloc is above, or `file_append("p","d")`
+// (a name the registry blesses, via stdlib_funcs[]) cannot compile under
+// --release at all.
+static inline int file_append(const char* p, const char* d) { return File_append(p, d); }
 
 static inline void print_val(const char* s) { if(s) fputs(s, stdout); }
 #endif

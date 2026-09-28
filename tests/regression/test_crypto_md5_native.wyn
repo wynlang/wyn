@@ -1,0 +1,36 @@
+// Regression: Crypto.md5 used to popen("printf '%s' '<data>' | openssl dgst -md5")
+// with the caller's string interpolated into the shell command, so a single quote
+// broke out of the argument and every metacharacter was live. Reachable from
+// wyn-check-clean code. Now it is native MD5 (RFC 1321) - no shell, no openssl,
+// and outputs against every reference test vector below.
+//
+// EXPECT: d41d8cd98f00b204e9800998ecf8427e
+// EXPECT: 0cc175b9c0f1b6a831c399e269772661
+// EXPECT: 900150983cd24fb0d6963f7d28e17f72
+// EXPECT: f96b697d7cb7938d525a2f31aaf161d0
+// EXPECT: c3fcd3d76192e4007dfb496cca67e13b
+// EXPECT: d174ab98d277d9f5a5611c2c9f419d9f
+// EXPECT: 57edf4a22be3c955ac49da2e2107b67a
+// EXPECT: injection-marker-safe
+
+fn main() {
+    // RFC 1321 test suite - if any of these differ we agree with nothing else.
+    println(Crypto.md5(""))
+    println(Crypto.md5("a"))
+    println(Crypto.md5("abc"))
+    println(Crypto.md5("message digest"))
+    println(Crypto.md5("abcdefghijklmnopqrstuvwxyz"))
+    println(Crypto.md5("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"))
+    println(Crypto.md5("12345678901234567890123456789012345678901234567890123456789012345678901234567890"))
+
+    // Shell-injection substrings: a metacharacter in the input must NOT execute.
+    // The old implementation would have popen'd this and produced empty output;
+    // the native path just digests the bytes. We do not check the digest here
+    // (writing it out would just duplicate MD5), only that we get 32 hex chars
+    // AND that a canary command did not run (the shell would touch a file if
+    // it did, but we cannot verify that without a runner - so the strong
+    // assertion is the printed length).
+    danger = "'; echo pwned > /tmp/wyn_md5_pwned_${DateTime.micros()}; #"
+    d = Crypto.md5(danger)
+    if d.len() == 32 { println("injection-marker-safe") } else { println("BAD") }
+}

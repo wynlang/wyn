@@ -1,0 +1,82 @@
+// Regression: the GENERIC spelling of an optional annotation on a LOCAL threw its
+// payload away, so the declaration type-checked clean and then failed the C compile:
+//
+//   o: Option<int> = Some(5)
+//   -> WynOptional* o = OptionInt_Some(5);
+//      error: initializing 'WynOptional *' with an expression of incompatible type
+//             'OptionInt'
+//      error: call to undeclared function 'Option_is_some'
+//
+// The checker's generic-annotation branch answered `make_type(TYPE_OPTIONAL)` - "an
+// optional of nothing in particular" - where the HashMap<K,V> branch two lines above it
+// already carries its annotated type arguments through, with a comment recording that
+// not doing so silently made `m["a"]` print "". Option never got the same treatment.
+//
+// The `?` shorthand (`o: int?`) always worked, and so did a struct FIELD of the very
+// same generic type (`struct S { o: Option<int> }`) - only that path knew how to resolve
+// the annotation to a concrete family. Two spellings of one type disagreeing is what
+// made this look like a method-resolution bug rather than a dropped payload.
+//
+// EXPECT: true
+// EXPECT: 5
+// EXPECT: hi
+// EXPECT: 1.5
+// EXPECT: true
+// EXPECT: true
+// EXPECT: 3
+// EXPECT: 9
+// EXPECT: 6
+// EXPECT: Some(5)
+// EXPECT: none
+// EXPECT: 5
+// EXPECT: 2
+
+struct P { x: int }
+struct S { o: Option<int> }
+
+fn main() {
+    // The core case, and its payload types. Each must round-trip a real VALUE - a
+    // successful compile alone would not prove the family is right.
+    a: Option<int> = Some(5)
+    print(a.is_some())
+    print(a.unwrap())
+
+    s: Option<string> = Some("hi")
+    print(s.unwrap())
+
+    f: Option<float> = Some(1.5)
+    print(f.unwrap())
+
+    b: Option<bool> = Some(true)
+    print(b.unwrap())
+
+    // Empty, then filled - the declaration must survive the reassignment.
+    e: Option<int> = none
+    print(e.is_none())
+    e = Some(3)
+    print(e.unwrap())
+
+    // match needs the family detected at the declaration.
+    m: Option<int> = Some(9)
+    y = match m { Some(v) => v, none => -1 }
+    print(y)
+
+    // A struct payload. Its Option<Struct> family symbol does not exist until something
+    // constructs one, and the initializer is checked AFTER the annotation - so this is
+    // the case that the annotation lookup alone cannot resolve.
+    sp: Option<P> = Some(P { x: 6 })
+    print(sp.unwrap().x)
+
+    // Printing must agree with every other renderer, for both arms.
+    pr: Option<int> = Some(5)
+    print(pr)
+    pn: Option<int> = none
+    print(pn)
+
+    // No-regression: the two spellings that always worked must still work, and a struct
+    // FIELD of the generic type must be unaffected (its path is the one this fix reuses).
+    q: int? = Some(5)
+    print(q.unwrap())
+    st = S { o: Some(2) }
+    print(st.o.unwrap())
+}

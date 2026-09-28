@@ -50,7 +50,7 @@ for tpl in default cli api web; do
   # or the scaffolded code (`wyn check` is clean on both). Gating a scaffold smoke
   # test on an external package's cross-platform linking is the wrong scope: it
   # was silently coupling "does new work" to "does the sqlite package link here",
-  # and the sqlite defect is tracked separately (internal-docs). So for api/web we
+  # and the sqlite defect is tracked separately (internal planning notes). So for api/web we
   # gate the tree + `wyn check`; the full build/link/test runs for the templates
   # that own all their code.
   _full_test=1

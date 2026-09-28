@@ -49,6 +49,14 @@ set -uo pipefail
 # The servers are killed with SIGKILL, and bash's job control would otherwise
 # print "Killed: 9 ..." to stderr mid-report. Silence job notifications; the
 # test's own ok/FAIL lines are the output that matters.
+#
+# `set +m` is NOT sufficient on its own: bash still announces an asynchronous job
+# that died on a signal when it reaps it, so the test's own `kill -9` of its own
+# server printed "line NNN: PID Killed: 9 ..." on EVERY run (4/4 measured) while
+# still reporting "9 pass, 0 fail". That noise has twice been read as evidence the
+# server was OOM-killed. Every background server below is therefore `disown`ed -
+# the only thing that actually silences it - so a "Killed: 9" line appearing here
+# again would be a real signal rather than the test shooting its own child.
 set +m 2>/dev/null
 
 WYN="${WYN:-./wyn}"
@@ -56,13 +64,68 @@ case "$WYN" in /*) ;; *) WYN="$(pwd)/$WYN" ;; esac
 TMP=$(mktemp -d)
 SRV_BIN="$TMP/srv.out"
 SRV_PID=""
-# Not 8080: that port is contended on dev machines (something already answered
-# there during the investigation, which is its own way to get a wrong number).
-PORT=18099
+
+# --- PORTS ARE NEGOTIATED WITH THE KERNEL, NEVER HARD-CODED --------------------
+# This test used to bind the fixed ports 18099 / 18100 / 18131. Sibling agents run
+# `make test` concurrently out of separate worktrees, and a fixed port turns that
+# into a cross-lane collision that reports as a defect in the code under test. It
+# produced three false reds in one day; the worst read EXACTLY like a regression
+# in the bug this file guards:
+#
+#   FAIL  empty connection must not panic the server
+#         [panic: to_int parse error: "" is not a valid integer]
+#
+# ...because the loser of the bind race got -1 from Http.serve, and Http.accept(-1)
+# returns "", which is the same observable as the accept bug. Reproduced on demand
+# by running this script twice with a 3s stagger.
+#
+# The fix has two halves, and BOTH are needed:
+#   1. a per-run random base, so two concurrent runs do not even start on the same
+#      number (`$$` is mixed in because two shells started in the same second can
+#      seed $RANDOM identically);
+#   2. each server WALKS UP from its base until bind() succeeds and then prints the
+#      port it actually got; the shell drives whatever the server reports.
+#
+# Half 2 is what makes this collision-proof rather than collision-unlikely. A
+# guessed-free-port-then-hand-it-over scheme still has a window between the probe
+# closing the socket and the server binding it. Here the port the shell uses IS the
+# port a successful bind() returned, so there is no window and no way to
+# silently drive somebody else's server: Http_serve sets SO_REUSEADDR but NOT
+# SO_REUSEPORT, so a second *listening* socket on a live port gets EADDRINUSE
+# (verified: two Http.serve calls on one port return fd, -1) and the walk moves on.
+# Range 20000-31000 stays clear of the ephemeral ranges (Linux 32768+, macOS 49152+).
+#
+# WYN_TEST_PORT_BASE pins the base, which is how the walk itself gets tested:
+# start several runs with the SAME base and every one must still pass, because
+# each loser of the bind race walks off the contended port. Without that lever the
+# random base would make the collision path unreachable in practice, i.e. untested.
+PORT_BASE=${WYN_TEST_PORT_BASE:-$(( 20000 + ((RANDOM + $$) % 10000) ))}
+PORT=""            # filled in from the server's own report
+KA_PORT=""
+DOS_PORT=""
+
+# Read the port a server negotiated, out of its own stdout log. println() flushes
+# (println_str -> fflush, src/wyn_runtime.h), so the line lands as soon as bind()
+# returned. Bounded at 30s, matching the old listener probe.
+#   $1 = log file   $2 = the word the server prints before the number
+read_reported_port() {
+    local i p
+    for i in $(seq 1 300); do
+        p=$(sed -n "s/^$2 \([0-9][0-9]*\)\$/\1/p" "$1" 2>/dev/null | head -1)
+        if [ -n "$p" ]; then printf '%s' "$p"; return 0; fi
+        sleep 0.1
+    done
+    return 1
+}
 
 cleanup() {
     [ -n "$SRV_PID" ] && kill -9 "$SRV_PID" 2>/dev/null
     pkill -9 -f "^$SRV_BIN" 2>/dev/null
+    # The empty-connection server is now disowned (see `set +m` above), so the
+    # shell will not reap it for us on an early exit; name it explicitly. A stray
+    # load-generator/server pair has kernel-panicked this dev machine twice.
+    [ -n "${DOS_PID:-}" ] && kill -9 "$DOS_PID" 2>/dev/null
+    [ -n "${DOS_BIN:-}" ] && pkill -9 -f "^$DOS_BIN" 2>/dev/null
     rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -81,7 +144,7 @@ fi
 # The server under test. Deliberately the ONE-SHOT handler shape - the one every
 # doc example uses and the one that was broken. Uses the Http builtins directly
 # rather than the `web` package so the test needs no network fetch.
-cat > "$TMP/srv.wyn" <<'WYN'
+cat > "$TMP/srv.wyn" <<WYN
 fn handle(conn: int) {
     var req = Http.read_request(conn)
     if req.len() == 0 { return }
@@ -90,9 +153,19 @@ fn handle(conn: int) {
 }
 
 fn main() -> int {
-    var server = Http.serve(18099)
+    // Walk up from the base until the kernel gives us a port, then report which
+    // one. Never a fixed port: see the PORT_BASE comment at the top.
+    var port = $PORT_BASE
+    var server = -1
+    var tries = 0
+    while tries < 200 {
+        server = Http.serve(port)
+        if server > 0 { break }
+        port = port + 1
+        tries = tries + 1
+    }
     if server <= 0 { return 1 }
-    println("listening")
+    println("listening \${port}")
     while true {
         var conn = Http.accept_fd(server)
         if conn > 0 { spawn handle(conn) }
@@ -115,6 +188,16 @@ ok "one-shot-handler server builds (Http.close_client links)"
 "$SRV_BIN" > "$TMP/srv.log" 2>&1 &
 SRV_PID=$!
 disown "$SRV_PID" 2>/dev/null
+
+# The port comes from the server, not from this script - so it is by construction
+# a port whose bind() succeeded in THIS process.
+if ! PORT=$(read_reported_port "$TMP/srv.log" listening); then
+    bad "server negotiates a port (walked 200 from $PORT_BASE, none bound)"
+    sed -n '1,20p' "$TMP/srv.log"
+    echo ""
+    echo "http-server-load: $PASS pass, $((FAIL)) fail"
+    exit 1
+fi
 
 # Wait (bounded) for the listener, polling INSIDE one python process. A shell
 # loop that starts a fresh interpreter per attempt spends ~0.2s of its budget on
@@ -259,12 +342,15 @@ SRV_PID=""
 # throughput harness measures, so a regression here invalidates the published
 # req/s figure.
 KA_BIN="$TMP/ka.out"
-KA_PORT=18100
+# A distinct base from the one-shot server's. The one-shot server is dead by now
+# and SO_REUSEADDR would let us take its port straight back, but reusing it would
+# make a stale-socket symptom look like a keep-alive bug, so keep the two apart.
+KA_BASE=$((PORT_BASE + 400))
 KA_PID=""
 cleanup_ka() { [ -n "$KA_PID" ] && kill -9 "$KA_PID" 2>/dev/null; pkill -9 -f "^$KA_BIN" 2>/dev/null; }
 trap 'cleanup_ka; cleanup' EXIT
 
-cat > "$TMP/ka.wyn" <<'WYN'
+cat > "$TMP/ka.wyn" <<WYN
 fn handle(conn: int) {
     while true {
         var req = Http.read_request(conn)
@@ -274,9 +360,17 @@ fn handle(conn: int) {
 }
 
 fn main() -> int {
-    var server = Http.serve(18100)
+    var port = $KA_BASE
+    var server = -1
+    var tries = 0
+    while tries < 200 {
+        server = Http.serve(port)
+        if server > 0 { break }
+        port = port + 1
+        tries = tries + 1
+    }
     if server <= 0 { return 1 }
-    println("listening")
+    println("listening \${port}")
     while true {
         var conn = Http.accept_fd(server)
         if conn > 0 { spawn handle(conn) }
@@ -292,7 +386,10 @@ else
     "$KA_BIN" > "$TMP/ka.log" 2>&1 &
     KA_PID=$!
     disown "$KA_PID" 2>/dev/null
-    if python3 - "$KA_PORT" <<'PY'
+    KA_PORT=$(read_reported_port "$TMP/ka.log" listening) || KA_PORT=""
+    if [ -z "$KA_PORT" ]; then
+        kaup=0
+    elif python3 - "$KA_PORT" <<'PY'
 import socket, sys, time
 port = int(sys.argv[1])
 deadline = time.time() + 30
@@ -305,7 +402,11 @@ sys.exit(1)
 PY
     then kaup=1; else kaup=0; fi
     if [ "$kaup" != "1" ]; then
-        bad "keep-alive server comes up on 127.0.0.1:$KA_PORT"
+        if [ -z "$KA_PORT" ]; then
+            bad "keep-alive server negotiates a port (walked 200 from $KA_BASE, none bound)"
+        else
+            bad "keep-alive server comes up on 127.0.0.1:$KA_PORT"
+        fi
         echo "    --- ka.log ---"; sed -n '1,20p' "$TMP/ka.log"
         echo "    --- alive? ---"; ps -p "$KA_PID" -o pid,stat,command 2>&1 | sed -n '1,3p'
     else
@@ -371,13 +472,33 @@ KA_PID=""
 #
 # Http_accept now skips a connection that yields no request and keeps accepting,
 # which is what every real server does.
+#
+# THE BIND IS DELIBERATELY SEPARATED FROM THE ACCEPT LOOP HERE. The naive
+# `req.split_at("|",3).to_int()` shape below IS the property under test and must
+# stay naive - but the bind must not be, because an unchecked bind gives this arm
+# TWO causes with ONE observable. When this file bound the fixed port 18131 and a
+# sibling lane held it, Http.serve returned -1, Http.accept(-1) returned "", and
+# `.to_int()` panicked - reporting verbatim
+#     FAIL  empty connection must not panic the server
+#           [panic: to_int parse error: "" is not a valid integer]
+# i.e. the exact regression this arm exists to catch, from a port clash. So the
+# port is negotiated (and checked) first, and only then is the naive loop entered.
 DOS_SRC="$TMP/dos.wyn"
 DOS_BIN="$TMP/dos.out"
-DOS_PORT=18131
+DOS_BASE=$((PORT_BASE + 800))
 cat > "$DOS_SRC" <<EOF
 fn main() -> int {
-    server = Http.serve($DOS_PORT)
-    print("ready")
+    var port = $DOS_BASE
+    var server = -1
+    var tries = 0
+    while tries < 200 {
+        server = Http.serve(port)
+        if server > 0 { break }
+        port = port + 1
+        tries = tries + 1
+    }
+    if server <= 0 { return 7 }
+    println("ready \${port}")
     var n = 0
     while n < 3 {
         req = Http.accept(server)
@@ -393,7 +514,14 @@ if ! perl -e 'alarm(90); exec @ARGV' -- "$WYN" build "$DOS_SRC" -o "$DOS_BIN" >/
 else
     "$DOS_BIN" > "$TMP/dos.log" 2>&1 &
     DOS_PID=$!
-    sleep 2
+    disown "$DOS_PID" 2>/dev/null
+    DOS_PORT=$(read_reported_port "$TMP/dos.log" ready) || DOS_PORT=""
+fi
+if [ -z "${DOS_PORT:-}" ] && [ -n "${DOS_PID:-}" ]; then
+    bad "empty-connection server negotiates a port (walked 200 from $DOS_BASE, none bound)"
+    sed -n '1,20p' "$TMP/dos.log"
+    kill -9 "$DOS_PID" 2>/dev/null
+elif [ -n "${DOS_PORT:-}" ]; then
     # Three clients that connect and close without sending a byte. Before the fix
     # the FIRST one killed the server.
     python3 - "$DOS_PORT" <<'PY' >/dev/null 2>&1

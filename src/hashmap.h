@@ -36,6 +36,11 @@ void hashmap_insert_string(WynHashMap* map, const char* key, const char* value);
 void hashmap_insert_bool(WynHashMap* map, const char* key, int value);
 void hashmap_insert_ptr(WynHashMap* map, const char* key, void* value);
 
+// Render as {"k": v, ...} into a caller buffer; returns the length that WOULD be
+// written, snprintf-style, so callers can size then fill. Defined in hashmap.c
+// because only that file sees struct WynHashMap and the real value type tags.
+int hashmap_format(WynHashMap* map, char* out, size_t cap);
+
 // Generic get (returns HashMapValue)
 HashMapValue hashmap_get(WynHashMap* map, const char* key);
 
@@ -45,6 +50,28 @@ double hashmap_get_float(WynHashMap* map, const char* key);
 char* hashmap_get_string(WynHashMap* map, const char* key);
 int hashmap_get_bool(WynHashMap* map, const char* key);
 void* hashmap_get_ptr(WynHashMap* map, const char* key);
+
+// Map-with-AGGREGATE-values (struct, and Option/Result, whose C representation
+// IS a struct): heap-box the value and store it as a ptr entry; the reader casts
+// back and dereferences. Mirrors array_push_struct/array_get_struct for the
+// HashMap value slot so `m[k] = Account{...}` / `m[k].balance` round-trip.
+//
+// These live HERE, not in wyn_runtime.h, because both runtime headers include
+// this file and only one of them defined them. `--release` uses
+// wyn_runtime_slim.h, which includes hashmap.h precisely so it does not restate
+// prototypes that could drift - but a macro cannot be picked up that way, so
+// every aggregate-valued map was rejected under `--release` alone with
+// `call to undeclared function 'hashmap_insert_struct'` (surfaced to the user,
+// confusingly, as "unknown method 'HashMap.insert_struct'"). One definition, both
+// headers. wyn_malloc/memcpy are resolved at the macro's USE site in generated C,
+// after every include, so this placement needs no ordering guarantee.
+#define hashmap_insert_struct(map, key, value, StructType) do { \
+    StructType __hm_tmp = (value); \
+    StructType* __hm_box = (StructType*)wyn_malloc(sizeof(StructType)); \
+    memcpy(__hm_box, &__hm_tmp, sizeof(StructType)); \
+    hashmap_insert_ptr((map), (key), __hm_box); \
+} while(0)
+#define hashmap_index_struct(map, key, StructType) (*(StructType*)hashmap_get_ptr((map), (key)))
 
 // Index-read getters for `m[k]`: panic (with file/line/key) on a missing key,
 // rather than silently returning 0/"". `.get`/`.has` do NOT use these.
@@ -56,6 +83,9 @@ int    hashmap_index_bool_impl(WynHashMap* map, const char* key, const char* fil
 void hashmap_remove(WynHashMap* map, const char* key);
 bool hashmap_has(WynHashMap* map, const char* key);
 int hashmap_len(WynHashMap* map);
+// The name types.c lowers `map.is_empty()` to. Declared beside hashmap_len for the same
+// reason hashset.h declares wyn_hashset_is_empty beside wyn_hashset_len.
+int wyn_hashmap_is_empty(WynHashMap* map);
 void hashmap_free(WynHashMap* map);
 
 // Legacy compatibility (defaults to int)

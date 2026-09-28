@@ -1,0 +1,65 @@
+// Regression: a `Result<T, E>` struct FIELD did not exist. Two independent halves:
+//
+//   struct S { r: Result<int, string> }
+//   s = S { r: Ok(1) }
+//   print(s.r.is_ok())
+//
+//   -> Error at line 4: struct 'S' has no field 'r'
+//
+// The checker's field resolver had a branch for `f: T?` / `f: Option<T>` and none for
+// Result, so it returned NULL - and the CALLER reports NULL as "has no field", naming a
+// field declared right there in the struct. That is why this read as a parser or scoping
+// bug rather than a missing type resolution.
+//
+// Underneath it, codegen's struct typedef emitted the field as `long long` while the
+// initializer emitted `ResultInt_Ok(1)`, so even with the checker fixed the C would not
+// compile. Option fields already emitted their family; Result fields fell through.
+//
+// EXPECT: true
+// EXPECT: 7
+// EXPECT: 4
+// EXPECT: hi
+// EXPECT: true
+// EXPECT: Ok(1)
+// EXPECT: true
+// EXPECT: 2
+// EXPECT: 9
+
+struct S { r: Result<int, string> }
+struct T { r: Result<string, string> }
+struct P { x: int }
+struct WithStruct { r: Result<P, string> }
+// A field of each kind alongside a Result one - the field OFFSETS must stay right, which
+// a wrong C type for one field silently breaks.
+struct Mixed { a: int, r: Result<int, string>, b: int }
+
+fn main() {
+    s = S { r: Ok(1) }
+    print(s.r.is_ok())
+
+    u = S { r: Ok(7) }
+    print(u.r.unwrap())
+
+    // match on the field.
+    m = S { r: Ok(4) }
+    y = match m.r { Ok(v) => v, Err(e) => -1 }
+    print(y)
+
+    // A string ok payload, and an Err initializer whose family agrees.
+    t = T { r: Ok("hi") }
+    print(t.r.unwrap())
+    te = T { r: Err("bad") }
+    print(te.r.is_err())
+
+    // Printing the field must agree with every other renderer.
+    print(s.r)
+
+    // A struct ok payload needs the per-program family.
+    ws = WithStruct { r: Ok(P { x: 2 }) }
+    print(ws.r.is_ok())
+    print(ws.r.unwrap().x)
+
+    // Neighbouring fields must still read correctly.
+    mx = Mixed { a: 5, r: Ok(1), b: 9 }
+    print(mx.b)
+}

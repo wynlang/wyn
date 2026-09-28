@@ -1,9 +1,24 @@
 fn main() -> int {
     Test.init("HTTP Server E2E")
-    var server = Http.serve(18768)
+    // The port is WALKED, and the scratch file is NAMED AFTER IT. Both were fixed
+    // before, and sibling agents run this suite concurrently out of separate
+    // worktrees: the fixed port made the loser of the bind race report the clash as
+    // a Wyn defect, and the fixed /tmp path let two copies overwrite each other's
+    // response - a wrong answer with exit 0, which is worse. Gated by
+    // tests/errors/run_test_port_hygiene_test.sh.
+    var port = 18768
+    var server = -1
+    var tries = 0
+    while tries < 64 {
+        server = Http.serve(port)
+        if server > 0 { break }
+        port = port + 1
+        tries = tries + 1
+    }
     Test.assert(server > 0, "server started")
-    
-    System.exec_code("(curl -s http://localhost:18768/api/test > /tmp/wyn_srv_final.txt) &")
+
+    var out_path = "/tmp/wyn_srv_final_${port}.txt"
+    System.exec_code("(curl -s http://localhost:${port}/api/test > ${out_path}) &")
     sleep_ms(200)
     
     var sep = "|"
@@ -19,11 +34,11 @@ fn main() -> int {
     Http.respond(fd, 200, "application/json", "{\"ok\":true}")
     sleep_ms(500)
     
-    var result = File.read("/tmp/wyn_srv_final.txt").trim()
+    var result = File.read(out_path).trim()
     Test.assert_eq_str(result, "{\"ok\":true}", "client got JSON response")
-    
+
     Http.close_server(server)
-    File.delete("/tmp/wyn_srv_final.txt")
+    File.delete(out_path)
     Test.summary()
     return 0
 }

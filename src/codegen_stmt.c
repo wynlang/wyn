@@ -137,6 +137,77 @@ static void codegen_hoist_nested_bare_assigns(Stmt** stmts, int count) {
 
 // Check if expression produces a fresh RC string that needs release
 // Conservative: only match patterns known to allocate new strings
+// The C return type for an impl-block method's declared return annotation.
+//
+// ONE copy. This decision existed TWICE - the forward-declaration emitter in
+// codegen_program.c and the definition emitter in this file - as two byte-identical
+// chains that MUST name the same type or C reports "conflicting types for '<fn>'".
+// Both copies also:
+//
+//   - hardcoded `Option<T>` -> OptionInt and `Result<T,E>` -> ResultInt, so any non-int
+//     payload emitted the WRONG family (`-> Option<string>` returned an OptionString
+//     from an OptionInt function);
+//   - did not handle the `T?` spelling at all, so it fell through to "long long" and an
+//     impl method returning `int?` returned an OptionInt from a `long long` function
+//     while `wyn check` reported no errors;
+//   - did not handle `[T]`, same fall-through.
+//
+// A free function with any of those signatures always worked, because only the free-fn
+// emitters had learned these spellings.
+static const char* wyn_method_c_return_type(FnStmt* method) {
+    static char buf[192];
+    if (!method || !method->return_type) return "long long";
+    Expr* rt = method->return_type;
+    extern const char* wyn_option_family(const char*, const char**, int*);
+    extern const char* register_result_family_for_types(const char*, const char*);
+
+    if (rt->type == EXPR_OPTIONAL_TYPE) {
+        Expr* inner = rt->optional_type.inner_type;
+        if (inner && inner->type == EXPR_IDENT) {
+            char pn[96]; token_to_cstr(pn, sizeof(pn), inner->token);
+            snprintf(buf, sizeof(buf), "%s", wyn_option_family(pn, NULL, NULL));
+            return buf;
+        }
+        return "WynOptional*";
+    }
+    if (rt->type == EXPR_ARRAY) return "WynArray";
+    if (rt->type == EXPR_CALL && rt->call.callee && rt->call.callee->type == EXPR_IDENT) {
+        Token c = rt->call.callee->token;
+        if (c.length == 6 && memcmp(c.start, "Option", 6) == 0) {
+            if (rt->call.arg_count >= 1 && rt->call.args[0]->type == EXPR_IDENT) {
+                char pn[96]; token_to_cstr(pn, sizeof(pn), rt->call.args[0]->token);
+                snprintf(buf, sizeof(buf), "%s", wyn_option_family(pn, NULL, NULL));
+                return buf;
+            }
+            return "OptionInt";
+        }
+        if (c.length == 6 && memcmp(c.start, "Result", 6) == 0) {
+            // Same naming authority the checker uses, and it REGISTERS the family as a
+            // side effect - which is what emits the struct for a non-builtin one.
+            char okn[96] = "int"; char ern[96] = "string";
+            if (rt->call.arg_count >= 1 && rt->call.args[0]->type == EXPR_IDENT)
+                token_to_cstr(okn, sizeof(okn), rt->call.args[0]->token);
+            if (rt->call.arg_count >= 2 && rt->call.args[1]->type == EXPR_IDENT)
+                token_to_cstr(ern, sizeof(ern), rt->call.args[1]->token);
+            snprintf(buf, sizeof(buf), "%s", register_result_family_for_types(okn, ern));
+            return buf;
+        }
+        if (c.length == 7 && memcmp(c.start, "HashMap", 7) == 0) return "WynHashMap*";
+        if (c.length == 7 && memcmp(c.start, "HashSet", 7) == 0) return "WynHashSet*";
+        if (c.length == 5 && memcmp(c.start, "Array", 5) == 0) return "WynArray";
+    }
+    if (rt->type == EXPR_IDENT) {
+        Token t = rt->token;
+        if (t.length == 3 && memcmp(t.start, "int", 3) == 0) return "long long";
+        if (t.length == 5 && memcmp(t.start, "float", 5) == 0) return "double";
+        if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) return "bool";
+        if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return "const char*";
+        token_to_cstr(buf, sizeof(buf), t);   // custom struct/enum
+        return buf;
+    }
+    return "long long";
+}
+
 static bool is_fresh_string_temp(Expr* e) {
     if (!e) return false;
     // String concat (binary + with at least one string operand) always allocates
@@ -656,11 +727,63 @@ void codegen_stmt(Stmt* stmt) {
                         } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
                             c_type = "WynHashSet*";
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
+                            // `o: Option<T> = ...`. Prefer the concrete family the
+                            // checker resolved from the ANNOTATION - the same rule the
+                            // inferred `o = Some(5)` branch further down already applies
+                            // to the INIT. Declaring the boxed WynOptional* here while
+                            // the initializer is monomorphic is a type error in the
+                            // generated C, and the method calls that follow are
+                            // monomorphic too (`Option_is_some` came out undeclared).
                             c_type = "WynOptional*";
                             needs_arc_management = true;
+                            if (stmt->var.init && stmt->var.init->expr_type &&
+                                stmt->var.init->expr_type->kind == TYPE_STRUCT &&
+                                stmt->var.init->expr_type->struct_type.name.length > 0) {
+                                static char _oavbuf[128];
+                                token_to_cstr(_oavbuf, sizeof(_oavbuf),
+                                              stmt->var.init->expr_type->struct_type.name);
+                                if (strncmp(_oavbuf, "Option", 6) == 0) {
+                                    c_type = _oavbuf;
+                                    needs_arc_management = false;
+                                    char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                                    extern void register_enum_var(const char*, const char*);
+                                    register_enum_var(_vn, _oavbuf);
+                                }
+                            }
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
+                            // `r: Result<T,E> = ...`. Prefer the concrete family the
+                            // checker resolved from the ANNOTATION, exactly as the Option
+                            // branch above does and as the inferred `r = Ok(5)` branch
+                            // further down already does for the INIT (#342).
                             c_type = "WynResult*";
                             needs_arc_management = true;
+                            // The ANNOTATION's family wins over the initializer's. A
+                            // Result family depends on E as well as the ok payload, and a
+                            // bare `Err(42)` / `Ok(P{..})` does not know E - it resolves
+                            // to ResultInt / ResultP where the annotation says
+                            // ResultInt_int / ResultP_E. Since the METHODS are resolved
+                            // from the annotation, declaring from the initializer gave
+                            // "passing 'ResultInt' to parameter of incompatible type
+                            // 'ResultInt_int'". The checker records what the annotation
+                            // resolved to on the annotation node.
+                            Type* _rann = stmt->var.type->expr_type;
+                            Type* _rsrc = (_rann && _rann->kind == TYPE_STRUCT &&
+                                           _rann->struct_type.name.length > 0)
+                                        ? _rann
+                                        : (stmt->var.init ? stmt->var.init->expr_type : NULL);
+                            if (_rsrc && _rsrc->kind == TYPE_STRUCT &&
+                                _rsrc->struct_type.name.length > 0) {
+                                static char _ravbuf[128];
+                                token_to_cstr(_ravbuf, sizeof(_ravbuf),
+                                              _rsrc->struct_type.name);
+                                if (strncmp(_ravbuf, "Result", 6) == 0) {
+                                    c_type = _ravbuf;
+                                    needs_arc_management = false;
+                                    char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                                    extern void register_enum_var(const char*, const char*);
+                                    register_enum_var(_vn, _ravbuf);
+                                }
+                            }
                         }
                     }
                 } else if (stmt->var.type->type == EXPR_IDENT) {
@@ -690,7 +813,26 @@ void codegen_stmt(Stmt* stmt) {
                     }
                 }
             } else if (stmt->var.init) {
-                // Infer type from initializer if no explicit type
+                // Infer type from initializer if no explicit type.
+                //
+                // A call the checker typed `bool` declares a `bool`, asked of the SAME
+                // authority that decides how the expression renders
+                // (cg_expr_is_bool_typed, codegen_expr.c). Both halves of the type
+                // decision have to agree or the variable and the direct call print
+                // differently - the recurring shape of this defect family.
+                //
+                // Not redundant with the cast at the emit site: the two `::` and `.`
+                // spellings of one namespace call are different AST shapes, and the
+                // `::` one (a single EXPR_CALL ident) fell through this chain to
+                // `__auto_type`. That resolves to `bool` from a `(bool)` initializer
+                // on clang/gcc, but wyn_runtime.h #defines `__auto_type` to
+                // `long long` for TinyCC - which `wyn run` uses whenever the prebuilt
+                // runtime lib is absent. Naming `bool` here makes it the same answer
+                // on every backend.
+                if (cg_expr_is_bool_typed(stmt->var.init)) {
+                    c_type = "bool";
+                    goto var_type_done;
+                }
                 if (stmt->var.init->type == EXPR_STRING) {
                     c_type = "const char*";
                     is_already_const = true;
@@ -1164,7 +1306,7 @@ void codegen_stmt(Stmt* stmt) {
                                 c_type = "WynHashSet*";
                                 break;
                             case TYPE_JSON:
-                                c_type = "WynJson*";
+                                c_type = "long long";   // a Json value is its arena handle
                                 break;
                             case TYPE_STRUCT: {
                                 static char method_struct_buf[256];
@@ -1265,7 +1407,7 @@ void codegen_stmt(Stmt* stmt) {
                             } else if (strcmp(return_type, "void") == 0) {
                                 c_type = "void";
                             } else if (strcmp(return_type, "json") == 0) {
-                                c_type = "WynJson*";
+                                c_type = "long long";   // a Json value is its arena handle
                             } else if (strcmp(return_type, "map") == 0) {
                                 c_type = "WynHashMap*";  // group_by result
                             }
@@ -1421,9 +1563,33 @@ void codegen_stmt(Stmt* stmt) {
                         needs_arc_management = true;
                     }
                 } else if (stmt->var.init->type == EXPR_OK || stmt->var.init->type == EXPR_ERR) {
-                    // TASK-026: Result type
-                    c_type = "WynResult*";
-                    needs_arc_management = true;
+                    // Same rule as the Some(...)/None branch above, which this branch was
+                    // missing: prefer the concrete Result family the checker resolved
+                    // (ResultInt/ResultString/... or a per-program family named for a struct
+                    // payload) over the boxed WynResult*.
+                    //
+                    // `r = Ok(5)` emits `ResultInt_Ok(5)` for the initializer, so a boxed
+                    // declaration is a type error in the generated C before the value is even
+                    // used - and every later operation is monomorphic too, so `match r`,
+                    // `r.unwrap()` and `r.is_ok()` all failed the same way. Binding the
+                    // IDENTICAL value from a function call (`r = f()`) always worked, and so
+                    // did `o = Some(5)`, which is what made this look like a print or a
+                    // Result-rendering bug rather than one missing type decision.
+                    if (stmt->var.init->expr_type && stmt->var.init->expr_type->kind == TYPE_STRUCT &&
+                        stmt->var.init->expr_type->struct_type.name.length > 0) {
+                        static char _rsvbuf[128];
+                        token_to_cstr(_rsvbuf, sizeof(_rsvbuf), stmt->var.init->expr_type->struct_type.name);
+                        if (strncmp(_rsvbuf, "Result", 6) == 0) {
+                            c_type = _rsvbuf;
+                            needs_arc_management = false;
+                            char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
+                            extern void register_enum_var(const char*, const char*);
+                            register_enum_var(_vn, _rsvbuf);
+                        } else { c_type = "WynResult*"; needs_arc_management = true; }
+                    } else {
+                        c_type = "WynResult*";
+                        needs_arc_management = true;
+                    }
                 } else if (stmt->var.init->type == EXPR_OPT_CHAIN) {
                     // `var x = opt?.field` - the checker resolved the result Option
                     // family (Option<FieldType>); use it and register for match.
@@ -3651,6 +3817,31 @@ void codegen_stmt(Stmt* stmt) {
                                stmt->struct_decl.field_types[i]->call.callee &&
                                stmt->struct_decl.field_types[i]->call.callee->type == EXPR_IDENT &&
                                stmt->struct_decl.field_types[i]->call.callee->token.length == 6 &&
+                               memcmp(stmt->struct_decl.field_types[i]->call.callee->token.start, "Result", 6) == 0 &&
+                               stmt->struct_decl.field_types[i]->call.arg_count >= 1) {
+                        // A `Result<T, E>` field. Option fields already emitted their
+                        // family here; Result fields fell through to `long long` while the
+                        // initializer emitted `ResultInt_Ok(1)`, so the struct did not
+                        // compile. Combined with the checker reporting the field as
+                        // missing, "Result fields do not exist" was the net effect.
+                        //
+                        // register_result_family_for_types is the same naming authority the
+                        // checker uses, and it REGISTERS the family, which is what emits
+                        // the struct for a non-builtin one.
+                        Expr* _rft = stmt->struct_decl.field_types[i];
+                        char _rok[96] = "int"; char _rer[96] = "string";
+                        if (_rft->call.arg_count >= 1 && _rft->call.args[0]->type == EXPR_IDENT)
+                            token_to_cstr(_rok, sizeof(_rok), _rft->call.args[0]->token);
+                        if (_rft->call.arg_count >= 2 && _rft->call.args[1]->type == EXPR_IDENT)
+                            token_to_cstr(_rer, sizeof(_rer), _rft->call.args[1]->token);
+                        extern const char* register_result_family_for_types(const char*, const char*);
+                        static char _rsf[128];
+                        snprintf(_rsf, sizeof(_rsf), "%s", register_result_family_for_types(_rok, _rer));
+                        c_type = _rsf;
+                    } else if (stmt->struct_decl.field_types[i]->type == EXPR_CALL &&
+                               stmt->struct_decl.field_types[i]->call.callee &&
+                               stmt->struct_decl.field_types[i]->call.callee->type == EXPR_IDENT &&
+                               stmt->struct_decl.field_types[i]->call.callee->token.length == 6 &&
                                memcmp(stmt->struct_decl.field_types[i]->call.callee->token.start, "Option", 6) == 0 &&
                                stmt->struct_decl.field_types[i]->call.arg_count == 1) {
                         // Generic optional field `f: Option<T>` (parsed as an
@@ -4204,29 +4395,7 @@ void codegen_stmt(Stmt* stmt) {
             for (int i = 0; i < stmt->impl.method_count; i++) {
                 FnStmt* method = stmt->impl.methods[i];
                 
-                // Determine return type
-                const char* return_type = "long long";
-                if (method->return_type && method->return_type->type == EXPR_CALL &&
-                    method->return_type->call.callee->type == EXPR_IDENT) {
-                    Token rt = method->return_type->call.callee->token;
-                    if (rt.length == 6 && memcmp(rt.start, "Result", 6) == 0) return_type = "ResultInt";
-                    else if (rt.length == 6 && memcmp(rt.start, "Option", 6) == 0) return_type = "OptionInt";
-                } else if (method->return_type && method->return_type->type == EXPR_IDENT) {
-                    Token ret_type = method->return_type->token;
-                    if (ret_type.length == 3 && memcmp(ret_type.start, "int", 3) == 0) {
-                        return_type = "long long";
-                    } else if (ret_type.length == 5 && memcmp(ret_type.start, "float", 5) == 0) {
-                        return_type = "double";
-                    } else if (ret_type.length == 4 && memcmp(ret_type.start, "bool", 4) == 0) {
-                        return_type = "bool";
-                    } else if (ret_type.length == 6 && memcmp(ret_type.start, "string", 6) == 0) {
-                        return_type = "const char*";
-                    } else {
-                        // Custom struct/enum return type
-                        static char impl_ret_buf[128]; token_to_cstr(impl_ret_buf, sizeof(impl_ret_buf), ret_type);
-                        return_type = impl_ret_buf;
-                    }
-                }
+                const char* return_type = wyn_method_c_return_type(method);
                 
                 emit("%s %.*s_%.*s(", return_type,
                      stmt->impl.type_name.length, stmt->impl.type_name.start,

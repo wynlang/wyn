@@ -411,7 +411,7 @@ void init_checker() {
     result_int_is_ok_type->fn_type.param_count = 1;
     result_int_is_ok_type->fn_type.param_types = malloc(sizeof(Type*));
     result_int_is_ok_type->fn_type.param_types[0] = result_int_type;
-    result_int_is_ok_type->fn_type.return_type = builtin_int;
+    result_int_is_ok_type->fn_type.return_type = builtin_bool;
     Token result_int_is_ok_tok = {TOKEN_IDENT, "ResultInt_is_ok", 15, 0};
     add_symbol(global_scope, result_int_is_ok_tok, result_int_is_ok_type, false);
     
@@ -419,7 +419,7 @@ void init_checker() {
     result_int_is_err_type->fn_type.param_count = 1;
     result_int_is_err_type->fn_type.param_types = malloc(sizeof(Type*));
     result_int_is_err_type->fn_type.param_types[0] = result_int_type;
-    result_int_is_err_type->fn_type.return_type = builtin_int;
+    result_int_is_err_type->fn_type.return_type = builtin_bool;
     Token result_int_is_err_tok = {TOKEN_IDENT, "ResultInt_is_err", 16, 0};
     add_symbol(global_scope, result_int_is_err_tok, result_int_is_err_type, false);
     
@@ -443,7 +443,7 @@ void init_checker() {
     result_string_is_ok_type->fn_type.param_count = 1;
     result_string_is_ok_type->fn_type.param_types = malloc(sizeof(Type*));
     result_string_is_ok_type->fn_type.param_types[0] = result_string_type;
-    result_string_is_ok_type->fn_type.return_type = builtin_int;
+    result_string_is_ok_type->fn_type.return_type = builtin_bool;
     Token result_string_is_ok_tok = {TOKEN_IDENT, "ResultString_is_ok", 18, 0};
     add_symbol(global_scope, result_string_is_ok_tok, result_string_is_ok_type, false);
     
@@ -451,7 +451,7 @@ void init_checker() {
     result_string_is_err_type->fn_type.param_count = 1;
     result_string_is_err_type->fn_type.param_types = malloc(sizeof(Type*));
     result_string_is_err_type->fn_type.param_types[0] = result_string_type;
-    result_string_is_err_type->fn_type.return_type = builtin_int;
+    result_string_is_err_type->fn_type.return_type = builtin_bool;
     Token result_string_is_err_tok = {TOKEN_IDENT, "ResultString_is_err", 19, 0};
     add_symbol(global_scope, result_string_is_err_tok, result_string_is_err_type, false);
     
@@ -513,7 +513,7 @@ void init_checker() {
     oi_is_some_t->fn_type.param_count = 1;
     oi_is_some_t->fn_type.param_types = malloc(sizeof(Type*));
     oi_is_some_t->fn_type.param_types[0] = option_int_type;
-    oi_is_some_t->fn_type.return_type = builtin_int;
+    oi_is_some_t->fn_type.return_type = builtin_bool;
     Token oi_is_some_tok = {TOKEN_IDENT, "OptionInt_is_some", 17, 0};
     add_symbol(global_scope, oi_is_some_tok, oi_is_some_t, false);
 
@@ -521,7 +521,7 @@ void init_checker() {
     oi_is_none_t->fn_type.param_count = 1;
     oi_is_none_t->fn_type.param_types = malloc(sizeof(Type*));
     oi_is_none_t->fn_type.param_types[0] = option_int_type;
-    oi_is_none_t->fn_type.return_type = builtin_int;
+    oi_is_none_t->fn_type.return_type = builtin_bool;
     Token oi_is_none_tok = {TOKEN_IDENT, "OptionInt_is_none", 17, 0};
     add_symbol(global_scope, oi_is_none_tok, oi_is_none_t, false);
 
@@ -567,7 +567,7 @@ void init_checker() {
     os_is_some_t->fn_type.param_count = 1;
     os_is_some_t->fn_type.param_types = malloc(sizeof(Type*));
     os_is_some_t->fn_type.param_types[0] = option_string_type;
-    os_is_some_t->fn_type.return_type = builtin_int;
+    os_is_some_t->fn_type.return_type = builtin_bool;
     Token os_is_some_tok = {TOKEN_IDENT, "OptionString_is_some", 20, 0};
     add_symbol(global_scope, os_is_some_tok, os_is_some_t, false);
 
@@ -575,7 +575,7 @@ void init_checker() {
     os_is_none_t->fn_type.param_count = 1;
     os_is_none_t->fn_type.param_types = malloc(sizeof(Type*));
     os_is_none_t->fn_type.param_types[0] = option_string_type;
-    os_is_none_t->fn_type.return_type = builtin_int;
+    os_is_none_t->fn_type.return_type = builtin_bool;
     Token os_is_none_tok = {TOKEN_IDENT, "OptionString_is_none", 20, 0};
     add_symbol(global_scope, os_is_none_tok, os_is_none_t, false);
 
@@ -618,14 +618,14 @@ void init_checker() {
     optionfloat_is_some_t->fn_type.param_count = 1;
     optionfloat_is_some_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
     optionfloat_is_some_t->fn_type.param_types[0] = optionfloat_type;
-    optionfloat_is_some_t->fn_type.return_type = builtin_int;
+    optionfloat_is_some_t->fn_type.return_type = builtin_bool;
     Token optionfloat_is_some_tok = {TOKEN_IDENT, "OptionFloat_is_some", 19, 0};
     add_symbol(global_scope, optionfloat_is_some_tok, optionfloat_is_some_t, false);
     Type* optionfloat_is_none_t = make_type(TYPE_FUNCTION);
     optionfloat_is_none_t->fn_type.param_count = 1;
     optionfloat_is_none_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
     optionfloat_is_none_t->fn_type.param_types[0] = optionfloat_type;
-    optionfloat_is_none_t->fn_type.return_type = builtin_int;
+    optionfloat_is_none_t->fn_type.return_type = builtin_bool;
     Token optionfloat_is_none_tok = {TOKEN_IDENT, "OptionFloat_is_none", 19, 0};
     add_symbol(global_scope, optionfloat_is_none_tok, optionfloat_is_none_t, false);
     Type* optionfloat_unwrap_t = make_type(TYPE_FUNCTION);
@@ -666,14 +666,14 @@ void init_checker() {
     optionbool_is_some_t->fn_type.param_count = 1;
     optionbool_is_some_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
     optionbool_is_some_t->fn_type.param_types[0] = optionbool_type;
-    optionbool_is_some_t->fn_type.return_type = builtin_int;
+    optionbool_is_some_t->fn_type.return_type = builtin_bool;
     Token optionbool_is_some_tok = {TOKEN_IDENT, "OptionBool_is_some", 18, 0};
     add_symbol(global_scope, optionbool_is_some_tok, optionbool_is_some_t, false);
     Type* optionbool_is_none_t = make_type(TYPE_FUNCTION);
     optionbool_is_none_t->fn_type.param_count = 1;
     optionbool_is_none_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
     optionbool_is_none_t->fn_type.param_types[0] = optionbool_type;
-    optionbool_is_none_t->fn_type.return_type = builtin_int;
+    optionbool_is_none_t->fn_type.return_type = builtin_bool;
     Token optionbool_is_none_tok = {TOKEN_IDENT, "OptionBool_is_none", 18, 0};
     add_symbol(global_scope, optionbool_is_none_tok, optionbool_is_none_t, false);
     Type* optionbool_unwrap_t = make_type(TYPE_FUNCTION);
@@ -715,14 +715,14 @@ void init_checker() {
     resultfloat_is_ok_t->fn_type.param_count = 1;
     resultfloat_is_ok_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
     resultfloat_is_ok_t->fn_type.param_types[0] = resultfloat_type;
-    resultfloat_is_ok_t->fn_type.return_type = builtin_int;
+    resultfloat_is_ok_t->fn_type.return_type = builtin_bool;
     Token resultfloat_is_ok_tok = {TOKEN_IDENT, "ResultFloat_is_ok", 17, 0};
     add_symbol(global_scope, resultfloat_is_ok_tok, resultfloat_is_ok_t, false);
     Type* resultfloat_is_err_t = make_type(TYPE_FUNCTION);
     resultfloat_is_err_t->fn_type.param_count = 1;
     resultfloat_is_err_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
     resultfloat_is_err_t->fn_type.param_types[0] = resultfloat_type;
-    resultfloat_is_err_t->fn_type.return_type = builtin_int;
+    resultfloat_is_err_t->fn_type.return_type = builtin_bool;
     Token resultfloat_is_err_tok = {TOKEN_IDENT, "ResultFloat_is_err", 18, 0};
     add_symbol(global_scope, resultfloat_is_err_tok, resultfloat_is_err_t, false);
     Type* resultfloat_unwrap_t = make_type(TYPE_FUNCTION);
@@ -771,14 +771,14 @@ void init_checker() {
     resultbool_is_ok_t->fn_type.param_count = 1;
     resultbool_is_ok_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
     resultbool_is_ok_t->fn_type.param_types[0] = resultbool_type;
-    resultbool_is_ok_t->fn_type.return_type = builtin_int;
+    resultbool_is_ok_t->fn_type.return_type = builtin_bool;
     Token resultbool_is_ok_tok = {TOKEN_IDENT, "ResultBool_is_ok", 16, 0};
     add_symbol(global_scope, resultbool_is_ok_tok, resultbool_is_ok_t, false);
     Type* resultbool_is_err_t = make_type(TYPE_FUNCTION);
     resultbool_is_err_t->fn_type.param_count = 1;
     resultbool_is_err_t->fn_type.param_types = malloc(sizeof(Type*) * 1);
     resultbool_is_err_t->fn_type.param_types[0] = resultbool_type;
-    resultbool_is_err_t->fn_type.return_type = builtin_int;
+    resultbool_is_err_t->fn_type.return_type = builtin_bool;
     Token resultbool_is_err_tok = {TOKEN_IDENT, "ResultBool_is_err", 17, 0};
     add_symbol(global_scope, resultbool_is_err_tok, resultbool_is_err_t, false);
     Type* resultbool_unwrap_t = make_type(TYPE_FUNCTION);
@@ -928,18 +928,21 @@ void init_checker() {
         add_symbol(global_scope, tok, ft, false);
     }
     
-    // JSON stdlib
-    Type* json_obj_type = make_type(TYPE_MAP);
+    // JSON stdlib - the lowercase free-function spelling. TYPE_JSON, not TYPE_MAP:
+    // these are aliases of the capital-J handle functions, so `json_new()` yields a
+    // Json (method dispatch works on it) and every param takes a Json handle. Typing
+    // them TYPE_MAP made `json_get_int(json_parse(s), k)` fail the arg check with
+    // "Expected: map (HashMap<string, int>), Got: int" - the two-representation split
+    // showing up as a bogus error on correct code.
+    Type* json_obj_type = make_type(TYPE_JSON);
     struct { const char* name; int pc; Type* p1; Type* p2; Type* p3; Type* ret; } json_fns[] = {
         {"json_new", 0, NULL, NULL, NULL, json_obj_type},
         {"json_set_string", 3, json_obj_type, builtin_string, builtin_string, builtin_void},
         {"json_set_int", 3, json_obj_type, builtin_string, builtin_int, builtin_void},
-        // param0 is the JSON handle. json_parse() is registered (blanket loop) as
-        // a plain int handle, so accept int here (not json_obj_type) or a var
-        // holding a parsed doc fails the arg check. Return type MUST be string so
-        // `s = json_get_string(..)` infers string everywhere, not just in
-        // print/interp position (json_get_int stays shadowed as unchecked int).
-        {"json_get_string", 2, builtin_int, builtin_string, NULL, builtin_string},
+        // Return type MUST be string so `s = json_get_string(..)` infers string
+        // everywhere, not just in print/interp position (json_get_int stays shadowed
+        // as unchecked int).
+        {"json_get_string", 2, json_obj_type, builtin_string, NULL, builtin_string},
         {"json_get_int", 2, json_obj_type, builtin_string, NULL, builtin_int},
         {"json_stringify", 1, json_obj_type, NULL, NULL, builtin_string},
         {"Regex_match", 2, builtin_string, builtin_string, NULL, builtin_bool},
@@ -985,17 +988,25 @@ void init_checker() {
         }
     }
 
-    // File namespace methods
+    // File namespace methods.
+    //
+    // The three predicates are `bool`, agreeing with wyn_runtime.h's definitions
+    // (`bool File_exists(const char*)`) and with the entries in
+    // lookup_module_fn_return_type (types.c). While they were `int` here, the SYMBOL
+    // lookup in the `::` path found int and returned before the table could be
+    // consulted, so `File::exists(".")` printed `1` while `File.exists(".")` printed
+    // `true` - the latter only because the C declaration happens to be `bool`. No
+    // program in tests/, examples/ or demos/ compares any of the 62 uses to 0 or 1.
     struct { const char* name; int pc; Type* p1; Type* p2; Type* ret; } file_ns_fns[] = {
         {"File_read", 1, builtin_string, NULL, builtin_string},
         {"File_write", 2, builtin_string, builtin_string, builtin_int},
-        {"File_exists", 1, builtin_string, NULL, builtin_int},
+        {"File_exists", 1, builtin_string, NULL, builtin_bool},
         {"File_delete", 1, builtin_string, NULL, builtin_int},
         {"File_copy", 2, builtin_string, builtin_string, builtin_int},
         {"File_move", 2, builtin_string, builtin_string, builtin_int},
         {"File_size", 1, builtin_string, NULL, builtin_int},
-        {"File_is_dir", 1, builtin_string, NULL, builtin_int},
-        {"File_is_file", 1, builtin_string, NULL, builtin_int},
+        {"File_is_dir", 1, builtin_string, NULL, builtin_bool},
+        {"File_is_file", 1, builtin_string, NULL, builtin_bool},
         {"File_mkdir", 1, builtin_string, NULL, builtin_int},
         {"File_list_dir", 1, builtin_string, NULL, builtin_string},
         {"File_append", 2, builtin_string, builtin_string, builtin_int},
@@ -1054,18 +1065,20 @@ void init_checker() {
     reg_fn("HashSet_new", set_type, 0);
 
     // Json namespace
-    // TYPE_JSON, not TYPE_MAP. A WynJson* is NOT a WynHashMap*: typing it as a map made
+    // TYPE_JSON, not TYPE_MAP. A Json handle is NOT a WynHashMap*: typing it as a map made
     // codegen declare `var j = Json.new()` as `WynHashMap*` AND register it for the
-    // scope-exit `hashmap_free()`, so a Json.set() followed by that free walked a WynJson
-    // as a hashmap and ABORTED (exit 134). codegen_stmt.c already maps TYPE_JSON ->
-    // "WynJson*", and the hashmap scope-free only triggers on the WynHashMap* c_type, so
-    // naming the real type fixes both halves.
+    // scope-exit `hashmap_free()`, so a Json.set() followed by that free walked the value
+    // as a hashmap and ABORTED (exit 134). codegen_stmt.c maps TYPE_JSON -> "long long"
+    // (the arena handle), and the hashmap scope-free only triggers on the WynHashMap*
+    // c_type, so naming the real type fixes both halves.
     Type* json_type = make_type(TYPE_JSON);
     struct { const char* name; int pc; Type* p1; Type* p2; Type* p3; Type* ret; } json_ns_fns[] = {
         {"Json_new", 0, NULL, NULL, NULL, json_type},
         {"Json_set_string", 3, json_type, builtin_string, builtin_string, builtin_void},
         {"Json_set_int", 3, json_type, builtin_string, builtin_int, builtin_void},
+        {"Json_set_float", 3, json_type, builtin_string, builtin_float, builtin_void},
         {"Json_set_bool", 3, json_type, builtin_string, builtin_int, builtin_void},
+        {"Json_set_null", 2, json_type, builtin_string, NULL, builtin_void},
         // Json_get_string and Json_get_int moved to new_fns for flexible type checking
         // {"Json_get_string", 2, json_type, builtin_string, NULL, builtin_string},
         // {"Json_get_int", 2, json_type, builtin_string, NULL, builtin_int},
@@ -1279,12 +1292,21 @@ void init_checker() {
 
     // New module registrations
     struct { const char* name; int nparams; Type* ret; } new_fns[] = {
-        {"Json_parse", 1, builtin_int},
+        // json_type, not builtin_int: a parsed document carries the Json type so the
+        // METHOD form dispatches (`doc.get_string("k")` used to emit nothing at all,
+        // because an int receiver has no json method table). can_convert_type() makes
+        // Json and int interchangeable - the handle IS a long long - so the many
+        // existing programs that hold one in an `int` keep checking.
+        {"Json_parse", 1, json_type},
         {"Json_stringify", 1, builtin_string},
         {"Json_get", 2, builtin_string},
         {"Json_get_string", 2, builtin_string},
         {"Json_get_int", 2, builtin_int},
         {"Json_has", 2, builtin_int},
+        // The only way to learn that a parse failed: the handle is an arena index, so
+        // 0 is a valid document and there is no in-band error value.
+        {"Json_is_valid", 1, builtin_bool},
+        {"Json_free", 1, builtin_void},
         // Json_keys registered separately below with its real [string] return
         // type (find_symbol returns the first match, so no builtin_string entry
         // here may shadow it).
@@ -1360,7 +1382,14 @@ void init_checker() {
         {"Http_get_json", 1, builtin_int},
         {"Http_post_json", 2, builtin_int},
         {"Json_get_float", 2, builtin_float},
-        {"Json_get_bool", 2, builtin_int},
+        // `bool`, agreeing with the json RECEIVER table's {"json","get_bool","bool"}
+        // (types.c). While this said int, `Json.get_bool(d, "k")` and
+        // `d.get_bool("k")` were two types for one call: once codegen started
+        // rendering a bool-typed call as true/false from one authority
+        // (cg_expr_is_bool_typed), the receiver spelling printed `true` and the
+        // namespace spelling still printed `1`. Json.has stays int in BOTH tables on
+        // purpose - see the note beside it in types.c.
+        {"Json_get_bool", 2, builtin_bool},
         {"Json_get_array", 2, builtin_int},
         {"Json_get_object", 2, builtin_int},
         {"File_glob", 1, builtin_string},

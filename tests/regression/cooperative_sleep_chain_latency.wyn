@@ -75,7 +75,7 @@ fn chain(n: int) {
     // busy-spin - in a capacity-independent way (CPU-seconds, not wall clock).
     // The specific 50ms-park regression is already rejected and cannot return
     // without also failing review; a proper latency gate on a dedicated capable
-    // runner is tracked for later (internal-docs).
+    // runner is tracked for later (internal planning notes).
     // Bare "ok" FIRST - run_bdd.sh matches EXPECT line-by-line from the top, so
     // the gated assertion is line 1 = "ok", i.e. "the chain completed and reached
     // here", which is capacity-independent. The latency line follows for a human

@@ -85,6 +85,84 @@ static const char* hashmap_insert_fn_for(Expr* value_expr) {
     return "hashmap_insert_int";
 }
 
+// THE authority for emitting "store this value into this map".
+//
+// A map value is either a SCALAR (int/string/float/bool -> a typed
+// hashmap_insert_*, chosen by hashmap_insert_fn_for above) or an AGGREGATE
+// (a struct, and also Option/Result, whose C representation IS a struct ->
+// hashmap_insert_struct, which heap-boxes the value and therefore needs the C
+// type NAME as a fourth macro argument).
+//
+// That two-branch decision used to exist in FOUR copies - `m[k] = v`,
+// `m.set(k, v)`, `HashMap::set(m, k, v)` and the `{"k": v}` literal - and only
+// ONE of them (`m[k] = v`) had the aggregate branch at all. So `m["k"] = Some(1)`
+// worked while `{"k": Some(1)}` emitted
+// `hashmap_insert_int(__map_0, "k", OptionInt_Some(1))`: a C type error AFTER a
+// completely clean `wyn check`. Two lists of the same thing is a defect shape,
+// and the incomplete copy is the one that bites. There is one list now.
+//
+// The map is given either as an Expr (`m[k] = v`, `m.set()`) or as an already-
+// rendered C expression (the literal builds into a `__map_N` temp it has just
+// emitted); exactly one of map_e / map_c is non-NULL.
+//
+// allow_aggregate is 0 only for the compound form `m[k] += v`, which re-reads
+// m[k] and is scalar-only - it kept the pre-existing scalar-only behaviour rather
+// than acquiring a new one here.
+void codegen_expr(Expr* expr);
+static void emit_hashmap_store(Expr* map_e, const char* map_c, Expr* key_e,
+                               Expr* value_e, int allow_aggregate) {
+    char agg[160]; int is_agg = 0;
+    if (allow_aggregate && value_e) {
+        // The box type is the CHECKER's type for the value, deliberately - it is
+        // the same type the READ side uses. `m[k]` emits
+        // `hashmap_index_struct(m, k, <checker's map value_type>)`, so the box and
+        // the read must be named from one source or the value does not come back.
+        //
+        // The tempting alternative is cg_optlike_family(), the authority the
+        // EXPR_OK/EXPR_ERR/EXPR_SOME emitters use to name the CONSTRUCTOR. It was
+        // tried and is WRONG here, and the way it is wrong matters: for
+        //     fn f() -> Option<string> { m = {"k": Some(1)} ... }
+        // wyn_option_ctor_kind resolves a bare constructor from the enclosing
+        // function's return kind before the payload, so it answers OptionString for
+        // an int payload. Boxing as OptionString then AGREES with the constructor
+        // and DISAGREES with the OptionInt read - which compiles, survives the full
+        // runtime header by struct-layout luck, and returns 0 under --release.
+        // Naming the box from the checker instead keeps box and read in step; where
+        // the constructor disagrees, the C compiler says so LOUDLY. A loud error
+        // beats a silent wrong answer, which is the entire point of this ticket.
+        // (That precedence bug in wyn_option_ctor_kind is logged separately.)
+        Token stn = {0};
+        if (value_e->type == EXPR_STRUCT_INIT) {
+            stn = value_e->struct_init.type_name;
+        } else if (value_e->expr_type && value_e->expr_type->kind == TYPE_STRUCT) {
+            stn = value_e->expr_type->struct_type.name.start
+                      ? value_e->expr_type->struct_type.name
+                      : value_e->expr_type->name;
+        }
+        if (stn.start && stn.length > 0) {
+            // NOTE: spells the struct type with a bare current_module_prefix rather
+            // than the wyn_struct_needs_prefix() predicate, preserving the
+            // `m[k] = v` path's output byte-for-byte. The two disagree for a struct
+            // declared inside an imported module; that is a separate defect, logged
+            // as one rather than changed under cover of this fix.
+            if (current_module_prefix)
+                snprintf(agg, sizeof(agg), "%s_%.*s", current_module_prefix, stn.length, stn.start);
+            else
+                snprintf(agg, sizeof(agg), "%.*s", stn.length, stn.start);
+            is_agg = 1;
+        }
+    }
+    if (is_agg) emit("hashmap_insert_struct(");
+    else        emit("%s(", hashmap_insert_fn_for(value_e));
+    if (map_c) emit("%s", map_c); else codegen_expr(map_e);
+    emit(", ");
+    codegen_expr(key_e);
+    emit(", ");
+    codegen_expr(value_e);
+    if (is_agg) emit(", %s)", agg);
+    else        emit(")");
+}
+
 // A string pushed into an array transfers ownership: array_push_str stores the
 // pointer without retaining, and array_free releases it. So a local string var
 // pushed into an array must NOT also be released at scope exit - that would
@@ -233,6 +311,31 @@ static const char* wyn_ctor_family(Type* payload, const char* kind) {
 // return kind - both name the exact declared family and must win over inference;
 // (3) the payload's own type (so bare `Some(x)`/`Ok(x)`/`Err(x)` work anywhere);
 // (4) the int family as the catch-all default. `kind` is "Option" or "Result".
+// Emit an assignment's RHS with the TARGET's Option/Result family in scope.
+//
+// A bare `Err(x)` / `Ok(x)` / `Some(x)` picks its family from the PAYLOAD when nothing
+// tells it otherwise, so a reassignment disagreed with the variable's own family:
+//
+//     r = Ok(5)          // r is ResultInt
+//     r = Err("bad")     // ResultString_Err(...) -> error: assigning to 'ResultInt'
+//                        //   from incompatible type 'ResultString'
+//
+// The var-decl path has set current_assign_target_kind for exactly this reason since the
+// annotation work; assignment never did. Wrapped in a helper because `case EXPR_ASSIGN`
+// emits its RHS from five different branches and has six exits - a save/restore spanning
+// the case would leak the context to whatever Some/Ok/Err came next.
+static void cg_assign_rhs_with_target_family(Expr* assign) {
+    extern const char* current_assign_target_kind;
+    const char* _prev = current_assign_target_kind;
+    char _tn[256]; token_to_cstr(_tn, sizeof(_tn), assign->assign.name);
+    extern const char* get_enum_var_type(const char*);
+    const char* _fam = get_enum_var_type(_tn);
+    if (_fam && (strncmp(_fam, "Option", 6) == 0 || strncmp(_fam, "Result", 6) == 0))
+        current_assign_target_kind = _fam;
+    codegen_expr(assign->assign.value);
+    current_assign_target_kind = _prev;
+}
+
 static const char* wyn_option_ctor_kind(Expr* e, const char* kind) {
     extern const char* current_assign_target_kind;
     extern const char* current_fn_return_kind;
@@ -243,7 +346,160 @@ static const char* wyn_option_ctor_kind(Expr* e, const char* kind) {
     return wyn_ctor_family(e->option.value ? e->option.value->expr_type : NULL, kind);
 }
 
+// Do we have a <fam>_to_string renderer for this Option/Result family? Two
+// sources: the eight builtin payload families in wyn_runtime.h, and the
+// monomorphic Option<Struct> / Option<Option…> families codegen_program emits a
+// renderer for per program (it must, because they name user types a shared
+// runtime cannot see). A Result<Struct> family still has none, so it keeps its
+// old path rather than calling a function nobody defines.
+static int cg_optlike_has_renderer(const char* fam) {
+    static const char* known[] = {
+        "OptionInt", "OptionString", "OptionFloat", "OptionBool",
+        "ResultInt", "ResultString", "ResultFloat", "ResultBool",
+    };
+    if (!fam) return 0;
+    for (size_t i = 0; i < sizeof(known) / sizeof(known[0]); i++)
+        if (strcmp(fam, known[i]) == 0) return 1;
+    extern int is_registered_option_struct(const char*);
+    if (strncmp(fam, "Option", 6) == 0 && is_registered_option_struct(fam + 6)) return 1;
+    // The Result registry is keyed by the FAMILY name, not the payload name, so
+    // this asks with `fam` where the Option check strips the prefix.
+    extern int is_registered_result_struct(const char*);
+    if (strncmp(fam, "Result", 6) == 0 && is_registered_result_struct(fam)) return 1;
+    return 0;
+}
+
+// Resolve the Option/Result C family for an expression about to be PRINTED, in
+// any syntactic form. Returns a static string ("OptionInt", …), or NULL if the
+// expression is not Option/Result-like or has no renderer.
+//
+// Shape-independent by design, and that is the whole fix: the renderer this
+// replaces was gated on `parg->type == EXPR_IDENT`, so `println(o)` printed
+// Some(5) while `println(Some(5))` - the identical value written inline - failed
+// to build, as did every print() and every "${o}".
+static const char* cg_optlike_family(Expr* e) {
+    if (!e) return NULL;
+    const char* fam = NULL;
+    // A Some/none/Ok/Err constructor names its own family, annotation-aware.
+    if (e->type == EXPR_SOME || e->type == EXPR_NONE)
+        fam = wyn_option_ctor_kind(e, "Option");
+    else if (e->type == EXPR_OK || e->type == EXPR_ERR)
+        fam = wyn_option_ctor_kind(e, "Result");
+    // Otherwise the checker's type is the authority - it covers call results,
+    // struct fields and index expressions with one test.
+    if (!fam && e->expr_type && e->expr_type->kind == TYPE_STRUCT &&
+        e->expr_type->struct_type.name.length > 0) {
+        static char nb[128];
+        token_to_cstr(nb, sizeof(nb), e->expr_type->struct_type.name);
+        if (strncmp(nb, "Option", 6) == 0 || strncmp(nb, "Result", 6) == 0) fam = nb;
+    }
+    // Last resort: the codegen enum-var registry. The checker often does not
+    // propagate a struct type onto a bare ident reference, which is why the
+    // registry exists and why the old ident-only path consulted it.
+    if (!fam && e->type == EXPR_IDENT) {
+        char vn[128]; token_to_cstr(vn, sizeof(vn), e->token);
+        extern const char* get_enum_var_type(const char*);
+        const char* t = get_enum_var_type(vn);
+        if (t && (strncmp(t, "Option", 6) == 0 || strncmp(t, "Result", 6) == 0)) fam = t;
+    }
+    return cg_optlike_has_renderer(fam) ? fam : NULL;
+}
+
+// Element type name for an array about to be PRINTED whose elements are boxed
+// structs, or NULL. Boxed elements carry no type name at runtime, so the generic
+// formatters can only print `<struct>`; codegen_program emits a
+// __wyn_arrstr_<Name> for exactly the element types the checker saw printed, and
+// this is the guard that decides whether to call one.
+static const char* cg_array_elem_helper(Expr* e) {
+    if (!e || !e->expr_type || e->expr_type->kind != TYPE_ARRAY) return NULL;
+    Type* el = e->expr_type->array_type.element_type;
+    if (!el) return NULL;
+    static char nb[128];
+    if (el->kind == TYPE_STRUCT && el->struct_type.name.length > 0) {
+        token_to_cstr(nb, sizeof(nb), el->struct_type.name);
+    } else if (el->kind == TYPE_OPTIONAL && el->optional_type.inner_type) {
+        // An ANNOTATED `[int?]` keeps its element as TYPE_OPTIONAL; the same
+        // array inferred from a `-> int?` call is already the lowered
+        // TYPE_STRUCT. Route both through the family authority so the two
+        // spellings cannot render differently.
+        Type* in = el->optional_type.inner_type;
+        const char* pn = NULL;
+        char ib[96];
+        if (in->kind == TYPE_STRING)      pn = "string";
+        else if (in->kind == TYPE_FLOAT)  pn = "float";
+        else if (in->kind == TYPE_BOOL)   pn = "bool";
+        else if (in->kind == TYPE_INT)    pn = "int";
+        else if (in->kind == TYPE_STRUCT && in->struct_type.name.length > 0) {
+            token_to_cstr(ib, sizeof(ib), in->struct_type.name); pn = ib;
+        } else if (in->kind == TYPE_ENUM && in->name.length > 0) {
+            token_to_cstr(ib, sizeof(ib), in->name); pn = ib;
+        }
+        if (!pn) return NULL;
+        extern const char* wyn_option_family(const char*, const char**, int*);
+        snprintf(nb, sizeof(nb), "%s", wyn_option_family(pn, NULL, NULL));
+    } else {
+        return NULL;
+    }
+    extern int is_printed_array_elem(const char*);
+    if (!is_printed_array_elem(nb)) return NULL;
+    // Ask the same two questions the emitter asks, so a call is never emitted
+    // for a helper that was skipped.
+    if (cg_optlike_has_renderer(nb)) return nb;
+    extern int cg_struct_has_str_helper(Token name);
+    Token et = {TOKEN_IDENT, nb, (int)strlen(nb), 0};
+    if (cg_struct_has_str_helper(et)) return nb;
+    return NULL;
+}
+
+// THE bool-in-print authority: does this expression have to reach C with the static
+// type `bool`?
+//
+// print(), println(), to_string() and wyn_out_append() all dispatch with C's
+// _Generic on the STATIC TYPE of what they are handed (wyn_runtime.h,
+// wyn_runtime_slim.h). So "a bool renders as true/false" is not a property of the
+// runtime helper a call lowers to - it is a property of the C type at the call site.
+// The checker already decided the Wyn type once and recorded it in expr_type
+// (checker.c, via lookup_method_return_type / lookup_module_fn_return_type); this is
+// the single place codegen honours that decision.
+//
+// It replaces a cast hand-written at one emit site per spelling. That is why the
+// 2026-08 fix made `print(arr.contains(3))` say `true` while every one of these still
+// said `1`: the five string `is_*` predicates, `.equals`, the five `int` predicates,
+// the three `float` predicates, `.exists`/`.is_file`/`.is_dir`, `set.contains`,
+// `contains` on a FLOAT array (the cast covered two of the three helpers),
+// `map.get` on a bool-valued map, `Json.is_valid`, `Json.get_bool` and `Random.bool`.
+// Per-spelling casting does not converge; the rule has to be stated once. The full,
+// currently-verified list is the table in tests/errors/run_bool_in_print_test.sh.
+//
+// Deliberately scoped to the CALL shapes. A call is always an r-value in C, so the
+// cast can never land on an lvalue (`&flag`, `flag = x`, `xs[i] = x`). Every other
+// bool source already carries a `bool` C type on its own: a literal, a comparison,
+// a declared `bool` variable, a `bool` struct field, a `bool` array element.
+int cg_expr_is_bool_typed(Expr* expr) {
+    if (!expr) return 0;
+    if (!expr->expr_type || expr->expr_type->kind != TYPE_BOOL) return 0;
+    return expr->type == EXPR_CALL || expr->type == EXPR_METHOD_CALL;
+}
+
+static void codegen_expr_inner(Expr* expr);
+
 void codegen_expr(Expr* expr) {
+    // The one application site of the rule above. Casting here rather than inside
+    // each call's emitter is what makes every spelling agree: a method call on a
+    // value, `Ns.method()`, `Ns::method()` (a different AST shape and a different C
+    // symbol - see #369), the same call inside `${}` (which lowers to to_string of
+    // this very expression), and a call used as an `if` condition - where the cast
+    // changes the C type and not the value, so truthiness is untouched.
+    if (cg_expr_is_bool_typed(expr)) {
+        emit("(bool)(");
+        codegen_expr_inner(expr);
+        emit(")");
+        return;
+    }
+    codegen_expr_inner(expr);
+}
+
+static void codegen_expr_inner(Expr* expr) {
     if (!expr) return;
     // If this expr was pre-evaluated to a temp, emit the temp name
     if (expr->_codegen_temp_id >= 0 && expr->_codegen_temp_id < 1000) {
@@ -1332,14 +1588,8 @@ void codegen_expr(Expr* expr) {
                 // `m[k]=v` and `m.set()` forms already dispatch via hashmap_insert_fn_for;
                 // this closes the last untyped store path.
                 if (fn.length == 12 && memcmp(fn.start, "HashMap::set", 12) == 0 && expr->call.arg_count == 3) {
-                    const char* insert_func = hashmap_insert_fn_for(expr->call.args[2]);
-                    emit("%s(", insert_func);
-                    codegen_expr(expr->call.args[0]);
-                    emit(", ");
-                    codegen_expr(expr->call.args[1]);
-                    emit(", ");
-                    codegen_expr(expr->call.args[2]);
-                    emit(")");
+                    emit_hashmap_store(expr->call.args[0], NULL, expr->call.args[1],
+                                       expr->call.args[2], 1);
                     break;
                 }
             }
@@ -1452,13 +1702,19 @@ void codegen_expr(Expr* expr) {
                         pos[npos++] = expr->call.args[i];
                     }
 
+                    // Buffer the whole line and emit it with ONE fwrite. Emitting
+                    // per-argument interleaves across the M:N scheduler: measured
+                    // 362-690 malformed lines out of 1600 under 8 spawns, where
+                    // single-arg println (which already emits one call) gave 0.
+                    // NOT flockfile(stdout) - an argument may contain an `await`,
+                    // and holding stdout's lock across a yield can deadlock.
                     bool prev_skip = codegen_skip_strdup;
-                    emit("({ ");
+                    emit("({ WynOut __wo; wyn_out_begin(&__wo); ");
                     for (int i = 0; i < npos; i++) {
                         Expr* parg = pos[i];
                         if (i > 0) {
-                            if (sep_arg) { emit("print_no_nl("); codegen_expr(sep_arg); emit("); "); }
-                            else emit("printf(\" \"); ");
+                            if (sep_arg) { emit("wyn_out_append(&__wo, "); codegen_expr(sep_arg); emit("); "); }
+                            else emit("wyn_out_str(&__wo, \" \"); ");
                         }
                         // Per-arg escape analysis + string-temp handling, mirroring
                         // the old single-arg path: a fresh string temp (interp /
@@ -1483,18 +1739,58 @@ void codegen_expr(Expr* expr) {
                             !(parg->method_call.object->expr_type && parg->method_call.object->expr_type->kind == TYPE_STRING)) {
                             _print_temp = true;
                         }
-                        if (_print_temp && parg->_codegen_temp_id < 0) {
+                        // A struct argument goes through the same
+                        // __wyn_str_<Name> helper interpolation uses. Without this
+                        // the _Generic below picks `default: wyn_out_int` and casts
+                        // the struct to long long - print(struct) failed to build,
+                        // and a nested-struct or array field broke println too,
+                        // while "${v}" rendered the same value correctly. The
+                        // helper returns a fresh +1 RC string, so release it after
+                        // buffering. Guard and emission consult the same registry
+                        // (registered by the checker's print/println branch), so a
+                        // struct without a helper falls through unchanged.
+                        extern int cg_struct_has_str_helper(Token name);
+                        bool _print_struct = (!_print_temp && parg->expr_type &&
+                            parg->expr_type->kind == TYPE_STRUCT &&
+                            parg->expr_type->struct_type.name.length > 0 &&
+                            cg_struct_has_str_helper(parg->expr_type->struct_type.name));
+                        // An Option/Result argument goes through its family
+                        // renderer for the same reason, and this branch must be
+                        // tested BEFORE _print_struct: the families ARE C structs,
+                        // so a `cg_struct_has_str_helper` lookup would never match
+                        // them and they would fall through to wyn_out_append ->
+                        // `default: wyn_out_int`, which is the pointer-as-decimal
+                        // bug for `none` and a hard build failure for `Some(v)`.
+                        // An array of boxed structs renders through the typed
+                        // element helper; without it the generic formatter can
+                        // only print <struct> per element.
+                        const char* _print_arrel = _print_temp ? NULL : cg_array_elem_helper(parg);
+                        const char* _print_optfam = _print_temp ? NULL : cg_optlike_family(parg);
+                        if (_print_arrel) {
+                            emit("{ const char* __pae = __wyn_arrstr_%s(", _print_arrel);
+                            codegen_expr(parg);
+                            emit("); wyn_out_str(&__wo, __pae); wyn_rc_release(__pae); } ");
+                        } else if (_print_optfam) {
+                            emit("{ const char* __pot = %s_to_string(", _print_optfam);
+                            codegen_expr(parg);
+                            emit("); wyn_out_str(&__wo, __pot); wyn_rc_release(__pot); } ");
+                        } else if (_print_struct) {
+                            Token _sn = parg->expr_type->struct_type.name;
+                            emit("{ const char* __pst = __wyn_str_%.*s(", _sn.length, _sn.start);
+                            codegen_expr(parg);
+                            emit("); wyn_out_str(&__wo, __pst); wyn_rc_release(__pst); } ");
+                        } else if (_print_temp && parg->_codegen_temp_id < 0) {
                             emit("{ const char* __ps = "); codegen_expr(parg);
-                            emit("; print_no_nl(__ps); wyn_rc_release(__ps); } ");
+                            emit("; wyn_out_str(&__wo, __ps); wyn_rc_release(__ps); } ");
                         } else {
-                            emit("print_no_nl("); codegen_expr(parg); emit("); ");
+                            emit("wyn_out_append(&__wo, "); codegen_expr(parg); emit("); ");
                         }
                         codegen_skip_strdup = prev_skip;
                     }
                     // Terminator: default newline, or the given end= string.
-                    if (end_arg) { emit("print_no_nl("); codegen_expr(end_arg); emit("); "); }
-                    else emit("printf(\"\\n\"); ");
-                    emit("})");
+                    if (end_arg) { emit("wyn_out_append(&__wo, "); codegen_expr(end_arg); emit("); "); }
+                    else emit("wyn_out_str(&__wo, \"\\n\"); ");
+                    emit("wyn_out_flush(&__wo); })");
                     codegen_skip_strdup = prev_skip;
                 }
             } else if (expr->call.callee->type == EXPR_IDENT && 
@@ -1526,11 +1822,48 @@ void codegen_expr(Expr* expr) {
                 // newline, matching print(arr) but with the trailing '\n'.
                 if (!arg_is_string && parg->expr_type &&
                     (parg->expr_type->kind == TYPE_ARRAY)) {
+                    // Same typed-element path as print(); one printf keeps the
+                    // line atomic like the other println_* branches.
+                    const char* _plnarrel = cg_array_elem_helper(parg);
+                    if (_plnarrel) {
+                        emit("({ const char* __pae = __wyn_arrstr_%s(", _plnarrel);
+                        codegen_expr(parg);
+                        emit("); printf(\"%%s\\n\", __pae); wyn_rc_release(__pae); })");
+                        codegen_skip_strdup = prev_skip;
+                        break;
+                    }
                     emit("({ print_array_no_nl(");
                     codegen_expr(parg);
                     emit("); printf(\"\\n\"); })");
                     codegen_skip_strdup = prev_skip;
                     break;
+                }
+                // A map has no to_string, so it used to fall through to the
+                // integer path and print the map POINTER as a decimal number -
+                // check-clean, exit 0, meaningless. One printf keeps the line
+                // atomic like the other println_* paths.
+                if (!arg_is_string && parg->expr_type &&
+                    parg->expr_type->kind == TYPE_MAP) {
+                    emit("({ const char* __pms = map_to_string(");
+                    codegen_expr(parg);
+                    emit("); printf(\"%%s\\n\", __pms); wyn_rc_release(__pms); })");
+                    codegen_skip_strdup = prev_skip;
+                    break;
+                }
+                // println(Option) / println(Result): one renderer, shared with
+                // print() and with interpolation, resolved from the expression's
+                // TYPE rather than its syntactic shape. It must be tested before
+                // the struct block below, because an Option family IS a C struct
+                // and would otherwise be looked up as a user struct.
+                if (!arg_is_string) {
+                    const char* _plnfam = cg_optlike_family(parg);
+                    if (_plnfam) {
+                        emit("({ const char* __pot = %s_to_string(", _plnfam);
+                        codegen_expr(parg);
+                        emit("); printf(\"%%s\\n\", __pot); wyn_rc_release(__pot); })");
+                        codegen_skip_strdup = prev_skip;
+                        break;
+                    }
                 }
                 // println(struct): print "Name { field: value, ... }" by
                 // looking up the struct declaration from current_program.
@@ -1553,32 +1886,32 @@ void codegen_expr(Expr* expr) {
                         extern const char* get_struct_var_type(const char*);
                         _psn = get_struct_var_type(_pvn);
                     }
-                    // println(Option): print "Some(v)" / "none" from the tag.
-                    // Detect via the enum-var registry OR the checker typing
-                    // the ident as an Option* family struct (_psn) - falling
-                    // through to to_string(opt) passed the struct by value to
-                    // a long long param - an internal codegen error.
-                    if (!arg_is_string && parg->type == EXPR_IDENT) {
-                        char _pvn[128]; token_to_cstr(_pvn, sizeof(_pvn), parg->token);
-                        extern const char* get_enum_var_type(const char*);
-                        const char* _oet = get_enum_var_type(_pvn);
-                        if (!_oet && _psn && strncmp(_psn, "Option", 6) == 0) _oet = _psn;
-                        if (_oet && strncmp(_oet, "Option", 6) == 0) {
-                            const char* _fam = _oet + 6;
-                            const char* _fmt =
-                                strcmp(_fam, "String") == 0 ? "printf(\"Some(\\\"%%s\\\")\\n\", %s.value);"
-                              : strcmp(_fam, "Float") == 0  ? "printf(\"Some(\"); print_float_no_nl(%s.value); printf(\")\\n\");"
-                              : strcmp(_fam, "Bool") == 0   ? "printf(\"Some(%%s)\\n\", %s.value ? \"true\" : \"false\");"
-                              : "printf(\"Some(%%lld)\\n\", (long long)%s.value);";
-                            emit("({ if (%s.tag == 1) { ", _pvn);
-                            emit(_fmt, _pvn);
-                            emit(" } else { printf(\"none\\n\"); } })");
-                            codegen_skip_strdup = prev_skip;
-                            break;
-                        }
-                    }
+                    // The ident-only Option renderer that used to sit here is
+                    // gone: it duplicated the family formats inline, so the four
+                    // payload types could drift from print()'s and from
+                    // interpolation's, and being keyed on EXPR_IDENT it was the
+                    // reason a variable printed while the same value written
+                    // inline did not compile. The single renderer is above.
                     if (_psn) {
                     Token _sn = {TOKEN_IDENT, _psn, (int)strlen(_psn), 0};
+                    // Prefer the __wyn_str_<Name> helper that codegen_program
+                    // emits and interpolation already uses: it renders nested
+                    // structs, arrays and floats correctly. The inline
+                    // field-by-field printf below casts every non-scalar field to
+                    // (long long), so a struct with a nested-struct or array field
+                    // did not compile - while "${v}" on the same value worked.
+                    // One printf, so the line stays atomic like the other
+                    // println_* paths. Falls through to the inline renderer for a
+                    // struct with no helper (e.g. generic instantiations, which
+                    // cg_struct_has_str_helper excludes).
+                    extern int cg_struct_has_str_helper(Token name);
+                    if (cg_struct_has_str_helper(_sn)) {
+                        emit("({ const char* __pst = __wyn_str_%.*s(", _sn.length, _sn.start);
+                        codegen_expr(parg);
+                        emit("); printf(\"%%s\\n\", __pst); wyn_rc_release(__pst); })");
+                        codegen_skip_strdup = prev_skip;
+                        break;
+                    }
                     // Find the struct declaration to get field names and types.
                     extern Program* current_program;
                     StructStmt* _sd = NULL;
@@ -2688,126 +3021,39 @@ void codegen_expr(Expr* expr) {
                     }
                 }
                 if (!is_local && is_loaded_module) {
-                    // Special case: some modules use lowercase C functions
-                    if (strcmp(module_name, "Http") == 0) {
-                        // Http.get/post/put/delete -> http_ (simple string API)
-                        // Http.serve/accept/respond/close_server -> Http_ (server API)
-                        if (method.length == 3 && memcmp(method.start, "get", 3) == 0) {
-                            emit("http_get(");
-                        } else if (method.length == 4 && memcmp(method.start, "post", 4) == 0) {
-                            emit("http_post(");
-                        } else if (method.length == 3 && memcmp(method.start, "put", 3) == 0) {
-                            emit("http_put(");
-                        } else if (method.length == 6 && memcmp(method.start, "delete", 6) == 0) {
-                            emit("http_delete(");
-                        } else if (method.length == 10 && memcmp(method.start, "set_header", 10) == 0) {
-                            emit("http_set_header(");
-                        } else {
-                            // Server methods: serve, accept, respond, close_server
-                            emit("Http_%.*s(", method.length, method.start);
-                        }
-                    } else if (strcmp(module_name, "Regex") == 0) {
-                        emit("regex_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "HashMap") == 0) {
-                        // Map common methods to correct C functions
-                        if (method.length == 3 && memcmp(method.start, "get", 3) == 0) {
-                            emit("hashmap_get_string(");
-                        } else if (method.length == 3 && memcmp(method.start, "set", 3) == 0) {
-                            emit("hashmap_set(");
-                        } else if (method.length == 3 && memcmp(method.start, "has", 3) == 0) {
-                            emit("hashmap_has(");
-                        // set_int / set_string / set_float / set_bool: the runtime
-                        // spells these hashmap_insert_*, so the blanket
-                        // `hashmap_<method>` mangling below emitted hashmap_set_int
-                        // and friends - undeclared, so a program using the obvious
-                        // name (`set` and `get_int` both exist) passed `wyn check`
-                        // and failed the C compile. types.c registers map.set_int
-                        // as a real method, so the checker was right to accept it.
-                        } else if ((method.length == 7 && memcmp(method.start, "set_int", 7) == 0) ||
-                                   (method.length == 10 && memcmp(method.start, "set_string", 10) == 0) ||
-                                   (method.length == 9 && memcmp(method.start, "set_float", 9) == 0) ||
-                                   (method.length == 8 && memcmp(method.start, "set_bool", 8) == 0)) {
-                            emit("hashmap_insert_%.*s(", method.length - 4, method.start + 4);
-                        } else {
-                            emit("hashmap_%.*s(", method.length, method.start);
-                        }
-                    } else if (strcmp(module_name, "HashSet") == 0) {
-                        emit("hashset_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Task") == 0) {
-                        // Task API maps directly to Task_ prefix. try_recv is the
-                        // exception: the Wyn-facing form returns int? (OptionInt),
-                        // so it lowers to the Task_try_recv_opt shim (built on the
-                        // pointer out-param Task_try_recv that Wyn can't express).
-                        if (method.length == 8 && memcmp(method.start, "try_recv", 8) == 0) {
-                            emit("Task_try_recv_opt(");
-                        } else {
-                            emit("Task_%.*s(", method.length, method.start);
-                        }
-                    } else if (strcmp(module_name, "File") == 0) {
-                        // File maps to File_ prefix (wrappers in runtime)
-                        emit("File_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Net") == 0) {
-                        emit("Net_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Url") == 0) {
-                        emit("Url_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Db") == 0) {
-                        emit("Db_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Gui") == 0) {
-                        emit("Gui_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Audio") == 0) {
-                        emit("Audio_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "StringBuilder") == 0) {
-                        emit("StringBuilder_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Crypto") == 0) {
-                        emit("Crypto_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Template") == 0) {
-                        emit("Template_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Encoding") == 0) {
-                        emit("Encoding_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Os") == 0) {
-                        emit("Os_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Uuid") == 0) {
-                        emit("Uuid_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Log") == 0) {
-                        emit("Log_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Process") == 0) {
-                        emit("Process_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "String") == 0) {
-                        if (method.length == 4 && memcmp(method.start, "char", 4) == 0) {
-                            emit("String_char_from_int(");
-                        } else if (method.length == 10 && memcmp(method.start, "from_chars", 10) == 0) {
-                            emit("String_from_chars(");
-                        } else {
-                            emit("String_%.*s(", method.length, method.start);
-                        }
-                    } else if (strcmp(module_name, "Random") == 0) {
-                        emit("random_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Web") == 0) {
-                        emit("Web_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Smtp") == 0) {
-                        emit("Smtp_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "App") == 0) {
-                        emit("App_%.*s(", method.length, method.start);
-                    } else if (strcmp(module_name, "Shared") == 0) {
-                        emit("Shared_%.*s(", method.length, method.start);
+                    // The C symbol a builtin-namespace call lowers to is decided by
+                    // wyn_namespace_c_symbol() (types.c): ONE authority, shared with
+                    // the checker. This was a 26-branch if-chain over namespace names
+                    // right here, and because the checker could not consult it, it had
+                    // no way to tell `HashMap.set_int` (real - the runtime spells it
+                    // hashmap_insert_int) from `HashMap.set_intt` (not real), so it
+                    // accepted BOTH and clang reported the second one against a symbol
+                    // the programmer never wrote. The mapping moved; the emitted
+                    // strings did not (the golden-C snapshots pin that).
+                    //
+                    // An `extern fn` declared by a module keeps precedence, exactly as
+                    // it had when it was the first test in the fall-through below: it
+                    // names a symbol that already exists in a C library and must be
+                    // called UNPREFIXED.
+                    char _mfn[256]; token_to_cstr(_mfn, sizeof(_mfn), method);
+                    char _mnbuf[128]; token_to_cstr(_mnbuf, sizeof(_mnbuf), obj_name);
+                    const char* _mname = resolved_mod_name[0] ? resolved_mod_name : _mnbuf;
+                    extern bool is_module_extern_fn(const char*, const char*);
+                    extern int wyn_namespace_c_symbol(const char*, const char*, char*, size_t);
+                    char _nssym[320];
+                    if (!is_module_extern_fn(_mname, _mfn) &&
+                        wyn_namespace_c_symbol(module_name, _mfn, _nssym, sizeof(_nssym))) {
+                        emit("%s(", _nssym);
                     } else {
-                        // An `extern fn` declared by the module names a symbol
-                        // that already exists in a C library, so it must be
-                        // called UNPREFIXED - there is no `mymod_Thing_do` in
+                        // A USER module (or an `extern fn` it declares). An extern fn
+                        // names a symbol that already exists in a C library, so it must
+                        // be called UNPREFIXED - there is no `mymod_Thing_do` in
                         // libthing, only `Thing_do`. The declaration was already
                         // being emitted unprefixed (correctly); only the call
                         // site prefixed, so the two disagreed and the program
                         // failed to link. That made it impossible to put an FFI
                         // binding behind a Wyn module.
-                        char _mfn[256]; token_to_cstr(_mfn, sizeof(_mfn), method);
-                        extern bool is_module_extern_fn(const char*, const char*);
-                        const char* _mn = resolved_mod_name[0] ? resolved_mod_name : NULL;
-                        char _obuf[128];
-                        if (!_mn) {
-                            token_to_cstr(_obuf, sizeof(_obuf), obj_name);
-                            _mn = _obuf;
-                        }
-                        if (is_module_extern_fn(_mn, _mfn)) {
+                        if (is_module_extern_fn(_mname, _mfn)) {
                             emit("%.*s(", method.length, method.start);
                         } else if (resolved_mod_name[0]) {
                             // Use resolved module name if available (e.g., "lib/utils" -> "lib_utils")
@@ -3189,13 +3435,28 @@ void codegen_expr(Expr* expr) {
                     emit(")");
                     break;
                 }
-                // arr.sort_by(...): two forms.
-                //   1. key-fn lambda (Python sorted(key=), Kotlin sortedBy):
+                // arr.sort_by(...): two forms, ONE mechanism each.
+                //   1. key fn, ONE parameter (Python sorted(key=), Kotlin sortedBy):
                 //      xs.sort_by((p) => p.age) - monomorphized inline insertion
                 //      sort, key type from the lambda's return type. No void*
                 //      boxing: params/returns keep their native C ABI.
-                //   2. legacy 2-arg comparator fn name: xs.sort_by(cmp) where
-                //      fn cmp(a, b) - kept for back-compat (wyn_array_sort_by).
+                //   2. comparator, TWO parameters (C qsort / JS Array.sort order):
+                //      xs.sort_by((a, b) => b.n - a.n), or a named `fn cmp(a, b)`.
+                //      Monomorphized the same way, for the same reason.
+                //
+                // Form 2 used to be routed to wyn_array_sort_by(WynArray*,
+                // long long(*)(long long, long long)), which compares the int slot
+                // of a WynValue and so could only ever work for an int array - a
+                // struct array was a C type error, i.e. "internal codegen error"
+                // (V-19). It is now the SAME monomorphized sort as form
+                // 1, so there is one comparator mechanism rather than an int-only
+                // runtime helper plus a broken lambda path. wyn_array_sort_by stays
+                // exported for ABI reasons; nothing in codegen emits it any more.
+                //
+                // Both sorts are STABLE: the shift loop runs only while the key or
+                // comparator says strictly greater, so equal elements keep their
+                // input order. Sorting a report by one column then another depends
+                // on that.
                 if (method.length == 7 && memcmp(method.start, "sort_by", 7) == 0 && expr->method_call.arg_count == 1) {
                     Expr* _kf = expr->method_call.args[0];
                     bool _is_keyfn = _kf->type == EXPR_LAMBDA && _kf->lambda.param_count == 1;
@@ -3258,15 +3519,62 @@ void codegen_expr(Expr* expr) {
                         emit("__sa->data[__j + 1] = __tmp; } *__sa; })");
                         break;
                     }
-                    // Legacy comparator form: sort_by(cmp(a, b))
-                    emit("({ wyn_array_sort_by(&(");
-                    codegen_expr(expr->method_call.object);
-                    emit("), ");
-                    codegen_expr(expr->method_call.args[0]);
-                    emit("); ");
-                    codegen_expr(expr->method_call.object);
-                    emit("; })");
-                    break;
+                    // COMPARATOR form: sort_by((a, b) => ...) or sort_by(named_cmp).
+                    // Same monomorphized stable insertion sort as the key form
+                    // above; the only difference is that the comparator takes two
+                    // elements and its sign decides the order, so DESCENDING is
+                    // expressible (a key fn has no direction - that is why this
+                    // form has to exist and not just be a nicer spelling).
+                    {
+                        Type* _elem_t = object_type->array_type.element_type;
+                        char _ec[128]; const char* _ecp = _elem_t ? codegen_c_type_from_type(_elem_t) : NULL;
+                        snprintf(_ec, sizeof(_ec), "%s", _ecp ? _ecp : "long long");
+                        // The comparator's own RETURN type, not an assumed int: a
+                        // float-field comparator naturally returns the difference
+                        // (`(p, q) => p.price - q.price`), which is a double. A
+                        // hardcoded `long long (*)(...)` would be an incompatible
+                        // function-pointer assignment, i.e. a hard C error on
+                        // clang 16+.
+                        Type* _cret = NULL;
+                        if (_kf->expr_type && _kf->expr_type->kind == TYPE_FUNCTION)
+                            _cret = _kf->expr_type->fn_type.return_type;
+                        char _cc[128]; const char* _ccp = _cret ? codegen_c_type_from_type(_cret) : NULL;
+                        snprintf(_cc, sizeof(_cc), "%s", _ccp ? _ccp : "long long");
+                        bool _elem_is_struct = _elem_t && _elem_t->kind == TYPE_STRUCT;
+                        // A named var sorts in place (like .sort()); any other
+                        // receiver (literal, chain result) is not an lvalue, so
+                        // sort a temp copy and yield it.
+                        bool _sb_lvalue = expr->method_call.object->type == EXPR_IDENT;
+                        if (_sb_lvalue) {
+                            emit("({ WynArray* __sa = &(");
+                            codegen_expr(expr->method_call.object);
+                            emit("); ");
+                        } else {
+                            emit("({ WynArray __sc = ");
+                            codegen_expr(expr->method_call.object);
+                            emit("; WynArray* __sa = &__sc; ");
+                        }
+                        emit("%s (*__cmp)(%s, %s) = ", _cc, _ec, _ec);
+                        codegen_expr(_kf);
+                        emit("; for (int __i = 1; __i < __sa->count; __i++) { WynValue __tmp = __sa->data[__i]; int __j = __i - 1; ");
+                        // The element value carried in a WynValue slot, per kind -
+                        // same slot map the key form uses.
+                        char _cur[256], _key[256];
+                        if (_elem_is_struct) {
+                            snprintf(_cur, sizeof(_cur), "*(%s*)__sa->data[__j].data.struct_val", _ec);
+                            snprintf(_key, sizeof(_key), "*(%s*)__tmp.data.struct_val", _ec);
+                        } else {
+                            const char* _f =
+                                (_elem_t && _elem_t->kind == TYPE_STRING) ? "string_val"
+                                : (_elem_t && _elem_t->kind == TYPE_FLOAT) ? "float_val"
+                                : "int_val";
+                            snprintf(_cur, sizeof(_cur), "__sa->data[__j].data.%s", _f);
+                            snprintf(_key, sizeof(_key), "__tmp.data.%s", _f);
+                        }
+                        emit("while (__j >= 0 && __cmp(%s, %s) > 0) { __sa->data[__j + 1] = __sa->data[__j]; __j--; } ", _cur, _key);
+                        emit("__sa->data[__j + 1] = __tmp; } *__sa; })");
+                        break;
+                    }
                 }
                 // arr.max_by(f) / arr.min_by(f): element with the largest /
                 // smallest key (Kotlin maxBy, Rust max_by_key). Monomorphized
@@ -3362,19 +3670,20 @@ void codegen_expr(Expr* expr) {
                 // arr_contains - otherwise `["a"].contains("a")` was always 0.
                 if (method.length == 8 && memcmp(method.start, "contains", 8) == 0 && expr->method_call.arg_count == 1) {
                     Type* _et = object_type->array_type.element_type;
-                    // Both helpers are declared `int`, but `contains` is `bool` in Wyn:
-                    // without the cast, to_string()/print() dispatched on the integer
-                    // branch and printed `1` rather than `true`. Same reason as
-                    // any()/all() below.
+                    // Both helpers are declared `int` while `contains` is `bool` in Wyn.
+                    // No cast here: cg_expr_is_bool_typed() wraps the whole call once,
+                    // in codegen_expr. Casting at THIS site is what left a float-element
+                    // array's contains (array_contains_float, emitted from a different
+                    // branch above) and a dozen other bool spellings printing `1`.
                     if (_et && _et->kind == TYPE_STRING) {
-                        emit("(bool)array_contains_str(");
+                        emit("array_contains_str(");
                         codegen_expr(expr->method_call.object);
                         emit(", ");
                         codegen_expr(expr->method_call.args[0]);
                         emit(")");
                         break;
                     }
-                    emit("(bool)arr_contains(");
+                    emit("arr_contains(");
                     codegen_expr(expr->method_call.object);
                     emit(", ");
                     codegen_expr(expr->method_call.object);
@@ -3450,19 +3759,18 @@ void codegen_expr(Expr* expr) {
                     emit("array_concat("); codegen_expr(expr->method_call.object);
                     emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
                 }
-                // arr.any(fn) / arr.all(fn) return `bool` in Wyn, but their runtime
+                // arr.any(fn) / arr.all(fn) return `bool` in Wyn while their runtime
                 // helpers are declared `long long`, so print()/to_string()'s _Generic
-                // dispatch picked the INTEGER branch and `print(ns.any(...))` printed
-                // `1` instead of `true`. The same (bool) cast the comparison operators
-                // already use above (see _is_bool_op) makes the C type match the Wyn
-                // type at the one place that knows both.
+                // dispatch would pick the INTEGER branch. The (bool) cast that used to
+                // be written here has moved to cg_expr_is_bool_typed(), applied once in
+                // codegen_expr - see the note there for why per-site was not a fix.
                 if (method.length == 3 && memcmp(method.start, "any", 3) == 0 && expr->method_call.arg_count == 1) {
-                    emit("(bool)wyn_arr_any("); codegen_expr(expr->method_call.object);
+                    emit("wyn_arr_any("); codegen_expr(expr->method_call.object);
                     emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
                 }
                 // arr.all(fn)
                 if (method.length == 3 && memcmp(method.start, "all", 3) == 0 && expr->method_call.arg_count == 1) {
-                    emit("(bool)wyn_arr_all("); codegen_expr(expr->method_call.object);
+                    emit("wyn_arr_all("); codegen_expr(expr->method_call.object);
                     emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
                 }
                 
@@ -3794,16 +4102,12 @@ void codegen_expr(Expr* expr) {
                 
                 if ((strcmp(method_name, "set") == 0 || strcmp(method_name, "insert") == 0) && 
                     expr->method_call.arg_count == 2) {
-                    // Determine insert function based on value type (shared helper).
-                    Expr* value_expr = expr->method_call.args[1];
-                    const char* insert_func = hashmap_insert_fn_for(value_expr);
-                    emit("%s(", insert_func);
-                    codegen_expr(expr->method_call.object);
-                    emit(", ");
-                    codegen_expr(expr->method_call.args[0]);
-                    emit(", ");
-                    codegen_expr(expr->method_call.args[1]);
-                    emit(")");
+                    // One shared authority with the literal / m[k]=v / HashMap::set,
+                    // so `m.set(k, Some(1))` boxes the aggregate instead of passing
+                    // it to hashmap_insert_int (a C type error after a clean check).
+                    emit_hashmap_store(expr->method_call.object, NULL,
+                                       expr->method_call.args[0],
+                                       expr->method_call.args[1], 1);
                     break;
                 }
                 
@@ -4446,15 +4750,16 @@ void codegen_expr(Expr* expr) {
                 
                 // Insert key-value pairs (stored as key, value, key, value...)
                 for (int i = 0; i < expr->array.count; i += 2) {
-                    Expr* value_expr = expr->array.elements[i+1];
-                    // Shared type→insert-fn selection (consults expr_type too, so a
-                    // typed non-literal value like `{k: someVar}` isn't defaulted to int).
-                    const char* insert_func = hashmap_insert_fn_for(value_expr);
-                    emit("%s(__map_%d, ", insert_func, map_id);
-                    codegen_expr(expr->array.elements[i]);    // key
-                    emit(", ");
-                    codegen_expr(expr->array.elements[i+1]);  // value
-                    emit("); ");
+                    // One shared authority with `m[k]=v` / `.set()` / HashMap::set,
+                    // so an AGGREGATE value (struct, Option, Result) is boxed here
+                    // too. This loop used to pick a scalar insert unconditionally,
+                    // which is why `{"k": Some(1)}` checked clean and then failed in
+                    // the C compiler while `m["k"] = Some(1)` worked.
+                    char mapbuf[32];
+                    snprintf(mapbuf, sizeof(mapbuf), "__map_%d", map_id);
+                    emit_hashmap_store(NULL, mapbuf, expr->array.elements[i],
+                                       expr->array.elements[i+1], 1);
+                    emit("; ");
                 }
                 
                 emit("__map_%d; })", map_id);
@@ -4851,7 +5156,7 @@ void codegen_expr(Expr* expr) {
                     // Fresh temporary: ownership transfer
                     // If concat reused the buffer (same pointer), don't release
                     emit("({ const char* __rc_tmp = ");
-                    codegen_expr(expr->assign.value);
+                    cg_assign_rhs_with_target_family(expr);
                     if (_rc_target_borrowed) {
                         emit("; %s = __rc_tmp; })", target_name);
                     } else {
@@ -4860,7 +5165,7 @@ void codegen_expr(Expr* expr) {
                 } else {
                     // Shared reference: retain new, release old
                     emit("({ const char* __rc_tmp = ");
-                    codegen_expr(expr->assign.value);
+                    cg_assign_rhs_with_target_family(expr);
                     if (_rc_target_borrowed) {
                         emit("; wyn_rc_retain(__rc_tmp); %s = __rc_tmp; })", target_name);
                     } else {
@@ -4900,7 +5205,7 @@ void codegen_expr(Expr* expr) {
                     } else {
                         emit("%.*s = ", expr->assign.name.length, expr->assign.name.start);
                     }
-                    codegen_expr(expr->assign.value);
+                    cg_assign_rhs_with_target_family(expr);
                     break;
                 }
                 
@@ -4909,7 +5214,7 @@ void codegen_expr(Expr* expr) {
                 // collision, so use it rather than the raw token).
                 if (is_local_variable(target_name)) {
                     emit("%s = ", target_name);
-                    codegen_expr(expr->assign.value);
+                    cg_assign_rhs_with_target_family(expr);
                     break;
                 }
                 
@@ -4938,7 +5243,7 @@ void codegen_expr(Expr* expr) {
                     emit("%s = ", target_name);
                 }
             }
-            codegen_expr(expr->assign.value);
+            cg_assign_rhs_with_target_family(expr);
             break;
         }
         case EXPR_STRUCT_INIT: {
@@ -6020,8 +6325,8 @@ void codegen_expr(Expr* expr) {
                     // A STRUCT value must not go through to_string: that macro's
                     // `default:` arm is int_to_string, so the struct was passed by
                     // value to a `long long` parameter and the generated C failed
-                    // to compile after `wyn check` reported no errors (PLAN_v1.21
-                    // S1). codegen_program emits a __wyn_str_<Name> for each struct
+                    // to compile after `wyn check` reported no errors (S1).
+                    // codegen_program emits a __wyn_str_<Name> for each struct
                     // the CHECKER saw interpolated; call it instead. It returns a
                     // fresh +1 RC string, which is what the release loop below
                     // already assumes for a non-string expression, so ownership
@@ -6029,8 +6334,30 @@ void codegen_expr(Expr* expr) {
                     // same registry, so a struct without a helper still falls
                     // through to to_string rather than calling a missing function.
                     extern int cg_struct_has_str_helper(Token name);
+                    const char* _ifam = cg_optlike_family(e);
+                    const char* _iarrel = cg_array_elem_helper(e);
                     if (e->type == EXPR_STRING) {
                         codegen_expr(e);
+                    } else if (e->expr_type && e->expr_type->kind == TYPE_MAP) {
+                        // Same defect as println(map): to_string(map) lowered to
+                        // the integer path, so "${m}" rendered the map pointer.
+                        emit("map_to_string(");
+                        codegen_expr(e);
+                        emit(")");
+                    } else if (_iarrel) {
+                        // "${arr}" must agree with print(arr) - it went through
+                        // array_to_string, which sees only the WynValue tag.
+                        emit("__wyn_arrstr_%s(", _iarrel);
+                        codegen_expr(e);
+                        emit(")");
+                    } else if (_ifam) {
+                        // Same defect again for Option/Result, and here it was
+                        // worse than the struct case: interpolation was NOT a
+                        // workaround, because "${o}" failed to build too. Tested
+                        // before the struct arm - the families are C structs.
+                        emit("%s_to_string(", _ifam);
+                        codegen_expr(e);
+                        emit(")");
                     } else if (e->expr_type && e->expr_type->kind == TYPE_STRUCT &&
                                e->expr_type->struct_type.name.length > 0 &&
                                cg_struct_has_str_helper(e->expr_type->struct_type.name)) {
@@ -6425,33 +6752,6 @@ void codegen_expr(Expr* expr) {
             }
             
             if (is_map_assign) {
-                // Map-with-struct value: heap-box the struct via the
-                // hashmap_insert_struct macro (needs the struct's C type name).
-                {
-                    Expr* _mv = expr->index_assign.value;
-                    Token _stn = {0}; int _is_struct = 0;
-                    if (_mv->type == EXPR_STRUCT_INIT) { _stn = _mv->struct_init.type_name; _is_struct = 1; }
-                    else if (_mv->expr_type && _mv->expr_type->kind == TYPE_STRUCT) {
-                        _stn = _mv->expr_type->struct_type.name.start ? _mv->expr_type->struct_type.name : _mv->expr_type->name;
-                        _is_struct = (_stn.start && _stn.length > 0);
-                    }
-                    if (_is_struct && !expr->index_assign.is_compound) {
-                        emit("hashmap_insert_struct(");
-                        codegen_expr(expr->index_assign.object);
-                        emit(", ");
-                        codegen_expr(expr->index_assign.index);
-                        emit(", ");
-                        codegen_expr(_mv);
-                        if (current_module_prefix)
-                            emit(", %s_%.*s)", current_module_prefix, _stn.length, _stn.start);
-                        else
-                            emit(", %.*s)", _stn.length, _stn.start);
-                        break;
-                    }
-                }
-                // Map assignment: map["key"] = value -> hashmap_insert_*(map, "key", value)
-                // Determine insert function based on value type (shared helper).
-                const char* insert_func = hashmap_insert_fn_for(expr->index_assign.value);
                 // Compound form (m[k] += v): the value re-reads m[k], and the
                 // getters return 0/"" for a missing key - which would silently
                 // conjure a value out of nothing. Python raises KeyError here;
@@ -6465,13 +6765,12 @@ void codegen_expr(Expr* expr) {
                     codegen_expr(expr->index_assign.index);
                     emit("); ");
                 }
-                emit("%s(", insert_func);
-                codegen_expr(expr->index_assign.object);
-                emit(", ");
-                codegen_expr(expr->index_assign.index);
-                emit(", ");
-                codegen_expr(expr->index_assign.value);
-                emit(")");
+                // Scalar-vs-aggregate selection is one shared authority (see
+                // emit_hashmap_store); the compound form stays scalar-only, as it
+                // was before.
+                emit_hashmap_store(expr->index_assign.object, NULL,
+                                   expr->index_assign.index, expr->index_assign.value,
+                                   !expr->index_assign.is_compound);
                 if (expr->index_assign.is_compound) emit("; })");
             } else if (expr->index_assign.object->type == EXPR_INDEX) {
                 // Nested element assign: m[0][1] = v. The object m[0] is an

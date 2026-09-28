@@ -187,19 +187,34 @@ static void print_circular_import_error(const char* module_name) {
     fprintf(stderr, "  Break the cycle by removing one of the imports or extracting shared code into a third module.\n");
 }
 
+// The builtin namespaces, at file scope so there is ONE list. The checker's
+// did-you-mean for a misspelled namespace method has to ENUMERATE them (to find
+// the right name in the wrong namespace, e.g. Time.millis -> DateTime.millis), and
+// a second copy of this list to iterate over is precisely the drift this codebase
+// keeps paying for.
+static const char* const wyn_builtin_modules[] = {
+    "math", "Math", "File", "System", "Path", "DateTime", "Time",
+    "Json", "Http", "Regex", "Random", "HashMap", "HashSet", "Terminal", "Color",
+    "Test", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", "Template", "String", "Data", "Socket", "Ws", "Args", "Base64", "Toml", "Bcrypt", "Web", "Smtp", "App", "Shared", "Ptr", NULL
+};
+
 // Check if module is built-in (has C implementation)
 bool is_builtin_module(const char* module_name) {
-    const char* builtins[] = {
-        "math", "Math", "File", "System", "Path", "DateTime", "Time",
-        "Json", "Http", "Regex", "Random", "HashMap", "HashSet", "Terminal", "Color",
-        "Test", "Env", "Net", "Url", "Task", "Db", "Gui", "Audio", "StringBuilder", "Crypto", "Encoding", "Os", "Uuid", "Log", "Process", "Csv", "Template", "String", "Data", "Socket", "Ws", "Args", "Base64", "Toml", "Bcrypt", "Web", "Smtp", "App", "Shared", "Ptr", NULL
-    };
-    for (int i = 0; builtins[i] != NULL; i++) {
-        if (strcmp(module_name, builtins[i]) == 0) {
+    for (int i = 0; wyn_builtin_modules[i] != NULL; i++) {
+        if (strcmp(module_name, wyn_builtin_modules[i]) == 0) {
             return true;
         }
     }
     return false;
+}
+
+// Iterate the builtin namespaces; NULL past the end.
+const char* builtin_module_name_at(int index) {
+    if (index < 0) return NULL;
+    for (int i = 0; wyn_builtin_modules[i] != NULL; i++) {
+        if (i == index) return wyn_builtin_modules[i];
+    }
+    return NULL;
 }
 
 // Pre-scan source for imports and load them

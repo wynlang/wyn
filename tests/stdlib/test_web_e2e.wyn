@@ -27,8 +27,20 @@
 // the server accepts, so no spawn/scheduler participates and there is nothing to
 // race. Mirrors serve_once in test_http.wyn deliberately - same shape, same
 // close-the-server-side reasoning (see below).
-fn round_trip(port: int, method: string, path: string, req_body: string, resp_body: string) -> string {
-    var srv = Http.serve(port)
+// `base` is a BASE, not a fixed port: this walks up until bind() succeeds and then
+// talks to whatever it got. Sibling agents run this suite concurrently out of
+// separate worktrees, so the loser of a fixed-port bind race reported the clash as
+// a Wyn defect. Gated by tests/errors/run_test_port_hygiene_test.sh.
+fn round_trip(base: int, method: string, path: string, req_body: string, resp_body: string) -> string {
+    var port = base
+    var srv = -1
+    var tries = 0
+    while tries < 64 {
+        srv = Http.serve(port)
+        if srv > 0 { break }
+        port = port + 1
+        tries = tries + 1
+    }
     if srv <= 0 { return "" }
 
     var client = Net.connect("127.0.0.1", port)
@@ -108,7 +120,15 @@ fn main() -> int {
     Test.assert_eq_str(Url.decode("hello%20world"), "hello world", "URL decode")
     
     // 6. HTTP Server (quick test)
-    var server = Http.serve(18091)
+    var sport = 18091
+    var server = -1
+    var stries = 0
+    while stries < 64 {
+        server = Http.serve(sport)
+        if server > 0 { break }
+        sport = sport + 1
+        stries = stries + 1
+    }
     Test.assert(server > 0, "Http.serve starts")
     Http.close_server(server)
     

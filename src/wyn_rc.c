@@ -64,15 +64,28 @@ int wyn_rc_is_heap(const void* ptr) {
     return hdr->magic == WYN_RC_MAGIC && hdr->magic2 == WYN_RC_MAGIC2;
 }
 
+// The cached length is read and written with RELAXED atomics.
+//
+// It used to be written only at construction, before the string could be shared,
+// so a plain store was enough. string_length() now fills the cache on a MISS -
+// which happens on a READ, and a read can happen on two threads at once for a
+// string both of them hold. Every racing writer stores the same value, so the
+// outcome was never in doubt, but a plain store is still a data race and TSan
+// (gated by `make tsan-runtime-test`) reports it as one. Relaxed is sufficient:
+// the field guards nothing else, and no ordering is implied by knowing a length.
+//
+// Deliberately __atomic_* builtins on the plain uint32_t rather than making the
+// field _Atomic: the layout is hand-mirrored in wyn_rc.h and (previously) in
+// wyn_runtime.h and must stay byte-identical, so the type is not ours to change.
 void wyn_rc_set_length(const void* ptr, uint32_t len) {
     if (ptr && wyn_rc_is_heap(ptr)) {
-        rc_full_header(ptr)->length = len;
+        __atomic_store_n(&rc_full_header(ptr)->length, len, __ATOMIC_RELAXED);
     }
 }
 
 uint32_t wyn_rc_get_length(const void* ptr) {
     if (ptr && wyn_rc_is_heap(ptr)) {
-        return rc_full_header(ptr)->length;
+        return __atomic_load_n(&rc_full_header(ptr)->length, __ATOMIC_RELAXED);
     }
     return 0;
 }

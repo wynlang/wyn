@@ -12,8 +12,13 @@
 // EXPECT: 2.0
 // EXPECT: 3
 // EXPECT: 2.5
-// EXPECT: 1
-// EXPECT: 0
+// The two contains() rows now print true/false, not 1/0 (V-30: one bool-in-print
+// authority). An INT array's contains() already printed `true` - the 2026-08
+// emit-site cast covered arr_contains and array_contains_str and not the float
+// helper, so this file was asserting the same method rendering two different ways.
+// index_of stays an int (1 / -1) below.
+// EXPECT: true
+// EXPECT: false
 // EXPECT: 1
 // EXPECT: -1
 // EXPECT: 0.5

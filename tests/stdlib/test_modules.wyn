@@ -8,8 +8,20 @@ fn main() -> int {
     // dependency. That matters - this test was never allowlisted, it just got
     // lucky in the runs the allowlist was derived from, and it was observed
     // hanging for the full 60s watchdog waiting on the remote host.
+    // The port is WALKED, never fixed. Sibling agents run this suite concurrently
+    // out of separate worktrees, and a fixed port makes the loser of the bind race
+    // report the clash as a Wyn defect. Http_serve sets SO_REUSEADDR but not
+    // SO_REUSEPORT, so a live port gives EADDRINUSE and the walk steps past it.
+    // The rule is gated by tests/errors/run_test_port_hygiene_test.sh.
     var port = 18781
-    var srv = Http.serve(port)
+    var srv = -1
+    var tries = 0
+    while tries < 64 {
+        srv = Http.serve(port)
+        if srv > 0 { break }
+        port = port + 1
+        tries = tries + 1
+    }
     Test.assert(srv > 0, "local server listens")
 
     var sock = Net.connect("127.0.0.1", port)

@@ -1,0 +1,84 @@
+// Regression: is_some / is_none / is_ok / is_err printed 1 and 0 instead of
+// true and false, so the one place a program actually LOOKS at the answer showed
+// it in the wrong type:
+//
+//   o = Some(5)
+//   print(o.is_some())    ->  1
+//   b = o.is_some()
+//   print(b)              ->  1        while  print(true)  ->  true
+//
+// Cause: the builtin families registered the predicates as returning
+// `builtin_int` in checker_builtins.c, and the runtime declared them `int`. The
+// MONOMORPHIC families (Option<Struct>, emitted per program) registered
+// `builtin_bool` all along - so Some(P{..}).is_some() printed `true` while
+// Some(5).is_some() printed `1`. The same two-spellings split as the rest of
+// this series, just in the type instead of the renderer.
+//
+// Both halves had to move together: the checker's type decides how codegen
+// declares a variable holding the result, and the C return type decides which
+// arm of to_string's _Generic the value reaches. Fixing one alone leaves either
+// `b = o.is_some(); print(b)` or `print(o.is_some())` still showing 1.
+//
+// EXPECT: true
+// EXPECT: false
+// EXPECT: true
+// EXPECT: true
+// EXPECT: false
+// EXPECT: true
+// EXPECT: true
+// EXPECT: false
+// EXPECT: false
+// EXPECT: true
+// EXPECT: true
+// EXPECT: true
+// EXPECT: true
+// EXPECT: yes
+// EXPECT: 1
+
+struct P { x: int }
+
+fn g(n: int) -> int? { if n > 0 { return Some(n) } return none }
+fn ok_int() -> Result<int, string> { return Ok(5) }
+fn err_int() -> Result<int, string> { return Err("bad") }
+
+fn main() {
+    // int payload, direct and through a variable - the variable form is the one
+    // the checker's type governs.
+    o = Some(5)
+    print(o.is_some())
+    print(o.is_none())
+    b = o.is_some()
+    print(b)
+    print("${b}")
+
+    // The empty case must be false/true, not 0/1.
+    e = g(-1)
+    print(e.is_some())
+    print(e.is_none())
+
+    // Every payload family.
+    s = Some("x")
+    print(s.is_some())
+    f: float? = Some(1.5)
+    print(f.is_none())
+    bo: bool? = Some(true)
+    print(bo.is_none())
+
+    // Result, both variants.
+    r = ok_int()
+    print(r.is_ok())
+    print(r.is_err() == false)
+    x = err_int()
+    print(x.is_err())
+
+    // A monomorphic Option<Struct> family already returned bool; it must still.
+    m = Some(P { x: 1 })
+    print(m.is_some())
+
+    // No-regression: the value is still usable as a condition, and still
+    // convertible where an int is wanted.
+    if o.is_some() { print("yes") }
+    n = 0
+    if o.is_some() { n = 1 }
+    print(n)
+}

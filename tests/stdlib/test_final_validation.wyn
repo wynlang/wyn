@@ -263,9 +263,20 @@ fn main() -> int {
     // TCP connect. Everything else in this file is offline and deterministic.
     // Serving ourselves keeps the same client/server/socket coverage with no
     // external dependency and no unbounded wait.
-    var srv = Http.serve(19998)
+    // WALKED, not fixed: sibling agents run this suite concurrently out of separate
+    // worktrees, so the loser of a fixed-port bind race reported the clash as a Wyn
+    // defect. Gated by tests/errors/run_test_port_hygiene_test.sh.
+    var hport = 19998
+    var srv = -1
+    var htries = 0
+    while htries < 64 {
+        srv = Http.serve(hport)
+        if srv > 0 { break }
+        hport = hport + 1
+        htries = htries + 1
+    }
     Test.assert(srv > 0, "Http.serve")
-    var sock = Net.connect("127.0.0.1", 19998)
+    var sock = Net.connect("127.0.0.1", hport)
     Test.assert(sock > 0, "Net.connect")
     Net.send(sock, "GET /ping HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
     var req = Http.accept(srv)

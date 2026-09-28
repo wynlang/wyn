@@ -4,8 +4,8 @@
 //
 // Cause: checker_builtins.c typed the Json handle as TYPE_MAP ("opaque pointer"), so codegen
 // declared the variable `WynHashMap*` AND registered it for the scope-exit `hashmap_free()`.
-// `Json_new()` actually returns `WynJson*` and `Json_set()` writes through it as one, so the
-// free then walked a WynJson as a WynHashMap and aborted. A type confusion plus the wrong
+// `Json_new()` returned a `WynJson*` and `Json_set()` wrote through it as one, so the free
+// then walked that value as a WynHashMap and aborted. A type confusion plus the wrong
 // deallocator.
 //
 // It only showed up where cleanup is emitted -- a plain `fn main()` emits no hashmap_free for
@@ -16,12 +16,10 @@
 // using Json afterwards so a fix that merely dropped the free (leaving the wrong C type)
 // would still be caught.
 //
-// NOTE: `Json.get` after `Json.set` returns "" -- Json has TWO incompatible
-// representations (Json_new/Json_set use a WynJson* struct; Json_get/Json_parse use an int
-// index into a global node array). That is a separate, deeper bug, filed separately; before
-// this fix the program below SEGFAULTED instead, so this is strictly better. The assertions
-// here therefore read a set value back through `to_pretty_string` (which shares the WynJson*
-// side) and use `get` only after `parse` (which shares the node-array side).
+// The note that used to sit here -- "`Json.get` after `Json.set` returns \"\" because Json has
+// TWO incompatible representations" -- is obsolete: Json is one node arena now, so a written
+// key is a readable key. That property has its own gate,
+// tests/errors/run_json_model_test.sh; this file stays focused on scope-exit cleanup.
 //
 // EXPECT: set+pretty has name
 // EXPECT: int version=2

@@ -1,0 +1,58 @@
+// Regression: print/println/"${m}" of a map, HashMap or HashSet printed the
+// container's POINTER as a decimal number - check-clean, exit 0, meaningless:
+//
+//   m = {"a": 1}
+//   print(m)        -> 48163192832
+//   println(m)      -> 39111884800
+//   print("${m}")   -> 43469766656
+//
+// Three different pointers for the same value. Inspecting a map is one of the
+// most common things anyone does while debugging, and unlike the struct case
+// there was no workaround, because interpolation was broken the same way.
+//
+// Cause: no map renderer existed anywhere in the runtime, so every dispatch table
+// fell through to `default:` - the integer case. hashmap_format() in hashmap.c is
+// the new one; it lives there because only that file can see struct WynHashMap
+// and the real HashMapValue type tags. Going via hashmap_keys()/hashmap_values()
+// would not work - hashmap_values pushes every value with array_push_str, so an
+// int value comes back as the string "1".
+//
+// Key order follows bucket order, not insertion order, so every assertion below
+// uses a SINGLE-entry map. Multi-entry ordering is deliberately not pinned.
+//
+// EXPECT: {"a": 1}
+// EXPECT: {"a": 1}
+// EXPECT: {"a": 1}
+// EXPECT: {}
+// EXPECT: {}
+// EXPECT: {"s": "txt"}
+// EXPECT: {"f": 2.5}
+// EXPECT: {"b": true}
+// EXPECT: {"n": 7}
+// EXPECT: wrapped {"a": 1} here
+
+fn main() {
+    // All three spellings must agree - that is the invariant.
+    m = {"a": 1}
+    print(m)
+    println(m)
+    print("${m}")
+
+    // Empty map, both spellings.
+    e: {string: int} = {}
+    print(e)
+    println(e)
+
+    // Every value type must render as its real type, not as an int.
+    print({"s": "txt"})
+    print({"f": 2.5})
+    print({"b": true})
+
+    // A HashMap built through the API, not a literal.
+    h = HashMap.new()
+    h.set_int("n", 7)
+    print(h)
+
+    // Interpolated inside surrounding text.
+    print("wrapped ${m} here")
+}

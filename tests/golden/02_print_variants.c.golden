@@ -16,7 +16,7 @@ long long wyn_main() {
     /* 02_print_variants.wyn:7 */ 
 #line 7 "02_print_variants.wyn"
 long long n = 7;
-    { const char* __sa0 = ({ const char* __si0 = to_string(n); int __n = snprintf(NULL, 0, "n is %s", __si0); char* __buf = wyn_str_alloc(__n + 1); snprintf(__buf, __n + 1, "n is %s", __si0); wyn_rc_release(__si0); __buf; }); ({ print_no_nl(__sa0); printf("\n"); }); wyn_rc_release(__sa0); }
+    { const char* __sa0 = ({ const char* __si0 = to_string(n); int __n = snprintf(NULL, 0, "n is %s", __si0); char* __buf = wyn_str_alloc(__n + 1); snprintf(__buf, __n + 1, "n is %s", __si0); wyn_rc_release(__si0); __buf; }); ({ WynOut __wo; wyn_out_begin(&__wo); wyn_out_append(&__wo, __sa0); wyn_out_str(&__wo, "\n"); wyn_out_flush(&__wo); }); wyn_rc_release(__sa0); }
     return 0;
 }
 

@@ -39,6 +39,10 @@ int _fileno(FILE* stream);
 #include "commands.h"
 #include "toml.h"
 #include "package.h"
+// For wyn_cli_accepts_flag / wyn_cli_command_choices: src/cmd_ui.c's command table is
+// the single source of truth for each command's accepted flags and positional choices,
+// and the dispatch below validates against it rather than carrying a second copy.
+#include "cmd_ui.h"
 
 // Single source of truth for runtime source files
 const char* wyn_runtime_sources[] = {
@@ -56,6 +60,69 @@ const char* wyn_runtime_sources[] = {
     "src/net_advanced.c", "src/file_io_simple.c", "src/stdlib_enhanced.c",
     NULL
 };
+
+// --- TLS build wiring: ONE place decides whether a link can do HTTPS ---------
+//
+// runtime/libwyn_rt.a contains src/wyn_tls.c + src/wyn_https.c, and those members
+// reference mbedTLS. A linker only pulls an archive member in to resolve an
+// UNDEFINED symbol, so they are pulled only when the program's own translation unit
+// calls wyn_https_request - and it only does that when this function put
+// -DWYN_HAVE_TLS on its compile line (see wyn_runtime.h's https_* bodies). That is
+// the whole design: one flag, decided in one place, gates both the call and the
+// extra link input, so the two cannot drift apart. The alternative - editing a
+// dozen link strings and hoping - is how -lsqlite3 ended up on the wrong side of
+// GNU ld's archive ordering and broke Linux alone.
+//
+// When the vendored archive is absent (a stripped install layout, or a tree where
+// `make mbedtls` has not run) this reports NO TLS instead of emitting a link line
+// that dies on an undefined mbedtls symbol. Http.* over https:// then returns a
+// NAMED runtime error - "HTTPS unavailable: this binary was linked without the TLS
+// backend" - which is something a user of a language can actually act on.
+//
+// cflags belongs early on the command line; link_tail belongs at the END, AFTER
+// runtime/libwyn_rt.a, because GNU ld resolves an archive only against the objects
+// listed before it. Returns 1 when this build has TLS, 0 when it does not.
+int wyn_tls_build_flags(const char* wyn_root, char* cflags, size_t cflags_n,
+                        char* link_tail, size_t link_n) {
+    if (cflags && cflags_n) cflags[0] = '\0';
+    if (link_tail && link_n) link_tail[0] = '\0';
+    char lib[1024];
+    snprintf(lib, sizeof(lib), "%s/vendor/mbedtls/lib/libmbedtls_wyn.a", wyn_root);
+    if (access(lib, R_OK) != 0) return 0;
+    if (cflags && cflags_n) snprintf(cflags, cflags_n, "-DWYN_HAVE_TLS ");
+    if (link_tail && link_n) {
+#ifdef _WIN32
+        // Two Windows-only libraries, both MEASURED rather than guessed (mingw-w64
+        // gcc 12 cross-link of this exact archive):
+        //   -lcrypt32  the roots live in CryptoAPI's "ROOT" store, not in a PEM file,
+        //              so wyn_tls.c calls CertOpenSystemStoreA /
+        //              CertEnumCertificatesInStore / CertCloseStore there and nowhere
+        //              else - three undefined references without it;
+        //   -lbcrypt   mbedTLS's OWN entropy source (library/entropy_poll.c) calls
+        //              BCryptGenRandom on Windows. Linking with -lcrypt32 ALONE still
+        //              failed on that symbol, which is exactly the shape of
+        //              Windows-only breakage this repo keeps being surprised by, so it
+        //              is named here with the reason rather than discovered at a tag.
+        snprintf(link_tail, link_n, " %s -lcrypt32 -lbcrypt", lib);
+#else
+        snprintf(link_tail, link_n, " %s", lib);
+#endif
+    }
+    return 1;
+}
+
+// Does this source reach for HTTPS? Used only to steer AWAY from a backend that
+// cannot provide it (TCC cannot compile mbedTLS - it does not even get through
+// constant_time_impl.h's inline asm), so a false positive costs a slightly slower
+// compile with the system cc and a false negative costs a named runtime error. Same
+// shape as the existing strstr(source, "Gui.") / "Db." backend steering.
+int wyn_source_uses_https(const char* source) {
+    if (!source) return 0;
+    return strstr(source, "https://") != NULL || strstr(source, "Http.") != NULL ||
+           strstr(source, "https_get") != NULL || strstr(source, "https_post") != NULL ||
+           strstr(source, "http_get") != NULL || strstr(source, "http_post") != NULL ||
+           strstr(source, "http_put") != NULL || strstr(source, "http_delete") != NULL;
+}
 
 // Build a space-separated string of runtime sources with a prefix
 void build_source_list(char* buf, int bufsize, const char* prefix) {
@@ -735,6 +802,34 @@ static const struct { const char* c_prefix; const char* wyn_ns; } wyn_lowercase_
     {NULL, NULL}
 };
 
+// Does the captured C-compiler output name a precompiled-header mismatch?
+//
+// Guarded, like its one caller: the dev-loop pch is injected only on macOS/clang, and
+// an unused static would be a warning on the other platforms.
+//
+// The three wordings clang uses for a pch it refuses, all hard errors:
+//   "PCH file '...' built from a different branch ((clang-A)) than the compiler
+//    ((clang-B))"                                    - the toolchain moved
+//   "file '...' is not a valid precompiled header"   - truncated or corrupt
+//   "... differs in precompiled file"                - the flags disagree
+// Matching "PCH file" and "precompiled" covers all three. Kept a text match on
+// purpose: the alternative is running `cc --version` on every build to compare it
+// against the pch, i.e. an extra fork in the hot dev loop to detect something that
+// happens once per Xcode update.
+#ifdef __APPLE__
+static int wyn_cc_err_is_pch_mismatch(const char* cc_err_path) {
+    FILE* f = fopen(cc_err_path, "r");
+    if (!f) return 0;
+    char line[2048];
+    int hit = 0;
+    while (!hit && fgets(line, sizeof(line), f)) {
+        if (strstr(line, "PCH file") || strstr(line, "precompiled")) hit = 1;
+    }
+    fclose(f);
+    return hit;
+}
+#endif
+
 static int wyn_report_undeclared_namespace_call(const char* cc_err_path) {
     FILE* f = fopen(cc_err_path, "r");
     if (!f) return 0;
@@ -800,19 +895,125 @@ static int wyn_report_undeclared_namespace_call(const char* cc_err_path) {
         // existed, which an `extern fn` would have provided.
         if (from_linker && !is_builtin_module(ns)) continue;
         if (!reported) {
-            fprintf(stderr,
-                "Error: unknown method '%s.%s' on namespace '%s'\n",
-                ns, method, ns);
-            fprintf(stderr,
-                "  \033[34mHelp:\033[0m '%s' is not a function Wyn knows about. Check the spelling"
-                " against the '%s' stdlib docs - namespace methods are not"
-                " verified until the generated C is compiled, so a typo surfaces"
-                " here rather than at the call site.\n", method, ns);
+            // "CHECK THE SPELLING" IS ONLY HONEST IF WYN DOES NOT HAVE THE NAME.
+            //
+            // `Time.now_millis()` is a real function: it is in the checker's builtin
+            // registry, it is declared in src/wyn_runtime.h, and it compiles and runs
+            // under `wyn check`, `wyn run` and `wyn build --release`. It failed under
+            // `wyn run --release` alone - the only path that emits
+            // src/wyn_runtime_slim.h - because that header never declared it. This
+            // branch then caught clang's "call to undeclared function" and told the
+            // user to check their spelling: the compiler blaming the user for its own
+            // missing header entry. A wrong diagnosis costs more than none, because
+            // it sends the reader to re-read a correct line.
+            //
+            // So ask the ONE authority first. wyn_namespace_method_declared() shares
+            // wyn_namespace_c_symbol() and the same declaration index as the
+            // check-time rule (#357), so this cannot drift from what the checker
+            // believes - writing a second lookup here is exactly the shape that
+            // produced the bug.
+            char csym[320] = "";
+            extern int wyn_namespace_method_declared(const char*, const char*, char*, size_t);
+            int declared = wyn_namespace_method_declared(ns, method, csym, sizeof(csym));
+            if (declared == 1) {
+                // Wyn HAS it. Do not send the user looking for a typo.
+                fprintf(stderr,
+                    "Error: internal: '%s.%s' is a function Wyn has, but this build could"
+                    " not compile a call to it\n", ns, method);
+                fprintf(stderr,
+                    "  \033[34mHelp:\033[0m this is a COMPILER BUG, not a mistake in your code."
+                    " '%s.%s' lowers to the C symbol '%s', which src/wyn_runtime.h declares"
+                    " but the header this build used does not.%s\n",
+                    ns, method, csym,
+                    from_linker ? " The symbol is missing from runtime/libwyn_rt.a."
+                                : " If you passed --release, src/wyn_runtime_slim.h is"
+                                  " missing its declaration; building without --release"
+                                  " is a workaround. Please report it.");
+            } else {
+                fprintf(stderr,
+                    "Error: unknown method '%s.%s' on namespace '%s'\n",
+                    ns, method, ns);
+                // The old wording ended "...namespace methods are not verified until
+                // the generated C is compiled, so a typo surfaces here rather than at
+                // the call site." #357 made that FALSE: a namespace method IS checked
+                // at check time now, and a typo is rejected there with a line and a
+                // caret. Reaching this branch therefore means the checker could not
+                // consult its declaration index at all, which is what the help should
+                // say - a stale explanation of a mechanism that no longer exists sends
+                // the reader looking in the wrong place.
+                fprintf(stderr,
+                    "  \033[34mHelp:\033[0m '%s' is not a function Wyn knows about. Check the spelling"
+                    " against the '%s' stdlib docs. (This surfaced at the C-compile step"
+                    " rather than at the call site, which means this build could not read"
+                    " its own runtime headers to check the name earlier.)\n", method, ns);
+            }
             reported = 1;
         }
     }
     fclose(f);
     return reported;
+}
+
+// ─── THE RUN CACHE MUST BE KEYED ON THE MODE, NOT ONLY ON MTIMES ─────────────
+//
+// `wyn run` caches its binary as <file>.wyn.out and reuses it while the mtimes say
+// it is fresh. The mode was NOT part of that decision, so:
+//
+//     wyn run c.wyn            -> compiles the DEBUG binary
+//     wyn run --release c.wyn  -> prints nothing, runs the DEBUG binary
+//
+// Measured on dev: byte-identical .out (md5 bff3f8d9…), 1,071,896 bytes, where a
+// release build of the same file in a fresh directory is 1,044,088. So the release
+// path was untestable in place, and anyone benchmarking `--release` that way was
+// timing the debug build. It is also how a slim-header regression reaches users: a
+// gate that runs `wyn run` before `wyn run --release` on one path compiles the slim
+// header exactly once - never - and reports green.
+//
+// The fix is a MODE KEY written beside the binary, not a separate output path:
+// <file>.wyn.out is an established artifact that tests, docs and the stdlib runner
+// all delete by name, and renaming it would break them silently. The sidecar is
+// advisory in the safe direction - if it is missing or unreadable the cache is
+// treated as STALE, so the worst case is an extra compile.
+//
+// Everything that changes the emitted artifact goes in the key. --release and --fast
+// pick the optimisation level; --shared/--python/--node change the artifact kind
+// entirely. --debug only decides whether the .c is kept, so it is deliberately not
+// keyed. Scans ALL of argv because --release is honoured after the file too
+// (see the `use_release` loops in the run block).
+static void wyn_run_mode_key(int argc, char** argv, char* out, size_t n)
+{
+    int rel = 0, fast = 0, lib = 0;
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "--release") == 0) rel = 1;
+        else if (strcmp(argv[i], "--fast") == 0) fast = 1;
+        else if (strcmp(argv[i], "--shared") == 0) lib = 1;
+        else if (strcmp(argv[i], "--python") == 0) lib = 2;
+        else if (strcmp(argv[i], "--node") == 0) lib = 3;
+    }
+    snprintf(out, n, "wyn-run-mode v1 rel=%d fast=%d lib=%d", rel, fast, lib);
+}
+
+// 1 when the cached binary at out_path was built in THIS mode. 0 when it was not, or
+// when we cannot tell - an unknown mode must read as stale, never as a hit.
+static int wyn_run_mode_matches(const char* out_path, const char* key)
+{
+    char p[600]; snprintf(p, sizeof(p), "%s.mode", out_path);
+    FILE* f = fopen(p, "r");
+    if (!f) return 0;
+    char line[256] = "";
+    if (!fgets(line, sizeof(line), f)) { fclose(f); return 0; }
+    fclose(f);
+    line[strcspn(line, "\r\n")] = '\0';
+    return strcmp(line, key) == 0;
+}
+
+static void wyn_run_mode_record(const char* out_path, const char* key)
+{
+    char p[600]; snprintf(p, sizeof(p), "%s.mode", out_path);
+    FILE* f = fopen(p, "w");
+    if (!f) return;                 // best effort: a missing file means "stale"
+    fprintf(f, "%s\n", key);
+    fclose(f);
 }
 
 // Detect available C backend: WYN_CC env > cc > gcc > clang
@@ -924,6 +1125,21 @@ static void resolve_wyn_root(const char* argv0, char* out, size_t out_sz) {
         if (pf) { fclose(pf); snprintf(out, out_sz, "%s", candidates[ci]); return; }
     }
     snprintf(out, out_sz, "%s", exe_dir);
+}
+
+// The installation root, for code that is not on the command-line path and so has
+// no argv[0] to resolve it from - the checker, which reads the runtime headers to
+// answer "is `Time.foo` a real namespace method?". Resolved once, lazily, by
+// resolve_wyn_root() itself rather than by a second probe of its own: a duplicate
+// of that probe order is how installed binaries came to look for src/ in the
+// user's CWD (see the note on resolve_wyn_root). Empty string if unresolvable, and
+// every caller must treat that as "don't know" rather than "no".
+static char wyn_root_cached[512] = "";
+static const char* wyn_root_argv0 = "";
+const char* wyn_installation_root(void) {
+    if (!wyn_root_cached[0])
+        resolve_wyn_root(wyn_root_argv0, wyn_root_cached, sizeof(wyn_root_cached));
+    return wyn_root_cached;
 }
 
 // Resolve the REAL path of the running `wyn` compiler binary. Same OS-level
@@ -1138,7 +1354,11 @@ int main(int argc, char** argv) {
     
     // Initialize arguments for Wyn compiler access
     wyn_init_args(argc, argv);
-    
+
+    // argv[0] is only a fallback hint for resolve_wyn_root(); stash it so
+    // wyn_installation_root() can be called from code that never sees argv.
+    wyn_root_argv0 = argv[0];
+
     if (argc < 2) {
         // Banner
         print_banner(get_version());
@@ -1185,7 +1405,107 @@ int main(int argc, char** argv) {
     }
     
     char* command = argv[1];
-    
+
+    // ─── AN UNKNOWN FLAG IS AN ERROR (V-13) ──────────────────────────────────
+    //
+    // `wyn build x.wyn --wasm` exited 0, printed a green ✓, and left a NATIVE
+    // Mach-O/ELF binary. A false success is the worst failure mode available: a
+    // first-time visitor's first command produced a silently wrong artifact and the
+    // tool said it worked. The cause is the tail of build's flag loop,
+    //     else if (!dir) dir = argv[i];
+    // so an unrecognised flag became the FILE if none had been seen yet and was
+    // DISCARDED otherwise - which is why the behaviour depended on POSITION:
+    //     wyn build x.wyn --wasm  ->  0, ✓, native binary      (flag discarded)
+    //     wyn build --wasm x.wyn  ->  1, "No main.wyn found in --wasm"
+    // while `--release` worked in either position. `--relase`, `--debugg`, `-O3` and
+    // `--target=wasm` were all swallowed the same way.
+    //
+    // The accepted set is read from CMDS[] in src/cmd_ui.c - the table that already
+    // IS the single source of truth for commands, gated against this dispatch in
+    // both directions by tests/errors/run_ui_coverage_test.sh. A second flag table
+    // here would be the "one rule with more than one copy" shape that produced the
+    // bug; see wyn_cli_accepts_flag().
+    if (command[0] != '-') {
+        const char* sub = (argc > 2 && argv[2][0] != '-') ? argv[2] : NULL;
+        // The bare-file form (`wyn prog.wyn --release`) is `run` with the command
+        // slot holding the path, so validate it against run's flag set.
+        const char* vcmd = command;
+        int first = 2;
+        {
+            const char* ext = strrchr(command, '.');
+            if (ext && strcmp(ext, ".wyn") == 0) { vcmd = "run"; first = 1; sub = NULL; }
+        }
+        // Commands that hand their tail to a CHILD: everything from the first
+        // positional on belongs to the child, and a program's own `--verbose` is
+        // indistinguishable from one of ours (see the argument-split comment under
+        // `run`). Policing that region would break every Wyn CLI tool, so stop there.
+        int stop_at_positional = (strcmp(vcmd, "run") == 0 ||
+                                  strcmp(vcmd, "test") == 0 ||
+                                  strcmp(vcmd, "debug") == 0);
+        if (wyn_cli_command_known(vcmd, sub)) {
+            for (int i = first; i < argc; i++) {
+                const char* a = argv[i];
+                if (a[0] != '-' || a[1] == '\0') {     // a positional (or a bare "-")
+                    if (stop_at_positional) break;
+                    continue;
+                }
+                if (strcmp(a, "--") == 0) { if (stop_at_positional) break; continue; }
+                int takes_value = 0;
+                if (wyn_cli_accepts_flag(vcmd, sub, a, &takes_value)) {
+                    if (takes_value) i++;              // skip the flag's value
+                    continue;
+                }
+                // Not accepted. Say so, name it, and help.
+                char known[512];
+                wyn_cli_flag_list(vcmd, sub, known, sizeof(known));
+                fprintf(stderr, "\033[31mError:\033[0m unknown flag '%s' for '\033[1mwyn %s%s%s\033[0m'\n",
+                        a, vcmd, sub ? " " : "", sub ? sub : "");
+                // `--flag=value` is never accepted anywhere in this CLI; if the part
+                // before the '=' IS a known flag, the user only got the spelling
+                // wrong. `wyn build x.wyn --target=wasm` silently built a native
+                // binary before this, which is the worst possible answer.
+                const char* eq = strchr(a, '=');
+                if (eq) {
+                    char head[128];
+                    size_t hl = (size_t)(eq - a);
+                    if (hl < sizeof(head)) {
+                        memcpy(head, a, hl); head[hl] = '\0';
+                        if (wyn_cli_accepts_flag(vcmd, sub, head, NULL)) {
+                            fprintf(stderr, "  \033[34mHelp:\033[0m flags take their value as a"
+                                    " separate argument: \033[1m%s %s\033[0m\n", head, eq + 1);
+                        }
+                    }
+                }
+                // Nearest accepted flag by edit distance - the same measure the
+                // checker uses for identifier typos - capped so an unrelated flag
+                // gets no guess.
+                if (known[0]) {
+                    extern int levenshtein_distance(const char*, const char*);
+                    char buf[512]; snprintf(buf, sizeof(buf), "%s", known);
+                    char* save = NULL; (void)save;
+                    const char* best = NULL; int best_d = 0; char bestbuf[128] = "";
+                    char* tok = strtok(buf, " ");
+                    while (tok) {
+                        int d = levenshtein_distance(a, tok);
+                        if (!best || d < best_d) {
+                            best_d = d; best = tok;
+                            snprintf(bestbuf, sizeof(bestbuf), "%s", tok);
+                        }
+                        tok = strtok(NULL, " ");
+                    }
+                    int limit = (int)(strlen(a) / 3); if (limit < 2) limit = 2;
+                    if (best && best_d <= limit)
+                        fprintf(stderr, "  \033[34mHelp:\033[0m did you mean \033[1m%s\033[0m?\n", bestbuf);
+                    fprintf(stderr, "  Accepted by 'wyn %s': %s\n", vcmd, known);
+                } else {
+                    fprintf(stderr, "  'wyn %s' takes no flags.\n", vcmd);
+                }
+                fprintf(stderr, "  Run \033[1mwyn help\033[0m for the command reference.\n");
+                return 1;
+            }
+        }
+    }
+
     // Handle --version and -v flags
     // wyn deploy <target> - deploy to server via SSH
     if (strcmp(command, "deploy") == 0) {
@@ -2297,6 +2617,12 @@ int main(int argc, char** argv) {
         char cmd[8192];   // must hold the link line + a multi-package ffi_tail
         int result = -1;
         char rt_lib[512]; snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
+        // Native HTTPS: one decision, used by the backend choice below AND by every
+        // link line in this function. See wyn_tls_build_flags.
+        char _tls_cflags[64], _tls_link[1152];
+        wyn_tls_build_flags(wyn_root, _tls_cflags, sizeof(_tls_cflags),
+                            _tls_link, sizeof(_tls_link));
+        const int _needs_https = wyn_source_uses_https(source);
 
         // Detect App module for webview linking
         const char* app_link = "";
@@ -2347,7 +2673,14 @@ int main(int argc, char** argv) {
         // this build needs.
         if (build_flag[0] == 0 && !build_release && gui_def[0] == 0 && access(rt_lib, R_OK) == 0) {
             // Skip TCC - use system cc + precompiled runtime
-        } else if (build_flag[0] == 0 && !build_release && !app_on && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0 && !strstr(source, "App.")) {
+        } else if (build_flag[0] == 0 && !build_release && !app_on && !_needs_https && access(tcc_bin, X_OK) == 0 && access(rt_tcc, R_OK) == 0 && !strstr(source, "App.")) {
+            // !_needs_https: TCC CANNOT compile mbedTLS - it fails inside
+            // vendor/mbedtls/library/constant_time_impl.h ("string constant expected",
+            // its inline-asm constraints) long before any of our code. A program built
+            // through this branch links no TLS, so every https:// call would return
+            // "HTTPS unavailable" while the identical program built with the system cc
+            // worked. Falling through to the system-cc path costs a slower compile and
+            // is the only honest option.
             // --app is excluded from the TCC path on purpose: TCC does not take
             // -mwindows, and this branch does not splice ffi_tail at all, so a
             // GUI app built through it would silently link as a console program
@@ -2397,6 +2730,13 @@ int main(int argc, char** argv) {
         // the redirect and inserts its -l flags before it.
         char cc_err_redir[544];
         snprintf(cc_err_redir, sizeof(cc_err_redir), "\"%s\"", cc_err_path);
+#ifdef __APPLE__
+        // Holds the dev-loop pch's path when one was injected below, so that a
+        // pch-mismatch failure can self-heal after the compile. Declared out here
+        // because the injection sits inside the precompiled-runtime branch while the
+        // compile that can fail on it runs after that branch closes.
+        char _pch_used[512]; _pch_used[0] = '\0';
+#endif
         if (result != 0) {
 #ifdef __APPLE__
             const char* plibs = "-lpthread -lm";
@@ -2430,7 +2770,11 @@ int main(int argc, char** argv) {
                 // -DWYN_GPU_METAL, so using it would silently freeze the
                 // header's GPU shim to the CPU-only stub.
                 extern int codegen_gpu_dispatch_count(void);
-                if (!build_release && sqlite_flags[0] == '\0' &&
+                // _tls_cflags[0]: runtime/wyn_runtime.pch is built with
+                // -DWYN_HAVE_TLS (see the Makefile). Including it from a compile that
+                // lacks the define is a clang hard error, so skip the cache in the
+                // no-TLS case rather than relying on the self-heal below.
+                if (!build_release && sqlite_flags[0] == '\0' && _tls_cflags[0] != '\0' &&
                     codegen_gpu_dispatch_count() == 0) {
                     char _pch_path[512], _hdr_path[512];
                     snprintf(_pch_path, sizeof(_pch_path), "%s/runtime/wyn_runtime.pch", wyn_root);
@@ -2439,17 +2783,20 @@ int main(int argc, char** argv) {
                     if (stat(_pch_path, &_ps) == 0 && stat(_hdr_path, &_hs) == 0 &&
                         _ps.st_mtime >= _hs.st_mtime) {
                         snprintf(_pch_flag, sizeof(_pch_flag), "-include-pch %s ", _pch_path);
+                        snprintf(_pch_used, sizeof(_pch_used), "%s", _pch_path);
                     }
                 }
 #endif
+                // %s after -I %s/src is _tls_cflags (-DWYN_HAVE_TLS or nothing);
+                // _tls_link goes AFTER rt_lib, where GNU ld can still resolve it.
                 snprintf(cmd, sizeof(cmd),
 #ifdef _WIN32
                     // Windows captures the compiler's stderr too - it was the last
                     // branch still discarding it, so a failed build there printed
                     // "✗ Build failed" and nothing else.
-                    "%s -std=c11 %s -fwrapv -w -I %s/src -Wl,--allow-multiple-definition -o %s %s%s %s.c %s%s -lws2_32 -lpthread -lm 2>%s",
+                    "%s -std=c11 %s -fwrapv -w -I %s/src %s-Wl,--allow-multiple-definition -o %s %s%s %s.c %s%s%s -lws2_32 -lpthread -lm 2>%s",
 #elif defined(__APPLE__)
-                    "%s -std=c11 %s -fwrapv -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src %s-Wl,-dead_strip -o %s %s%s %s.c %s%s%s -lpthread -lm 2>%s",
+                    "%s -std=c11 %s -fwrapv -w -Wno-int-conversion -ffunction-sections -fdata-sections -I %s/src %s%s-Wl,-dead_strip -o %s %s%s %s.c %s%s%s%s -lpthread -lm 2>%s",
 #else
                     // Capture the C compiler's stderr, do NOT discard it. This
                     // branch used to end in `2>/dev/null`, while the __APPLE__
@@ -2458,12 +2805,12 @@ int main(int argc, char** argv) {
                     // the "Compiler output:" reader below found no file. That is
                     // exactly what a user (and a CI log) needs, and it was
                     // silently unavailable on the platform most CI runs on.
-                    "%s -std=c11 %s -fwrapv -w -ffunction-sections -fdata-sections -I %s/src -Wl,--allow-multiple-definition,--gc-sections -o %s %s%s %s.c %s%s -lpthread -lm 2>%s",
+                    "%s -std=c11 %s -fwrapv -w -ffunction-sections -fdata-sections -I %s/src %s-Wl,--allow-multiple-definition,--gc-sections -o %s %s%s %s.c %s%s%s -lpthread -lm 2>%s",
 #endif
 #ifdef __APPLE__
-                    cc, _opt, wyn_root, _pch_flag, bin_path, sqlite_flags, gui_def, entry, rt_lib, sqlite_src, app_link, cc_err_redir
+                    cc, _opt, wyn_root, _tls_cflags, _pch_flag, bin_path, sqlite_flags, gui_def, entry, rt_lib, _tls_link, sqlite_src, app_link, cc_err_redir
 #else
-                    cc, _opt, wyn_root, bin_path, sqlite_flags, gui_def, entry, rt_lib, sqlite_src, cc_err_redir
+                    cc, _opt, wyn_root, _tls_cflags, bin_path, sqlite_flags, gui_def, entry, rt_lib, _tls_link, sqlite_src, cc_err_redir
 #endif
                     );
                 // Splice FFI link flags in at the END of the link line (before any
@@ -2497,6 +2844,41 @@ int main(int argc, char** argv) {
 #endif
             }
             result = system(cmd);
+#ifdef __APPLE__
+            // A pch is a CACHE, so a mismatch has to self-heal rather than fail the
+            // build. The mtime guard that injected it cannot see a TOOLCHAIN change:
+            // after an Xcode update clang hard-errors with "PCH file ... built from a
+            // different branch", and because the Makefile's pch rule depends on the
+            // header and the Makefile - neither of which moved - `make runtime` reports
+            // nothing to do. So every macOS build stays broken until the file is
+            // deleted by hand. Measured cost of not doing this: a full 300-test suite
+            // run in which every single test reported BUILD FAILED, which reads like a
+            // compiler regression rather than a stale artifact.
+            //
+            // Deliberately NOT regenerating the pch here, only removing it: the suite
+            // compiles with 12+ parallel jobs, and having each of them write the same
+            // output path would race and leave a corrupt pch behind. Removing it is
+            // idempotent under any amount of concurrency; `make runtime` restores the
+            // fast path.
+            //
+            // Gated narrowly on the pch text. Retrying EVERY failed compile would
+            // double the time to report an ordinary syntax error, which is the most
+            // common outcome in a dev loop.
+            if (result != 0 && _pch_used[0] && wyn_cc_err_is_pch_mismatch(cc_err_path)) {
+                char _pch_flag_used[600];
+                snprintf(_pch_flag_used, sizeof(_pch_flag_used), "-include-pch %s ", _pch_used);
+                char* _at = strstr(cmd, _pch_flag_used);
+                if (_at) {
+                    size_t _fl = strlen(_pch_flag_used);
+                    memmove(_at, _at + _fl, strlen(_at + _fl) + 1);
+                }
+                unlink(_pch_used);
+                fprintf(stderr,
+                        "note: removed a stale precompiled header - it no longer matches this C compiler.\n"
+                        "      Run `make runtime` to restore the fast dev build.\n");
+                result = system(cmd);
+            }
+#endif
         }
         
         // Strip debug symbols for release builds
@@ -2624,10 +3006,34 @@ int main(int argc, char** argv) {
         // Build for-loop command from unified source list
         char for_list[4096];
         build_source_list(for_list, sizeof(for_list), "");
+        // src/wyn_tls.c + src/wyn_https.c are appended explicitly rather than added to
+        // wyn_runtime_sources: that list is ALSO used by the TCC and cross-compile
+        // paths, which cannot build mbedTLS at all. Without them here, an archive
+        // produced by `wyn build-runtime` would be missing wyn_https_request and every
+        // subsequent build would fail on an undefined symbol - the archive built by
+        // `make runtime` has them (RT_SRCS), so the two must not disagree.
+        //
+        // src/runtime_exports.c is appended for the same reason and with the same
+        // constraint. It is the ONLY translation unit that includes wyn_runtime.h, so
+        // it is where every function DEFINED in that header becomes a linkable symbol
+        // - 817 of them. `wyn run --release` emits wyn_runtime_slim.h (declarations
+        // only) and takes the definitions from this archive, so without it every
+        // --release build made from a `wyn build-runtime` archive dies at link
+        // (Math_pow, System_args, __wyn_argc, print_float_no_nl, ...). It is exactly
+        // the failure tests/errors/run_release_link_test.sh was written for, after the
+        // Makefile had the same omission in RT_SRCS.
+        //
+        // It CANNOT go into wyn_runtime_sources: src/tcc_backend.c's fallback path
+        // compiles that list TOGETHER WITH the program's own .c, which includes
+        // wyn_runtime.h itself and so already defines all 817 - adding this would make
+        // every TCC build a duplicate-symbol error. Two lists that must agree on
+        // everything except one entry, so the entry is named here with its reason
+        // rather than moved.
         snprintf(cmd, sizeof(cmd),
             "mkdir -p %s/runtime/obj && cd %s && "
-            "for f in %s; do "
-            "gcc -std=c11 -O2 -w -I src -I vendor/minicoro -c $f -o runtime/obj/$(basename $f .c).o 2>/dev/null; done && "
+            "for f in %s src/runtime_exports.c src/wyn_tls.c src/wyn_https.c; do "
+            "gcc -std=c11 -O2 -w -DWYN_HAVE_TLS -I src -I vendor/minicoro "
+            "-I vendor/mbedtls/include -c $f -o runtime/obj/$(basename $f .c).o 2>/dev/null; done && "
             "ar rcs runtime/libwyn_rt.a runtime/obj/*.o && "
             "echo 'Built runtime/libwyn_rt.a'",
             wyn_root, wyn_root, for_list);
@@ -2841,10 +3247,19 @@ int main(int argc, char** argv) {
     }
     
     if (strcmp(command, "cross") == 0) {
+        // ONE list, printed here and by the unknown-target error below. They were two
+        // hand-written lists and they DISAGREED: this usage omitted wasm while the
+        // error advertised it, so the tool contradicted itself about what it supports
+        // depending on how you got it wrong. Both now read
+        // wyn_cli_command_choices("cross") - the `choices` field of the cross row in
+        // src/cmd_ui.c's table, which the TUI's target picker already used.
+        const char* _x_targets = wyn_cli_command_choices("cross", NULL);
+        if (!_x_targets) _x_targets = "linux|macos|windows|ios|android|wasm";
         if (argc < 4) {
             fprintf(stderr, "Usage: wyn cross <target> <file.wyn>\n");
-            fprintf(stderr, "Targets: linux, linux-x64, linux-arm64, macos, macos-x64, macos-arm64,\n");
-            fprintf(stderr, "         windows, windows-x64, ios, android\n");
+            fprintf(stderr, "Targets: %s\n", _x_targets);
+            fprintf(stderr, "  (aliases also accepted: linux-x64, linux-amd64, linux-aarch64,\n");
+            fprintf(stderr, "   windows-x64, win64, wasm32)\n");
             return 1;
         }
         
@@ -3099,7 +3514,18 @@ int main(int argc, char** argv) {
 #endif
             }
         } else if (strcmp(target, "macos") == 0) {
-            snprintf(compile_cmd, sizeof(compile_cmd), "clang -std=c11 -O2 -w -arch %s -I %s/src -o %s.macos %s.c %s/runtime/libwyn_rt.a -lpthread -lm", arch, wyn_root, file, file, wyn_root);
+            // This branch links the HOST runtime/libwyn_rt.a, so TLS can ride along on
+            // exactly the same terms (and with the same pre-existing caveat: a build for
+            // a foreign -arch would already fail on the host-arch archive). The OTHER
+            // cross targets - linux via zig/gcc, windows via zig, ios, android - build
+            // their runtime from source for the target and have no cross-built mbedTLS,
+            // so they get NO -DWYN_HAVE_TLS and https:// returns the named
+            // "HTTPS unavailable: linked without the TLS backend" error rather than the
+            // link dying on an undefined mbedtls symbol.
+            char _x_tls_cflags[64], _x_tls_link[1152];
+            wyn_tls_build_flags(wyn_root, _x_tls_cflags, sizeof(_x_tls_cflags),
+                                _x_tls_link, sizeof(_x_tls_link));
+            snprintf(compile_cmd, sizeof(compile_cmd), "clang -std=c11 -O2 -w -arch %s -I %s/src %s-o %s.macos %s.c %s/runtime/libwyn_rt.a%s -lpthread -lm", arch, wyn_root, _x_tls_cflags, file, file, wyn_root, _x_tls_link);
             printf("Compiling for macOS (%s)...\n", arch);
         } else if (strcmp(target, "windows") == 0) {
             if (system("which zig >/dev/null 2>&1") != 0) {
@@ -3249,7 +3675,8 @@ int main(int argc, char** argv) {
             printf("Compiling to WebAssembly via emcc...\n");
         } else {
             fprintf(stderr, "Unknown target: %s\n", target);
-            fprintf(stderr, "Available: linux, macos, windows, ios, android, wasm\n");
+            // Same list as the usage text above, from the same place. See there.
+            fprintf(stderr, "Available: %s\n", _x_targets);
             return 1;
         }
 
@@ -3374,6 +3801,45 @@ int main(int argc, char** argv) {
         int rc = wyn_bindgen(header, detect_cc(), iflags, out);
         if (out != stdout) fclose(out);
         return rc;
+    }
+
+    // INTERNAL. Prints every name the checker's builtin registry blesses, one per
+    // line. Not in `wyn help` and not a supported interface - it exists so
+    // tests/errors/run_release_slim_registry_test.sh can enumerate the registry
+    // from the REGISTRY ITSELF.
+    //
+    // The alternative was to scrape src/checker_builtins.c with grep, and that is
+    // provably incomplete: registration happens through FIVE shapes there
+    // (`add_symbol` directly, `reg_fn`, `reg_math_fns`, `reg_ptr_fns`,
+    // `reg_task_fns`, ...), and a scrape that knew only the table-literal shape
+    // missed Url_encode/Url_decode - two of the very symbols the gate has to find.
+    // A gate that silently enumerates a subset is worse than no gate, so ask the
+    // compiler instead of guessing what the compiler knows.
+    // Two sections, because the registry alone is NOT the whole reachable surface
+    // and a gate built on half of it passes while the bug is live - which is exactly
+    // what happened: `Base64.encode` compiled under `wyn run --release` only after
+    // the namespace list was added here, because Base64_encode is not a global
+    // symbol. A namespace call is legal when src/wyn_runtime.h declares
+    // <Ns>_<method> (that is the rule wyn_namespace_method_unknown() enforces at
+    // check time), so the namespaces are the second half of the enumeration.
+    //   SYMBOL <name>  - a name in the checker's global scope
+    //   NS <name>      - a builtin namespace
+    if (strcmp(command, "dump-builtins") == 0) {
+        init_checker();
+        SymbolTable* g = get_global_scope();
+        if (!g) return 1;
+        for (int i = 0; i < g->count; i++) {
+            Token nm = g->symbols[i].name;
+            if (!nm.start || nm.length <= 0) continue;
+            printf("SYMBOL %.*s\n", nm.length, nm.start);
+        }
+        extern const char* builtin_module_name_at(int index);
+        for (int i = 0; ; i++) {
+            const char* ns = builtin_module_name_at(i);
+            if (!ns) break;
+            printf("NS %s\n", ns);
+        }
+        return 0;
     }
 
     if (strcmp(command, "check") == 0) {
@@ -3711,9 +4177,15 @@ int main(int argc, char** argv) {
                         fclose(_sf);
                     }
                 }
+                // …and on the MODE. Mtimes cannot tell a debug binary from a release
+                // one, so `wyn run` followed by `wyn run --release` on the same path
+                // silently re-ran the DEBUG binary - see wyn_run_mode_key().
+                char _mode_key[128];
+                wyn_run_mode_key(argc, argv, _mode_key, sizeof(_mode_key));
                 if (out_st.st_mtime > src_st.st_mtime &&
                     (imports_mtime == 0 || out_st.st_mtime > imports_mtime) &&
-                    (!compiler_ok || out_st.st_mtime > wyn_st.st_mtime)) {
+                    (!compiler_ok || out_st.st_mtime > wyn_st.st_mtime) &&
+                    wyn_run_mode_matches(out_path, _mode_key)) {
                     char run_cmd[2048];
                     if (out_path[0] == '/') {
                         snprintf(run_cmd, sizeof(run_cmd), "%s", out_path);
@@ -3956,7 +4428,16 @@ int main(int argc, char** argv) {
         // System cc + precompiled libwyn_rt.a is faster (~300ms vs ~1800ms TCC)
         char rt_lib[512];
         snprintf(rt_lib, sizeof(rt_lib), "%s/runtime/libwyn_rt.a", wyn_root);
-        int _use_tcc = (!use_release && !shared_mode && wyn_tcc_available() && access(rt_lib, R_OK) != 0);
+        // Native HTTPS wiring, decided once - see wyn_tls_build_flags.
+        char _tls_cflags[64], _tls_link[1152];
+        wyn_tls_build_flags(wyn_root, _tls_cflags, sizeof(_tls_cflags),
+                            _tls_link, sizeof(_tls_link));
+        // TCC cannot compile mbedTLS (it dies in constant_time_impl.h's inline asm),
+        // so a program that wants HTTPS must not be built by it: the binary would link
+        // no TLS and refuse every https:// call, while the same program via the system
+        // cc worked. Slower compile, honest result.
+        int _use_tcc = (!use_release && !shared_mode && !wyn_source_uses_https(source) &&
+                        wyn_tcc_available() && access(rt_lib, R_OK) != 0);
         if (_use_tcc) {
             // Read the generated C source
             char* c_source = read_file(out_path);
@@ -4014,8 +4495,8 @@ int main(int argc, char** argv) {
         if (rt_check) {
             fclose(rt_check);
             snprintf(compile_cmd, sizeof(compile_cmd),
-                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src -o %s.out %s.c %s/runtime/libwyn_rt.a %s 2>%s",
-                     cc, opt_level, wyn_root, file, file, wyn_root, platform_libs, _run_cc_redir);
+                     "%s -std=c11 %s -w -Wno-error -Wno-incompatible-pointer-types -Wno-int-conversion -I %s/src %s-o %s.out %s.c %s/runtime/libwyn_rt.a%s %s 2>%s",
+                     cc, opt_level, wyn_root, _tls_cflags, file, file, wyn_root, _tls_link, platform_libs, _run_cc_redir);
         } else {
             // Fallback: compile from source using unified source list
             char src_list[4096];
@@ -4052,6 +4533,14 @@ int main(int argc, char** argv) {
             clock_gettime(CLOCK_MONOTONIC, &_ts_end);
             double _ms = (_ts_end.tv_sec - _ts_start.tv_sec) * 1000.0 + (_ts_end.tv_nsec - _ts_start.tv_nsec) / 1e6;
             fprintf(stderr, "\033[2mCompiled in %.0fms\033[0m\n", _ms);
+            // Record WHICH MODE this binary is, so the cache check above cannot hand a
+            // debug build to `--release` (or the reverse). Written only on success:
+            // a failed compile leaves the previous binary and its previous key, which
+            // is correct - that pair still describes what is on disk.
+            char _mode_out[520], _mode_key2[128];
+            snprintf(_mode_out, sizeof(_mode_out), "%s.out", file);
+            wyn_run_mode_key(argc, argv, _mode_key2, sizeof(_mode_key2));
+            wyn_run_mode_record(_mode_out, _mode_key2);
         }
         if (result != 0) {
             // A misspelled namespace method (`Time.now_ms()`) is lowered to a

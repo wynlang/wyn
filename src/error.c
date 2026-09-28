@@ -199,7 +199,11 @@ static const char* get_detailed_type_description(const char* type_name) {
     if (strcmp(type_name, "bool") == 0) return "boolean (true/false)";
     if (strcmp(type_name, "array") == 0) return "array/list";
     if (strcmp(type_name, "map") == 0) return "HashMap<string, int>";
-    if (strcmp(type_name, "set") == 0) return "HashSet<int>";
+    // V-35: `HashSet<string>`, not `HashSet<int>`. The runtime set is string-keyed
+    // (hashset_add takes a `const char*`) and the checker now refuses any other
+    // element type, so `HashSet<int>` named a thing the language does not have - and
+    // said it about sets whose elements are plainly strings.
+    if (strcmp(type_name, "set") == 0) return "HashSet<string>";
     if (strcmp(type_name, "optional") == 0) return "Option<T>";
     if (strcmp(type_name, "result") == 0) return "Result<T, E>";
     return type_name;

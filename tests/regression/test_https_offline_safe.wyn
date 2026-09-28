@@ -1,0 +1,45 @@
+// Regression: HTTPS used to be
+//   popen("printf 'GET %s ...' | openssl s_client -quiet -connect %s:443")
+// with the URL and POST body spliced straight into that command string - a remote
+// code execution bug, live in a shipped release. It is now an in-process TLS
+// client (src/wyn_https.c on top of src/wyn_tls.c), so there is no shell at all.
+//
+// This test is OFFLINE-SAFE by construction: .invalid is reserved by RFC 2606 and
+// can never resolve, so it exercises the failure path without any network. What it
+// pins is that the failure is CLEAN:
+//
+//   * no crash, no hang - the transport has a read timeout and a bounded DNS
+//     failure, unlike a popen whose child could sit there;
+//   * an empty body, not a truncated or half-parsed one;
+//   * a diagnosable error string instead of silence;
+//   * NOTHING printed that we did not print ourselves. The old path could leak
+//     `sh: openssl: command not found` or an openssl usage banner onto the
+//     terminal; the BDD runner compares every captured line, so any stray shell
+//     output fails this test.
+//
+// The positive path (real bytes, chunked decoding, 250 KB responses, status codes)
+// is gated by tests/https/run_https_test.sh against a loopback TLS server, which
+// is where it belongs - a merge gate must not depend on the internet.
+
+fn main() {
+    var body = http_get("https://wyn-native-https.invalid/anything")
+    println("body_len=${body.len()}")
+
+    var err = http_error()
+    var explained = 0
+    if err.len() > 0 {
+        explained = 1
+    }
+    println("explained=${explained}")
+
+    // POST with a body that would have been catastrophic inside a shell command.
+    var p = http_post("https://wyn-native-https.invalid/x", "a'; touch /tmp/wyn_rce; #")
+    println("post_len=${p.len()}")
+
+    println("https offline-safe")
+}
+
+// EXPECT: body_len=0
+// EXPECT: explained=1
+// EXPECT: post_len=0
+// EXPECT: https offline-safe

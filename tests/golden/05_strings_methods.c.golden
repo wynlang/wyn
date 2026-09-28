@@ -19,7 +19,7 @@ const char* t = string_trim(s);
     println(string_upper(t));
     println(string_lower(t));
     ({ const char* __ps = to_string(string_len(t)); println(__ps); wyn_rc_release(__ps); });
-    ({ const char* __ps = to_string(string_contains(t, "World")); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string((bool)(string_contains(t, "World"))); println(__ps); wyn_rc_release(__ps); });
     return 0;
 }
 

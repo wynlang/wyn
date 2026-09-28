@@ -44,8 +44,20 @@ static const MethodSignature method_signatures[] = {
     {"string", "char_at", "string", 1},      // Get char at index
     {"string", "equals", "bool", 1},         // String equality
     {"string", "count", "int", 1},           // Count occurrences
+    // is_numeric means "looks like a DECIMAL number, int or float" - so
+    // "1.5".is_numeric() is true and that is correct, 1.5 IS a number. It is
+    // NOT the predicate that tells you `.to_int()` is safe; that one is
+    // is_int(), which is literally to_int_checked().is_ok(). Gating a to_int on
+    // is_numeric() was the V-18 trap: the true answer still panicked.
     {"string", "is_numeric", "bool", 0},     // Check if numeric (int or float)
-    {"string", "to_int", "int", 0},          // Parse string to int
+    {"string", "is_int", "bool", 0},         // to_int_checked().is_ok() - the predicate that gates to_int
+    {"string", "to_int", "int", 0},          // Parse string to int (PANICS on garbage)
+    // The catchable parses. V-18: before these there was no
+    // string->number that could not abort the process, so no CLI could read
+    // untrusted input. Uppercase return types are resolved as builtin types by
+    // name in checker.c's table mapper, so no per-name special case is needed.
+    {"string", "to_int_checked", "ResultInt", 0},      // -> Result<int, string>
+    {"string", "to_float_checked", "ResultFloat", 0},  // -> Result<float, string>
     {"string", "ascii", "int", 0},           // ASCII value of first char
     {"string", "to_float", "float", 0},      // Parse string to float
     {"string", "parse_int", "int", 0},       // Parse string to int (alias)
@@ -67,9 +79,29 @@ static const MethodSignature method_signatures[] = {
     // matching entries in dispatch_method for the C functions.
     {"json", "set_string", "void", 2},       // Set string value by key
     {"json", "set_int", "void", 2},          // Set int value by key
+    {"json", "set_float", "void", 2},        // Set float value by key
     {"json", "set_bool", "void", 2},         // Set bool value by key
+    {"json", "set_null", "void", 1},         // Set an explicit JSON null
+    {"json", "set", "void", 2},              // Alias of set_string
     {"json", "stringify", "string", 0},      // Serialize to JSON text
-    
+    {"json", "to_pretty_string", "string", 0},
+    // Reachable now that Json has ONE representation. These were namespace-only
+    // because Json_has/Json_keys/Json_array_* took a handle while a json RECEIVER
+    // was a WynJson*, so wiring them up would have traded a missing call for a type
+    // confusion. Both halves are handles now.
+    {"json", "get", "string", 1},            // Any scalar value as text
+    {"json", "get_array", "json", 1},        // Child array node handle
+    {"json", "get_object", "json", 1},       // Child object node handle
+    // `int`, not `bool`: the namespace spelling Json.has is registered int-typed and
+    // existing tests compare it to 0 (`Json.has(d, "k") == 0`). The two spellings must
+    // agree, and changing the shipped 1/0 output is a separate decision.
+    {"json", "has", "int", 1},
+    {"json", "keys", "array", 0},
+    {"json", "array_len", "int", 0},
+    {"json", "array_get", "json", 1},
+    {"json", "node_str", "string", 0},
+    {"json", "is_valid", "bool", 0},
+
     // HTTP methods (URL is a string)
     {"string", "http_get", "string", 0},     // GET request, returns response body
     {"string", "http_post", "string", 1},    // POST request with body
@@ -139,16 +171,16 @@ static const MethodSignature method_signatures[] = {
     {"bool", "xor", "bool", 1},
     
     // Char methods
-    {"char", "to_string", "string", 0},
-    {"char", "to_int", "int", 0},
-    {"char", "is_alpha", "bool", 0},
-    {"char", "is_numeric", "bool", 0},
-    {"char", "is_alphanumeric", "bool", 0},
-    {"char", "is_whitespace", "bool", 0},
-    {"char", "is_uppercase", "bool", 0},
-    {"char", "is_lowercase", "bool", 0},
-    {"char", "to_upper", "char", 0},
-    {"char", "to_lower", "char", 0},
+    // The `char` RECEIVER rows lived here and were unreachable by construction: checker.c
+    // maps the `char` annotation straight to builtin_int ("char is int in Wyn"), so a
+    // char-typed value resolves against the INT receiver table and never reaches a row
+    // keyed "char". Measured: `var c: char = 97; c.is_uppercase()` gives "Unknown method
+    // 'is_uppercase' for type 'int'". Ten rows, all dead.
+    //
+    // Removed rather than implemented: giving Wyn a real `char` type is a language change,
+    // and the alternative already works - a single character is a 1-length string, which
+    // is what `"abc"[0]` returns, and the string receiver has is_alpha/upper/lower.
+    // `c.to_string()` and `c.to_int()` keep working via the int rows.
     
     // Array/Vec methods (receiver type will be "array" for now)
     {"array", "len", "int", 0},
@@ -212,7 +244,10 @@ static const MethodSignature method_signatures[] = {
     {"map", "set_int", "void", 2},
     {"map", "stringify", "string", 0},
     {"map", "remove", "void", 1},
-    {"map", "contains", "bool", 1},
+    // (a second {"map","contains","bool",1} row lived here and was DEAD - lookup is
+    //  first-match-wins and the int row above shadows it. The int typing is load-bearing:
+    //  callers pass m.contains(k) to assert_eq_int. Converging it to bool is a breaking
+    //  change and is tracked separately, not smuggled in here.)
     {"map", "len", "int", 0},
     {"map", "is_empty", "bool", 0},
     {"map", "values", "array", 0},
@@ -220,7 +255,6 @@ static const MethodSignature method_signatures[] = {
     {"map", "get_or_default", "int", 2},  // Returns value or default
     {"map", "update", "void", 2},         // Update value with function (defer - needs lambdas)
     {"map", "merge", "void", 1},          // Merge with another map
-    {"map", "entries", "array", 0},       // Returns array of [key, value] pairs
     {"map", "for_each", "void", 1},       // for_each(fn) - iterate with function
     {"map", "filter_keys", "map", 1},     // filter_keys(fn) -> map
     {"map", "map_values", "map", 1},      // map_values(fn) -> map
@@ -239,7 +273,6 @@ static const MethodSignature method_signatures[] = {
     {"set", "is_superset", "bool", 1},
     {"set", "is_disjoint", "bool", 1},
     {"set", "symmetric_difference", "set", 1},  // Elements in either but not both
-    {"set", "to_array", "array", 0},            // Convert to array
     {"set", "from_array", "set", 1},            // Create from array
     {"set", "filter", "set", 1},                // filter(fn) -> set
     {"set", "map", "set", 1},                   // map(fn) -> set
@@ -250,22 +283,22 @@ static const MethodSignature method_signatures[] = {
     {"option", "is_none", "bool", 0},
     {"option", "unwrap", "int", 0},    // Type depends on Option<T>
     {"option", "unwrap_or", "int", 1}, // Type depends on Option<T>
-    {"option", "expect", "int", 1},    // expect(msg: string) -> T
-    {"option", "or_else", "option", 1}, // or_else(fn: () -> Option<T>) -> Option<T>
-    {"option", "map", "option", 1},    // Higher-order: map(fn) -> Option<U>
-    {"option", "and_then", "option", 1}, // Higher-order: and_then(fn) -> Option<U>
-    {"option", "filter", "option", 1}, // Higher-order: filter(fn) -> Option<T>
+    // V-37: option.expect / or_else / map / and_then / filter were advertised here and
+    // do not exist. Codegen emits the monomorphic value-struct family (OptionInt_map),
+    // which nothing defines; the wyn_optional_* names these rows lowered to belong to a
+    // retired heap-boxed WynOptional* model and take an incompatible representation. The
+    // rows are removed rather than repointed, because repointing would not compile
+    // either. reject_missing_option_combinator() in checker.c now answers these calls
+    // with a real message, and tests/errors/run_option_combinator_test.sh pins both
+    // halves - so re-adding a row without an implementation fails the build.
     
     // Result methods
     {"result", "is_ok", "bool", 0},
     {"result", "is_err", "bool", 0},
     {"result", "unwrap", "int", 0},    // Type depends on Result<T,E>
     {"result", "unwrap_or", "int", 1}, // Type depends on Result<T,E>
-    {"result", "expect", "int", 1},    // expect(msg: string) -> T
-    {"result", "map_err", "result", 1}, // map_err(fn: E -> F) -> Result<T,F>
-    {"result", "or_else", "result", 1}, // or_else(fn: E -> Result<T,F>) -> Result<T,F>
-    {"result", "map", "result", 1},    // Higher-order: map(fn) -> Result<U,E>
-    {"result", "and_then", "result", 1}, // Higher-order: and_then(fn) -> Result<U,E>
+    // V-37, the Result half: expect / map_err / or_else / map / and_then, same story and
+    // the same retired wyn_result_* representation. See the note above.
     
     // Sentinel - marks end of table
     {NULL, NULL, NULL, 0}
@@ -287,26 +320,35 @@ const char* lookup_method_return_type(const char* receiver_type, const char* met
     return NULL;  // Method not found
 }
 
+// How close two identifiers are, for every "did you mean" hint: differing chars +
+// length difference. WYN_NAME_FAR means "not worth suggesting". One function
+// because the value-receiver suggester and the namespace suggester must rank
+// candidates the same way - two metrics would make `.uppr` and `Time.millis`
+// disagree about what counts as a near miss for no reason a user could see.
+#define WYN_NAME_FAR 4
+int wyn_name_distance(const char* a, const char* b) {
+    if (!a || !b) return WYN_NAME_FAR;
+    size_t al = strlen(a), bl = strlen(b);
+    int diff = (int)(al > bl ? al - bl : bl - al);
+    if (diff > 2) return WYN_NAME_FAR;
+    size_t shorter = al < bl ? al : bl;
+    int match = 0;
+    for (size_t c = 0; c < shorter; c++)
+        if (a[c] == b[c]) match++;
+    int d = (int)(shorter - match) + diff;
+    return d < WYN_NAME_FAR ? d : WYN_NAME_FAR;
+}
+
 // Nearest known method name on a receiver, for "did you mean" hints when an
-// unknown method is rejected. Simple distance: differing chars + length diff,
-// same metric as the undefined-function suggester in checker.c. Returns NULL
-// when nothing is within distance 3.
+// unknown method is rejected. Returns NULL when nothing is within distance 3.
 const char* suggest_method_name(const char* receiver_type, const char* method_name) {
     if (!receiver_type || !method_name) return NULL;
     const char* best = NULL;
-    int best_dist = 4;  // only suggest reasonably close names
-    size_t ml = strlen(method_name);
+    int best_dist = WYN_NAME_FAR;
     for (int i = 0; method_signatures[i].receiver_type != NULL; i++) {
         if (strcmp(method_signatures[i].receiver_type, receiver_type) != 0) continue;
         const char* cand = method_signatures[i].method_name;
-        size_t cl = strlen(cand);
-        int diff = (int)(ml > cl ? ml - cl : cl - ml);
-        if (diff > 2) continue;
-        size_t shorter = ml < cl ? ml : cl;
-        int match = 0;
-        for (size_t c = 0; c < shorter; c++)
-            if (method_name[c] == cand[c]) match++;
-        int d = (int)(shorter - match) + diff;
+        int d = wyn_name_distance(method_name, cand);
         if (d > 0 && d < best_dist) { best_dist = d; best = cand; }
     }
     return best;
@@ -338,6 +380,69 @@ const char* get_receiver_type_string(const Type* type) {
             return NULL;
         default: return NULL;
     }
+}
+
+// The ONE table for methods on a json receiver: `doc.get_string(k)` must lower to
+// exactly what the namespace spelling `Json.get_string(doc, k)` lowers to. Every
+// entry is a capital-J handle function, because Json has one representation - a
+// long long index into the runtime's node arena.
+//
+// This is deliberately a single function called from both dispatch sites. There were
+// two separate json tables in this file with DIFFERENT contents, one of them wired to
+// the retired WynJson* pairs model, and the readers-vs-writers split between them is
+// how `a.set_int(..)` came to emit nothing (#312) while `doc.get_string(..)`
+// dereferenced an integer handle. Add a method here and both spellings get it.
+static bool wyn_json_method_c_function(const char* method_name, int arg_count, MethodDispatch* out) {
+    struct { const char* m; int argc; const char* fn; } json_methods[] = {
+        // readers
+        {"get",              1, "Json_get"},
+        {"get_string",       1, "Json_get_string"},
+        {"get_int",          1, "Json_get_int"},
+        {"get_float",        1, "Json_get_float"},
+        {"get_bool",         1, "Json_get_bool"},
+        {"get_array",        1, "Json_get_array"},
+        {"get_object",       1, "Json_get_object"},
+        {"has",              1, "Json_has"},
+        {"keys",             0, "Json_keys"},
+        {"array_len",        0, "Json_array_len"},
+        {"array_get",        1, "Json_array_get"},
+        {"node_str",         0, "Json_node_str"},
+        {"is_valid",         0, "Json_is_valid"},
+        // writers
+        {"set",              2, "Json_set_string"},
+        {"set_string",       2, "Json_set_string"},
+        {"set_int",          2, "Json_set_int"},
+        {"set_float",        2, "Json_set_float"},
+        {"set_bool",         2, "Json_set_bool"},
+        {"set_null",         1, "Json_set_null"},
+        // whole-document
+        {"stringify",        0, "Json_stringify"},
+        {"to_pretty_string", 0, "Json_to_pretty_string"},
+        {"free",             0, "Json_free"},
+    };
+    for (size_t i = 0; i < sizeof(json_methods) / sizeof(json_methods[0]); i++) {
+        if (strcmp(method_name, json_methods[i].m) == 0 && arg_count == json_methods[i].argc) {
+            out->c_function = json_methods[i].fn;
+            return true;
+        }
+    }
+    return false;
+}
+
+// V-36: does this Json method take the HANDLE as its first argument? Every entry in the
+// table above does - Json has one representation, a long long arena index - and
+// `Json_parse` is the only Json runtime function taking a `const char*`, which is why it
+// is absent from that table and so answers false here.
+//
+// Asked of the table itself rather than answered with a list of Json method names in the
+// checker: a Json method added above is then covered by the check-time rule without
+// anyone remembering to add it twice. The argc loop spans the table's whole range (0-2),
+// because the question is about the method, not about one call's arity.
+bool wyn_json_method_takes_handle(const char* method_name) {
+    MethodDispatch d;
+    for (int argc = 0; argc <= 2; argc++)
+        if (wyn_json_method_c_function(method_name, argc, &d)) return true;
+    return false;
 }
 
 // Dispatch method call based on receiver type and method name
@@ -391,10 +496,14 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "chars") == 0 && arg_count == 0) {
             out->c_function = "string_chars"; return true;
         }
+        // Both spellings, one lowering. `to_bytes` had an EMPTY body here and `bytes`
+        // carried the assignment TWICE (the second line unreachable) - a botched edit, and
+        // the reason `"abc".to_bytes()` was refused while `"abc".bytes()` worked, even
+        // though string_to_bytes has been in the runtime archive all along.
         if (strcmp(method_name, "to_bytes") == 0 && arg_count == 0) {
+            out->c_function = "string_to_bytes"; return true;
         }
         if (strcmp(method_name, "bytes") == 0 && arg_count == 0) {
-            out->c_function = "string_to_bytes"; return true;
             out->c_function = "string_to_bytes"; return true;
         }
         if (strcmp(method_name, "pad_left") == 0 && arg_count == 2) {
@@ -466,6 +575,15 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "is_numeric") == 0 && arg_count == 0) {
             out->c_function = "string_is_numeric"; return true;
         }
+        if (strcmp(method_name, "is_int") == 0 && arg_count == 0) {
+            out->c_function = "str_is_int"; return true;
+        }
+        if (strcmp(method_name, "to_int_checked") == 0 && arg_count == 0) {
+            out->c_function = "str_to_int_checked"; return true;
+        }
+        if (strcmp(method_name, "to_float_checked") == 0 && arg_count == 0) {
+            out->c_function = "str_to_float_checked"; return true;
+        }
         if (strcmp(method_name, "parse_int") == 0 && arg_count == 0) {
             out->c_function = "str_parse_int"; return true;
         }
@@ -481,9 +599,12 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "to_float") == 0 && arg_count == 0) {
             out->c_function = "str_parse_float"; return true;
         }
-        // JSON parsing method
+        // JSON parsing method. Json_parse, not the retired json.c entry point:
+        // `"...".parse_json()` yields TYPE_JSON, and every reader on a TYPE_JSON
+        // receiver is a handle function, so producing a WynJson* here handed a
+        // pointer to code that treated it as an index.
         if (strcmp(method_name, "parse_json") == 0 && arg_count == 0) {
-            out->c_function = "json_parse"; return true;
+            out->c_function = "Json_parse"; return true;
         }
         // HTTP methods (URL is a string)
         if (strcmp(method_name, "http_get") == 0 && arg_count == 0) {
@@ -534,44 +655,7 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
     }
     
     if (strcmp(receiver_type, "json") == 0) {
-        // JSON object methods
-        if (strcmp(method_name, "get_string") == 0 && arg_count == 1) {
-            out->c_function = "json_get_string"; return true;
-        }
-        if (strcmp(method_name, "get_int") == 0 && arg_count == 1) {
-            out->c_function = "json_get_int"; return true;
-        }
-        if (strcmp(method_name, "get_float") == 0 && arg_count == 1) {
-            out->c_function = "json_get_float"; return true;
-        }
-        if (strcmp(method_name, "get_bool") == 0 && arg_count == 1) {
-            out->c_function = "json_get_bool"; return true;
-        }
-        if (strcmp(method_name, "free") == 0 && arg_count == 0) {
-            out->c_function = "json_free"; return true;
-        }
-        // The writers. Capital-J `Json_set_*` / `Json_stringify` are the wrappers
-        // that take a `WynJson*`, which is what TYPE_JSON lowers to - the same
-        // functions the WORKING namespace spelling (`Json.set_int(j, ..)`) already
-        // used, so the two spellings now agree by construction.
-        //
-        // has/keys are deliberately NOT here: `Json_has` and `Json_keys` take a
-        // `long long` index into json_nodes[], the OTHER half of Json's documented
-        // two-representation split, so wiring them to a WynJson* receiver would
-        // trade a missing call for a type confusion. They stay namespace-only.
-        if (strcmp(method_name, "set_string") == 0 && arg_count == 2) {
-            out->c_function = "Json_set_string"; return true;
-        }
-        if (strcmp(method_name, "set_int") == 0 && arg_count == 2) {
-            out->c_function = "Json_set_int"; return true;
-        }
-        if (strcmp(method_name, "set_bool") == 0 && arg_count == 2) {
-            out->c_function = "Json_set_bool"; return true;
-        }
-        if (strcmp(method_name, "stringify") == 0 && arg_count == 0) {
-            out->c_function = "Json_stringify"; return true;
-        }
-        return false;
+        return wyn_json_method_c_function(method_name, arg_count, out);
     }
 
     if (strcmp(receiver_type, "int") == 0) {
@@ -1015,21 +1099,11 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "unwrap_or") == 0 && arg_count == 1) {
             out->c_function = "Option_unwrap_or"; return true;
         }
-        if (strcmp(method_name, "expect") == 0 && arg_count == 1) {
-            out->c_function = "wyn_optional_expect"; return true;
-        }
-        if (strcmp(method_name, "or_else") == 0 && arg_count == 1) {
-            out->c_function = "wyn_optional_or_else"; return true;
-        }
-        if (strcmp(method_name, "map") == 0 && arg_count == 1) {
-            out->c_function = "wyn_optional_map"; return true;
-        }
-        if (strcmp(method_name, "and_then") == 0 && arg_count == 1) {
-            out->c_function = "wyn_optional_and_then"; return true;
-        }
-        if (strcmp(method_name, "filter") == 0 && arg_count == 1) {
-            out->c_function = "wyn_optional_filter"; return true;
-        }
+        // V-37: expect / or_else / map / and_then / filter lowered to wyn_optional_*
+        // here. Those take WynOptional* - the retired heap-boxed model - while codegen
+        // emits the OptionInt/OptionString value-struct family, so the lowering could
+        // never link. Dropped with the signature rows that advertised them; the checker
+        // now rejects the calls with a message naming what Option does have.
         return false;
     }
     
@@ -1047,38 +1121,21 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
         if (strcmp(method_name, "unwrap_or") == 0 && arg_count == 1) {
             out->c_function = "Result_unwrap_or"; return true;
         }
-        if (strcmp(method_name, "expect") == 0 && arg_count == 1) {
-            out->c_function = "wyn_result_expect"; return true;
-        }
-        if (strcmp(method_name, "map_err") == 0 && arg_count == 1) {
-            out->c_function = "wyn_result_map_err"; return true;
-        }
-        if (strcmp(method_name, "or_else") == 0 && arg_count == 1) {
-            out->c_function = "wyn_result_or_else"; return true;
-        }
-        if (strcmp(method_name, "map") == 0 && arg_count == 1) {
-            out->c_function = "wyn_result_map"; return true;
-        }
-        if (strcmp(method_name, "and_then") == 0 && arg_count == 1) {
-            out->c_function = "wyn_result_and_then"; return true;
-        }
+        // V-37, the Result half: these lowered to wyn_result_*, which take WynResult* -
+        // the retired heap-boxed model - while codegen emits the ResultInt/ResultString
+        // value-struct family. See the note in the option branch above.
         return false;
     }
     
-    // JSON object methods
-    if (strcmp(receiver_type, "json") == 0 || strcmp(receiver_type, "WynJson") == 0) {
-        if (strcmp(method_name, "get_string") == 0 && arg_count == 1) {
-            out->c_function = "json_get_string"; return true;
-        }
-        if (strcmp(method_name, "get_int") == 0 && arg_count == 1) {
-            out->c_function = "json_get_int"; return true;
-        }
-        if (strcmp(method_name, "free") == 0 && arg_count == 0) {
-            out->c_function = "json_free"; return true;
-        }
-        return false;
+    // JSON object methods. This used to be a SECOND, shorter copy of the json table
+    // above with three entries wired to the other representation's functions
+    // (json_get_string(WynJson*) against a handle) - two tables for one receiver, so
+    // whichever ran first decided whether `doc.get_string(k)` read a document or
+    // dereferenced an integer. One authority now.
+    if (strcmp(receiver_type, "json") == 0) {
+        return wyn_json_method_c_function(method_name, arg_count, out);
     }
-    
+
     return false;  // Method not found
 }
 
@@ -1094,6 +1151,8 @@ const char* lookup_module_fn_return_type(const char* fn_name) {
         {"Base64_encode", "string"}, {"Base64_decode", "string"},
         {"Json_stringify", "string"}, {"Json_to_pretty_string", "string"},
         {"Json_get", "string"}, {"Json_keys", "array"},
+        {"Json_get_string", "string"}, {"Json_node_str", "string"},
+        {"Json_get_float", "float"}, {"Json_is_valid", "bool"},
         {"Os_platform", "string"}, {"Os_arch", "string"},
         {"Os_hostname", "string"}, {"Os_home_dir", "string"}, {"Os_temp_dir", "string"},
         {"Uuid_generate", "string"}, {"Uuid_v4", "string"}, {"Process_exec_capture", "string"},
@@ -1118,10 +1177,425 @@ const char* lookup_module_fn_return_type(const char* fn_name) {
         {"Random_string", "string"}, {"Random_hex", "string"}, {"Random_uuid", "string"},
         {"Random_bool", "bool"}, {"Random_choice_str", "string"},
         {"Web_render", "string"},
+        // HashSet.contains is `bool` in the set RECEIVER table above
+        // ({"set","contains","bool"}), and `HashSet` is BOTH a namespace and a
+        // registered type - so the dotted spelling reads the receiver table and the
+        // `::` spelling reads this one. Without this entry `HashSet.contains(s,"a")`
+        // printed `true` and `HashSet::contains(s,"a")` printed `1`. (HashMap.has
+        // needs no entry: hashmap_has is declared `bool` in the runtime, so both
+        // spellings already agree. hashset_contains is declared `int`.)
+        {"HashSet_contains", "bool"},
+        // Same shape, and the reason it needs saying twice: hashmap_has IS declared
+        // `bool`, so the DIRECT call already printed true/false by accident of the C
+        // declaration - but the checker had no type for it, so `var v = HashMap.has(m,k)`
+        // declared a non-bool and printed `1`. Registering the type makes the accident
+        // into the rule, in both spellings and through a variable.
+        {"HashMap_has", "bool"},
+        // File's three predicates. Same pair of tables, same split: the dotted
+        // `File.exists(".")` printed `true` because File_exists is declared `bool` in
+        // wyn_runtime.h, while `File::exists(".")` and `var v = File.exists(".")` both
+        // printed `1` because the checker had no type for either. (The `.exists()`
+        // METHOD on a string is a different lowering - `_exists` - and is registered in
+        // the receiver table above.)
+        {"File_exists", "bool"}, {"File_is_dir", "bool"}, {"File_is_file", "bool"},
         {NULL, NULL}
     };
     for (int i = 0; fns[i].name; i++) {
         if (strcmp(fns[i].name, fn_name) == 0) return fns[i].ret;
     }
     return NULL;
+}
+
+// ===========================================================================
+// Builtin stdlib namespaces: one lowering, and the check-time "does it exist?"
+// ===========================================================================
+//
+// THE PROBLEM THIS SOLVES
+//
+// `Time.no_such_method_xyz()` used to pass `wyn check` on all 31 namespaces and
+// then fail in clang on a symbol the programmer never wrote. The checker could not
+// reject it because its namespace return-type tables are deliberately partial - 37
+// of the 217 distinct `Namespace.method` calls in this repo's own .wyn corpus are
+// absent from them, so "not in a table" has never meant "does not exist".
+//
+// What DOES decide is the C symbol the call lowers to: codegen emits it, and the C
+// compiler resolves it against the runtime headers. So the lowering is the
+// authority, and it lives here - once. codegen_expr.c used to carry it as a
+// 26-branch if-chain over namespace names; it now calls wyn_namespace_c_symbol(),
+// because a second copy of this mapping is exactly how `HashMap.set_int` came to
+// pass the checker and fail the C compile (the runtime spells it
+// hashmap_insert_int).
+//
+// The existence answer is TRI-STATE on purpose. If the runtime headers cannot be
+// read (an unusual install), or if the index knows no symbol at all under a
+// namespace's prefix, the checker stays permissive - the same behaviour as before
+// this existed. Being unable to prove a call wrong must never mean rejecting it.
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+
+extern bool is_builtin_module(const char* name);
+extern const char* builtin_module_name_at(int index);
+extern const char* wyn_installation_root(void);   // main.c
+
+// Namespaces whose C symbols are spelled with a LOWERCASE prefix. Everything else
+// uses the namespace's own name (`File.read_all` -> `File_read_all`), which is also
+// what the module fall-through in codegen emits.
+static const struct { const char* ns; const char* prefix; } wyn_ns_prefixes[] = {
+    {"Regex",   "regex_"},
+    {"HashMap", "hashmap_"},
+    {"HashSet", "hashset_"},
+    {"Random",  "random_"},
+    {NULL, NULL}
+};
+
+// Methods whose C symbol is not <prefix><method>. Each one is a rename in the
+// runtime, and each one was a real bug before it was listed: the blanket mangling
+// emitted a symbol that did not exist.
+// Named, not anonymous: both spellings' tables are held through one pointer below,
+// and two anonymous structs are distinct types in C (-Wpointer-type-mismatch).
+typedef struct { const char* ns; const char* method; const char* sym; } WynNsRename;
+static const WynNsRename wyn_ns_renames[] = {
+    // Http's simple string API is lowercase; its server API is not.
+    {"Http", "get",        "http_get"},
+    {"Http", "post",       "http_post"},
+    {"Http", "put",        "http_put"},
+    {"Http", "delete",     "http_delete"},
+    {"Http", "set_header", "http_set_header"},
+    // HashMap: the runtime spells the setters hashmap_insert_*, and `get` defaults
+    // to the string flavour.
+    {"HashMap", "get",        "hashmap_get_string"},
+    {"HashMap", "set",        "hashmap_set"},
+    {"HashMap", "has",        "hashmap_has"},
+    {"HashMap", "set_int",    "hashmap_insert_int"},
+    {"HashMap", "set_string", "hashmap_insert_string"},
+    {"HashMap", "set_float",  "hashmap_insert_float"},
+    {"HashMap", "set_bool",   "hashmap_insert_bool"},
+    // Task.try_recv returns int? in Wyn, so it lowers to the Option-returning shim
+    // built on the pointer out-param form that Wyn cannot express.
+    {"Task", "try_recv", "Task_try_recv_opt"},
+    // String.char(65) -> "A"
+    {"String", "char", "String_char_from_int"},
+    {NULL, NULL, NULL}
+};
+
+static const char* wyn_ns_prefix_for(const char* ns) {
+    for (int i = 0; wyn_ns_prefixes[i].ns; i++)
+        if (strcmp(wyn_ns_prefixes[i].ns, ns) == 0) return wyn_ns_prefixes[i].prefix;
+    return NULL;   // caller uses "<ns>_"
+}
+
+// THE TWO SPELLINGS LOWER DIFFERENTLY TODAY, AND THAT IS A BUG - BUT NOT THIS BUG.
+//
+// `Ns.method()` and `Ns::method()` are the same call, and codegen_expr.c lowers them
+// through two separate chains that disagree. Measured on dev @ 82f8d2bc by reading
+// the generated C for each spelling of the same program:
+//
+//   HashMap.set_int  -> hashmap_insert_int   (declared: builds and runs)
+//   HashMap::set_int -> hashmap_set_int      (NOT declared: build fails)
+//   String.char      -> String_char_from_int (builds)
+//   String::char     -> String_char          (NOT declared: build fails)
+//   Regex.match      -> regex_match          (builds)
+//   Regex::match     -> Regex_match          (NOT declared: build fails)
+//   File.list_dir    -> File_list_dir        (char*)
+//   File::list_dir   -> file_list_dir        (WynArray)   <- DIFFERENT FUNCTIONS
+//
+// Converging them is a real fix and is NOT attempted here. The last row is why: the
+// two File prefixes are not aliases. `char* File_list_dir(const char*)` and
+// `WynArray file_list_dir(const char*)` return different C types, and each spelling's
+// checker type already agrees with its own symbol, so pointing both at one of them
+// breaks the other. ("Both names are declared" is not evidence they are the same
+// function - that assumption regressed File::list_dir once already while this change
+// was being written.) It needs the runtime types reconciled first; filed separately.
+//
+// What this file therefore owns is the lowering FOR EACH SPELLING, in one place, so
+// the checker can ask what the call it is looking at will actually emit. The old
+// arrangement had the `::` mapping only inside codegen, where the checker could not
+// see it - which is precisely why the check-time rule shipped for `.` alone.
+//
+// The `::` map below mirrors codegen_expr.c's `::` chain exactly, including what it
+// does NOT special-case (no Regex, Http, Task or String entries - those fall to the
+// plain `<Ns>_<method>`), because a faithful copy is the only kind that can tell the
+// truth about what will be emitted.
+static const struct { const char* ns; const char* prefix; } wyn_ns_prefixes_colon[] = {
+    {"HashMap",       "hashmap_"},
+    {"HashSet",       "hashset_"},
+    {"Random",        "random_"},
+    {"File",          "file_"},
+    {"StringBuilder", "StringBuilder_"},
+    {"Color",         "Color_"},
+    {"Time",          "Time_"},
+    {"System",        "System_"},
+    {NULL, NULL}
+};
+static const WynNsRename wyn_ns_renames_colon[] = {
+    {"HashMap", "get", "hashmap_get_string"},
+    {"HashMap", "set", "hashmap_set"},
+    {"HashMap", "has", "hashmap_has"},
+    {NULL, NULL, NULL}
+};
+
+static int wyn_ns_spelling_is_colon(const char* separator) {
+    return separator && separator[0] == ':';
+}
+
+int wyn_namespace_c_symbol_spelled(const char* ns, const char* method,
+                                   const char* separator, char* out, size_t out_sz) {
+    if (!ns || !method || !out || out_sz == 0) return 0;
+    if (!is_builtin_module(ns)) return 0;
+    int colon = wyn_ns_spelling_is_colon(separator);
+    const WynNsRename* renames = colon ? wyn_ns_renames_colon : wyn_ns_renames;
+    for (int i = 0; renames[i].ns; i++) {
+        if (strcmp(renames[i].ns, ns) == 0 && strcmp(renames[i].method, method) == 0) {
+            snprintf(out, out_sz, "%s", renames[i].sym);
+            return 1;
+        }
+    }
+    const char* pfx = NULL;
+    if (colon) {
+        for (int i = 0; wyn_ns_prefixes_colon[i].ns; i++)
+            if (strcmp(wyn_ns_prefixes_colon[i].ns, ns) == 0) { pfx = wyn_ns_prefixes_colon[i].prefix; break; }
+    } else {
+        pfx = wyn_ns_prefix_for(ns);
+    }
+    if (pfx) snprintf(out, out_sz, "%s%s", pfx, method);
+    else     snprintf(out, out_sz, "%s_%s", ns, method);
+    return 1;
+}
+
+// The dotted spelling, which is what this name has always meant - codegen_expr.c's
+// dot chain and main.c's post-compile diagnostic both call it and are unchanged.
+int wyn_namespace_c_symbol(const char* ns, const char* method, char* out, size_t out_sz) {
+    return wyn_namespace_c_symbol_spelled(ns, method, ".", out, out_sz);
+}
+
+// --- the runtime declaration index ----------------------------------------
+// Every `identifier(` in the translation unit a compiled program forms:
+// src/wyn_runtime.h plus the project headers it includes. Built at most once, and
+// only when a namespace call has already failed every return-type lookup - so an
+// ordinary compile never reads a byte of it.
+
+static char** wyn_rt_syms = NULL;
+static int wyn_rt_sym_count = 0;
+static int wyn_rt_sym_cap = 0;
+static int wyn_rt_index_state = 0;   // 0 unloaded, 1 loaded, -1 unavailable
+
+static void wyn_rt_index_add(const char* name, size_t len) {
+    if (len == 0 || len > 190) return;
+    if (wyn_rt_sym_count == wyn_rt_sym_cap) {
+        int ncap = wyn_rt_sym_cap ? wyn_rt_sym_cap * 2 : 512;
+        char** grown = (char**)realloc(wyn_rt_syms, (size_t)ncap * sizeof(char*));
+        if (!grown) return;
+        wyn_rt_syms = grown; wyn_rt_sym_cap = ncap;
+    }
+    char* copy = (char*)malloc(len + 1);
+    if (!copy) return;
+    memcpy(copy, name, len); copy[len] = '\0';
+    wyn_rt_syms[wyn_rt_sym_count++] = copy;
+}
+
+// Scan one header. `collect_includes` is set for the top-level runtime header only:
+// the compiled program sees its `#include "x.h"` files too, and four namespaces
+// (HashMap, HashSet, Json, Gui among them) are declared exclusively in those.
+static void wyn_rt_index_file(const char* root, const char* rel, int collect_includes,
+                              char includes[][64], int* ninc) {
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/src/%s", root, rel);
+    FILE* f = fopen(path, "r");
+    if (!f) return;
+    char line[4096];
+    while (fgets(line, sizeof(line), f)) {
+        if (collect_includes && *ninc < 64) {
+            const char* inc = strstr(line, "#include \"");
+            if (inc) {
+                inc += 10;
+                const char* endq = strchr(inc, '"');
+                if (endq && endq - inc > 0 && endq - inc < 63) {
+                    size_t n = (size_t)(endq - inc);
+                    memcpy(includes[*ninc], inc, n);
+                    includes[*ninc][n] = '\0';
+                    (*ninc)++;
+                }
+            }
+        }
+        for (const char* p = line; *p; ) {
+            if (!(*p == '_' || (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z'))) { p++; continue; }
+            const char* start = p;
+            while (*p == '_' || (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
+                   (*p >= '0' && *p <= '9')) p++;
+            const char* q = p;
+            while (*q == ' ' || *q == '\t') q++;
+            if (*q == '(') wyn_rt_index_add(start, (size_t)(p - start));
+        }
+    }
+    fclose(f);
+}
+
+static void wyn_rt_index_load(void) {
+    if (wyn_rt_index_state != 0) return;
+    const char* root = wyn_installation_root();
+    if (!root || !root[0]) { wyn_rt_index_state = -1; return; }
+    char includes[64][64];
+    int ninc = 0;
+    wyn_rt_index_file(root, "wyn_runtime.h", 1, includes, &ninc);
+    if (wyn_rt_sym_count == 0) { wyn_rt_index_state = -1; return; }
+    for (int i = 0; i < ninc; i++)
+        wyn_rt_index_file(root, includes[i], 0, includes, &ninc);
+    wyn_rt_index_state = 1;
+}
+
+// 1 declared, 0 not declared, -1 the index is unavailable (stay permissive).
+static int wyn_runtime_declares(const char* sym) {
+    wyn_rt_index_load();
+    if (wyn_rt_index_state != 1) return -1;
+    for (int i = 0; i < wyn_rt_sym_count; i++)
+        if (strcmp(wyn_rt_syms[i], sym) == 0) return 1;
+    return 0;
+}
+
+// How many symbols the index holds under this namespace's prefix. Zero means the
+// index cannot speak for the namespace at all (a user module named `math` shadowing
+// the builtin list, a header this build does not ship), and the checker must then
+// stay permissive rather than reject every call to it.
+// The C prefix this namespace lowers to in `separator`'s spelling, so a caller can
+// ask the index about the namespace as a whole.
+static void wyn_ns_prefix_spelled(const char* ns, const char* separator,
+                                  char* out, size_t out_sz) {
+    char probe[320];
+    // Derive it from the lowering itself rather than re-deriving the prefix map:
+    // lower a method name that cannot be a rename, then drop it off the end.
+    if (wyn_namespace_c_symbol_spelled(ns, "\x01", separator, probe, sizeof(probe))) {
+        size_t n = strlen(probe);
+        if (n >= 1) probe[n - 1] = '\0';           // strip the sentinel method
+        snprintf(out, out_sz, "%s", probe);
+        return;
+    }
+    snprintf(out, out_sz, "%s_", ns);
+}
+
+static int wyn_ns_declared_count_spelled(const char* ns, const char* separator) {
+    char pfx[160];
+    wyn_ns_prefix_spelled(ns, separator, pfx, sizeof(pfx));
+    size_t pl = strlen(pfx);
+    int n = 0;
+    for (int i = 0; i < wyn_rt_sym_count; i++)
+        if (strncmp(wyn_rt_syms[i], pfx, pl) == 0 && wyn_rt_syms[i][pl]) n++;
+    return n;
+}
+
+int wyn_namespace_method_unknown_spelled(const char* ns, const char* method,
+                                         const char* separator) {
+    char sym[320];
+    if (!wyn_namespace_c_symbol_spelled(ns, method, separator, sym, sizeof(sym))) return 0;
+    if (wyn_runtime_declares(sym) != 0) return 0;   // declared, or index unavailable
+    // Zero symbols under the namespace's prefix means the index cannot speak for the
+    // namespace at all (a user module named `math` shadowing the builtin list, a
+    // header this build does not ship), and the checker must stay permissive rather
+    // than reject every call to it.
+    if (wyn_ns_declared_count_spelled(ns, separator) == 0) return 0;
+    return 1;
+}
+
+int wyn_namespace_method_unknown(const char* ns, const char* method) {
+    return wyn_namespace_method_unknown_spelled(ns, method, ".");
+}
+
+// Does the runtime header this compiler ships DECLARE the C symbol this namespace
+// call lowers to?  1 yes, 0 no, -1 the declaration index is unavailable.
+//
+// Same three primitives as wyn_namespace_method_unknown() above -
+// wyn_namespace_c_symbol() for the symbol, the shared index for the answer - so
+// there is no second lookup to drift out of step with the check-time rule.
+//
+// TRI-STATE, and the third state matters. It exists so a caller can tell the two
+// reasons a `call to undeclared function 'Time_now_millis'` can reach a user apart:
+//   0 -> Wyn genuinely does not have that function; the user misspelled something.
+//   1 -> Wyn HAS it and this compiler's --release header forgot to declare it,
+//        which is a compiler bug and must not be reported as a typo.
+//  -1 -> we cannot tell (unusual install, headers unreadable): say nothing new.
+// Fills sym_out with the C symbol when given, so the caller can name it.
+int wyn_namespace_method_declared(const char* ns, const char* method,
+                                  char* sym_out, size_t sym_sz) {
+    char sym[320];
+    if (!wyn_namespace_c_symbol(ns, method, sym, sizeof(sym))) return -1;
+    if (sym_out && sym_sz) snprintf(sym_out, sym_sz, "%s", sym);
+    return wyn_runtime_declares(sym);
+}
+
+// "Did you mean" for a rejected namespace method, spelled as the user would type
+// it (`DateTime.millis()`). Returns 1 when it filled `out`.
+//
+// The right name in the WRONG namespace is tried first, because it is the stronger
+// signal and the likelier typo: `Time.millis()` is a real mistake with a real
+// answer (DateTime.millis), and an exact method-name match elsewhere is not a
+// guess. Only then a near miss inside the namespace the user named
+// (`File.read_al` -> `File.read_all`).
+// Which tier answered, because the right HELP text depends on it: "Wyn has no such
+// function" is false when the only problem is the spelling the user chose.
+#define WYN_NS_SUGGEST_OTHER_SPELLING  1
+#define WYN_NS_SUGGEST_OTHER_NAMESPACE 2
+#define WYN_NS_SUGGEST_NEAR_MISS       3
+int wyn_suggest_namespace_method_spelled(const char* ns, const char* method,
+                                        const char* separator,
+                                        char* out, size_t out_sz) {
+    if (!ns || !method || !out || out_sz == 0) return 0;
+    if (!separator || !*separator) separator = ".";
+    wyn_rt_index_load();
+    if (wyn_rt_index_state != 1) return 0;
+
+    // TIER 1: the same call in the OTHER spelling. Because the two spellings lower
+    // differently (see wyn_namespace_c_symbol_spelled), a method can be real in one
+    // and unbuildable in the other - `HashMap::set_int` lowers to an undeclared
+    // hashmap_set_int while `HashMap.set_int` lowers to hashmap_insert_int and works.
+    // Answering "unknown method" there and stopping would be true but useless; the
+    // useful answer is the spelling that does work. Tried first because it is not a
+    // guess at all: same namespace, same method, verified declared.
+    {
+        const char* other_sep = (separator[0] == ':') ? "." : "::";
+        char sym[320];
+        if (wyn_namespace_c_symbol_spelled(ns, method, other_sep, sym, sizeof(sym)) &&
+            wyn_runtime_declares(sym) == 1) {
+            snprintf(out, out_sz, "%s%s%s()", ns, other_sep, method);
+            return WYN_NS_SUGGEST_OTHER_SPELLING;
+        }
+    }
+
+    // TIER 2: the right name in the WRONG namespace - the likelier typo, and still
+    // not a guess: `Time.millis()` is a real mistake with a real answer
+    // (DateTime.millis). Kept in the separator the user typed.
+    for (int i = 0; ; i++) {
+        const char* other = builtin_module_name_at(i);
+        if (!other) break;
+        if (strcmp(other, ns) == 0) continue;
+        char sym[320];
+        if (!wyn_namespace_c_symbol_spelled(other, method, separator, sym, sizeof(sym))) continue;
+        if (wyn_runtime_declares(sym) == 1) {
+            snprintf(out, out_sz, "%s%s%s()", other, separator, method);
+            return WYN_NS_SUGGEST_OTHER_NAMESPACE;
+        }
+    }
+
+    // TIER 3: a near miss inside the namespace the user named
+    // (`File.read_al` -> `File.read_all`).
+    char pfx[160];
+    wyn_ns_prefix_spelled(ns, separator, pfx, sizeof(pfx));
+    size_t pl = strlen(pfx);
+    const char* best = NULL;
+    int best_dist = WYN_NAME_FAR;
+    for (int i = 0; i < wyn_rt_sym_count; i++) {
+        if (strncmp(wyn_rt_syms[i], pfx, pl) != 0 || !wyn_rt_syms[i][pl]) continue;
+        const char* cand = wyn_rt_syms[i] + pl;
+        int d = wyn_name_distance(method, cand);
+        if (d > 0 && d < best_dist) { best_dist = d; best = cand; }
+    }
+    if (best) {
+        snprintf(out, out_sz, "%s%s%s()", ns, separator, best);
+        return WYN_NS_SUGGEST_NEAR_MISS;
+    }
+    return 0;
+}
+
+int wyn_suggest_namespace_method(const char* ns, const char* method, char* out, size_t out_sz) {
+    return wyn_suggest_namespace_method_spelled(ns, method, ".", out, out_sz);
 }

@@ -6,7 +6,10 @@
 // EXPECT: 42
 // EXPECT: 52
 // EXPECT: 4.5
-// EXPECT: 1
+// A bool-valued map reads back `true`, not `1` (V-30: one bool-in-print authority).
+// The point of this test is that the value TYPE round-trips, so rendering the bool
+// as a bool is the assertion becoming stricter, not looser.
+// EXPECT: true
 // EXPECT: wyn
 // EXPECT: 25
 fn main() {

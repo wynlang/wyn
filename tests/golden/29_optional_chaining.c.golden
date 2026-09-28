@@ -13,8 +13,8 @@ void Addr_cleanup(Addr* obj) {
 typedef struct { int tag; Addr value; } OptionAddr;
 static inline OptionAddr OptionAddr_Some(Addr value){ OptionAddr o; o.tag=1; o.value=value; return o; }
 static inline OptionAddr OptionAddr_None(void){ OptionAddr o; o.tag=0; return o; }
-static inline int OptionAddr_is_some(OptionAddr o){ return o.tag==1; }
-static inline int OptionAddr_is_none(OptionAddr o){ return o.tag==0; }
+static inline bool OptionAddr_is_some(OptionAddr o){ return o.tag==1; }
+static inline bool OptionAddr_is_none(OptionAddr o){ return o.tag==0; }
 static inline Addr OptionAddr_unwrap(OptionAddr o){ if(o.tag==0){ fprintf(stderr, "Error: unwrap() called on None\n"); exit(1); } return o.value; }
 static inline Addr OptionAddr_unwrap_or(OptionAddr o, Addr def){ return o.tag==1 ? o.value : def; }
 typedef struct {
@@ -28,8 +28,8 @@ void User_cleanup(User* obj) {
 typedef struct { int tag; User value; } OptionUser;
 static inline OptionUser OptionUser_Some(User value){ OptionUser o; o.tag=1; o.value=value; return o; }
 static inline OptionUser OptionUser_None(void){ OptionUser o; o.tag=0; return o; }
-static inline int OptionUser_is_some(OptionUser o){ return o.tag==1; }
-static inline int OptionUser_is_none(OptionUser o){ return o.tag==0; }
+static inline bool OptionUser_is_some(OptionUser o){ return o.tag==1; }
+static inline bool OptionUser_is_none(OptionUser o){ return o.tag==0; }
 static inline User OptionUser_unwrap(OptionUser o){ if(o.tag==0){ fprintf(stderr, "Error: unwrap() called on None\n"); exit(1); } return o.value; }
 static inline User OptionUser_unwrap_or(OptionUser o, User def){ return o.tag==1 ? o.value : def; }
 static int __wyn_eq_Addr(Addr __l, Addr __r);
@@ -42,6 +42,58 @@ static int __wyn_eq_User(User __l, User __r) {
     if (strcmp(__l.name ? __l.name : "", __r.name ? __r.name : "") != 0) return 0;
     if (!__wyn_eq_Addr(__l.addr, __r.addr)) return 0;
     return 1;
+}
+static char* OptionUser_to_string(OptionUser __v);
+static char* OptionAddr_to_string(OptionAddr __v);
+static char* __wyn_str_Addr(Addr __v);
+static char* __wyn_str_User(User __v);
+static char* __wyn_str_Addr(Addr __v) {
+    int __n = snprintf(NULL, 0, "Addr { city: \"%s\" }", __v.city ? __v.city : "");
+    char* __b = wyn_str_alloc(__n + 1);
+    snprintf(__b, __n + 1, "Addr { city: \"%s\" }", __v.city ? __v.city : "");
+    wyn_rc_set_length(__b, (unsigned int)__n);
+    return __b;
+}
+static char* __wyn_str_User(User __v) {
+    char* __f1 = __wyn_str_Addr(__v.addr);
+    int __n = snprintf(NULL, 0, "User { name: \"%s\", addr: %s }", __v.name ? __v.name : "", __f1);
+    char* __b = wyn_str_alloc(__n + 1);
+    snprintf(__b, __n + 1, "User { name: \"%s\", addr: %s }", __v.name ? __v.name : "", __f1);
+    wyn_rc_release(__f1);
+    wyn_rc_set_length(__b, (unsigned int)__n);
+    return __b;
+}
+static char* OptionUser_to_string(OptionUser __v) {
+    if (__v.tag != 1) {
+        int __n = snprintf(NULL, 0, "none");
+        char* __b = wyn_str_alloc(__n + 1);
+        snprintf(__b, __n + 1, "none");
+        wyn_rc_set_length(__b, (unsigned int)__n);
+        return __b;
+    }
+    char* __p = __wyn_str_User(__v.value);
+    int __n = snprintf(NULL, 0, "Some(%s)", __p);
+    char* __b = wyn_str_alloc(__n + 1);
+    snprintf(__b, __n + 1, "Some(%s)", __p);
+    wyn_rc_set_length(__b, (unsigned int)__n);
+    wyn_rc_release(__p);
+    return __b;
+}
+static char* OptionAddr_to_string(OptionAddr __v) {
+    if (__v.tag != 1) {
+        int __n = snprintf(NULL, 0, "none");
+        char* __b = wyn_str_alloc(__n + 1);
+        snprintf(__b, __n + 1, "none");
+        wyn_rc_set_length(__b, (unsigned int)__n);
+        return __b;
+    }
+    char* __p = __wyn_str_Addr(__v.value);
+    int __n = snprintf(NULL, 0, "Some(%s)", __p);
+    char* __b = wyn_str_alloc(__n + 1);
+    snprintf(__b, __n + 1, "Some(%s)", __p);
+    wyn_rc_set_length(__b, (unsigned int)__n);
+    wyn_rc_release(__p);
+    return __b;
 }
 
 __attribute__((hot)) static inline OptionUser find(long long id);

@@ -13,6 +13,7 @@ at the license text that ships with them.
 | TinyCC (TCC) / `libtcc` | 0.9.28rc, `mob` branch commit `4597a96` (built 2026-02-07) | LGPL-2.1 | [`vendor/tcc/COPYING`](vendor/tcc/COPYING) | `libtcc.a` is **statically linked** into the `wyn` binary; the `tcc` executable, `libtcc1.a` and TCC's own headers are also redistributed |
 | minicoro | v0.2.0 (15 Nov 2023) | Public Domain (Unlicense) **or** MIT-0, at your option | [`vendor/minicoro/LICENSE`](vendor/minicoro/LICENSE) | header-only; `#include`d by `src/coroutine.c`, `src/spawn_fast.c`, `src/future.c`, so compiled into both the `wyn` binary and the runtime library |
 | LuaCoco (portions) | derived, via minicoro | MIT | [`vendor/minicoro/LICENSE`](vendor/minicoro/LICENSE) | some of minicoro's assembly context-switch code is derived from LuaCoco by Mike Pall |
+| Mbed TLS | 3.6.7 (3.6 LTS) | Apache-2.0 **or** GPL-2.0-or-later, at your option | [`vendor/mbedtls/LICENSE`](vendor/mbedtls/LICENSE) | `libmbedtls_wyn.a` is built from `vendor/mbedtls/library/*.c` and **statically linked** into every compiled Wyn program that uses `Http.*` over `https://`, and its objects are reachable from the redistributed `runtime/libwyn_rt.a` |
 | clang `stdatomic.h` (derived) | via TCC | Apache-2.0 WITH LLVM-exception | notice in the file header of [`vendor/tcc/tcc_include/stdatomic.h`](vendor/tcc/tcc_include/stdatomic.h) | redistributed as one of TCC's bundled headers |
 | mingw-w64 `varargs.h` | via TCC | Public Domain (no copyright asserted) | notice in the file header of [`vendor/tcc/tcc_include/varargs.h`](vendor/tcc/tcc_include/varargs.h) | redistributed as one of TCC's bundled headers |
 
@@ -94,6 +95,40 @@ to the bundled `libtcc.a` (0.9.28rc, `mob@4597a96`) should be published from the
 place as the release archives, together with the command used to link `wyn`, so that
 the relink path is genuinely available to users.
 
+## Mbed TLS
+
+- Upstream: <https://github.com/Mbed-TLS/mbedtls> (3.6 LTS branch)
+- Version: 3.6.7, from `MBEDTLS_VERSION_STRING` in
+  `vendor/mbedtls/include/mbedtls/build_info.h`
+- License: dual Apache-2.0 **or** GPL-2.0-or-later, at the user's option
+- License text: [`vendor/mbedtls/LICENSE`](vendor/mbedtls/LICENSE)
+- Provenance and upgrade recipe: [`vendor/mbedtls/README.wyn.md`](vendor/mbedtls/README.wyn.md)
+
+Until 2026-09 this entry was absent, and that was defensible for exactly one reason:
+`src/wyn_tls.c` was compiled by **nothing**, so no mbedTLS code reached a user. Making
+HTTPS native changed that - `src/wyn_tls.c` and `src/wyn_https.c` are now in the
+Makefile's `RT_SRCS`, and `vendor/mbedtls/lib/libmbedtls_wyn.a` is on the link line of
+every program that calls `Http.*` over `https://`. Static linking of a third-party
+library is what makes the notice mandatory, so the entry lands with the change that
+creates the obligation.
+
+Apache-2.0 §4 requires retaining the copyright, patent, trademark and attribution
+notices from the source, and including a copy of the License with any distribution -
+both satisfied by shipping `vendor/mbedtls/LICENSE` and this entry. It imposes no
+relinking obligation, so there is nothing here like the open LGPL-2.1 §6 question
+above; taking the GPL-2.0-or-later arm of the dual license would, which is a reason to
+stay on the Apache-2.0 arm.
+
+Files redistributed under `vendor/mbedtls/`:
+
+- `lib/libmbedtls_wyn.a` - the built static library, statically linked into compiled
+  Wyn programs (built by the `$(MBEDTLS_LIB)` rule in the `Makefile`)
+- `include/mbedtls/*.h`, `include/psa/*.h` - the public headers, needed to compile
+  `src/wyn_tls.c` (which `wyn build-runtime` does)
+- `library/*.c`, `library/*.h` - the corresponding source, so the shipped archive's
+  provenance is verifiable and it can be rebuilt
+- `LICENSE`, `README.wyn.md`
+
 ## minicoro
 
 - Upstream: <https://github.com/edubart/minicoro>
@@ -112,14 +147,16 @@ assembly context-switch code is partly derived from LuaCoco by Mike Pall
 ## Packaging note
 
 The release archives are assembled by `.github/workflows/release.yml`, which copies
-`LICENSE`, `THIRD-PARTY-NOTICES.md`, `src/`, `runtime/`, `vendor/minicoro/` and
-`vendor/tcc/` into the distribution. Because `vendor/` is copied recursively,
-`vendor/tcc/COPYING` and `vendor/minicoro/LICENSE` ship with every release.
+`LICENSE`, `THIRD-PARTY-NOTICES.md`, `src/`, `runtime/`, `vendor/minicoro/`,
+`vendor/tcc/` and `vendor/mbedtls/` (its `LICENSE`, built library and headers) into the
+distribution. Because those directories are copied recursively,
+`vendor/tcc/COPYING`, `vendor/minicoro/LICENSE` and `vendor/mbedtls/LICENSE` ship with
+every release.
 
 The notices are **enforced, not merely intended**: the "Verify artifact layout"
-steps (Unix and Windows) assert that both `THIRD-PARTY-NOTICES.md` and
-`vendor/tcc/COPYING` are present in the packaged archive, and the release fails if
-either is missing. A future refactor of the packaging steps therefore cannot
+steps (Unix and Windows) assert that `THIRD-PARTY-NOTICES.md`, `vendor/tcc/COPYING`
+and `vendor/mbedtls/LICENSE` are present in the packaged archive, and the release fails
+if any is missing. A future refactor of the packaging steps therefore cannot
 silently drop the notices and put the distribution back out of compliance.
 
 `site/public/install.ps1` also installs `THIRD-PARTY-NOTICES.md` and `vendor/`

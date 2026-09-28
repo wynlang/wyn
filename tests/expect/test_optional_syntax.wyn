@@ -1,5 +1,5 @@
 // EXPECT: 42
-// EXPECT: 0
+// EXPECT: false
 // Test: int? optional syntax parses correctly
 
 fn main() -> int {

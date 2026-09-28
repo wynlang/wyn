@@ -32,6 +32,27 @@ static void show_source_line(int line) {
         fprintf(stderr, "\033[0m\n");
     }
 }
+// The ONE unknown-method diagnostic. PR #115 introduced this shape for value
+// receivers (string, array, user struct) and it reads well, so the builtin-namespace
+// path added later renders through the same function rather than growing a second
+// one: the layout, the caret line, the colours and the "Did you mean" line are
+// decided here, once. Callers own only the headline, because the three receivers
+// genuinely say different things ("string has no method 'uppr'" vs "unknown method
+// 'Time.millis' on namespace 'Time'").
+//
+// `suggestion` is spelled exactly as the user would type the call (".upper()",
+// "DateTime.millis()") - the caller knows the call syntax for its receiver, and
+// formatting it here was how the namespace form first came out as ".millis()".
+static void report_unknown_method(int line, const char* headline,
+                                  const char* suggestion, const char* help) {
+    fprintf(stderr, "\nError at line %d: %s\n", line, headline);
+    show_source_line(line);
+    if (suggestion)
+        fprintf(stderr, "  \033[33mDid you mean:\033[0m %s?\n", suggestion);
+    if (help)
+        fprintf(stderr, "  \033[34mHelp:\033[0m %s\n", help);
+}
+
 #include "ast.h"
 #include "types.h"
 #include "error.h"  // T1.5.3: For type_error_mismatch function
@@ -115,6 +136,71 @@ static bool is_ptr_type(Type* t) {
 
 static StructStmt* find_struct_definition(Token struct_name);
 Type* make_type(TypeKind kind);
+// Defined below, next to the Result family registrar it depends on; the struct-field
+// resolver above needs it.
+static Type* wyn_result_annotation_type(Expr* type_expr);
+
+// The type of a no-value literal - ONE answer, for both spellings of it.
+//
+// `none` reaches the checker two ways: as EXPR_NONE from the parser, and as an
+// EXPR_IDENT that the ident case rewrites into EXPR_NONE. Those two sites used to
+// answer differently - the parser node got the OptionInt struct, the rewritten ident
+// got `builtin_int` - so the same node kind carried two types depending only on how it
+// had been written. `int` is what made every context reject it (`o: int? = none`,
+// `o = none`, `[Some(1), none]`).
+//
+// OptionInt is a DEFAULT, not an inference: no-value carries no payload type, so there
+// is nothing to infer from. Contexts that know better refine it (the Option return
+// check, the array element unifier, the var-decl family selection), which is what makes
+// `s: string? = none; s = Some("hi")` round-trip a real string.
+static Type* wyn_none_type(void) {
+    Token concrete_name = {TOKEN_IDENT, "OptionInt", 9, 0};
+    Symbol* sym = find_symbol(global_scope, concrete_name);
+    return sym ? sym->type : make_type(TYPE_OPTIONAL);
+}
+
+// Mark which half of an Option/Result a single match arm covers.
+//
+// Deliberately biased toward "covered": anything this cannot positively classify marks
+// BOTH halves, so the exhaustiveness rule that calls it can only reject a match whose
+// arms it fully understands. Over-rejecting a valid program is worse than missing one
+// invalid program - a bare identifier arm binds the whole value in some positions, and
+// guessing wrong there would break working code.
+//
+// `is_opt` selects the pair: Some/None for an Option, Ok/Err for a Result. Or-patterns
+// are walked, so `Some(v) | none` counts as both halves.
+static void wyn_mark_optlike_arm(Pattern* pat, int is_opt, int* cover_a, int* cover_b) {
+    if (!pat) { *cover_a = 1; *cover_b = 1; return; }
+    if (pat->type == PATTERN_OR) {
+        for (int i = 0; i < pat->or_pat.pattern_count; i++)
+            wyn_mark_optlike_arm(pat->or_pat.patterns[i], is_opt, cover_a, cover_b);
+        return;
+    }
+    if (pat->type == PATTERN_WILDCARD) { *cover_a = 1; *cover_b = 1; return; }
+    Token vn; vn.length = 0; vn.start = NULL;
+    if (pat->type == PATTERN_OPTION && pat->option.variant_name.length > 0) vn = pat->option.variant_name;
+    else if (pat->type == PATTERN_IDENT) vn = pat->ident.name;
+    // A `Some(x)` / `None` arm carries no variant_name - the parser records which half it
+    // is in the `is_some` flag instead, and only the Result spelling fills the name in.
+    // Reading only the name is why the Result half of this rule fired while the Option
+    // half silently passed everything.
+    if (pat->type == PATTERN_OPTION && vn.length == 0 && is_opt) {
+        if (pat->option.is_some) *cover_a = 1; else *cover_b = 1;
+        return;
+    }
+    if (vn.length == 0 || !vn.start) { *cover_a = 1; *cover_b = 1; return; }
+    #define WYN_VN_IS(s) (vn.length == (int)(sizeof(s) - 1) && memcmp(vn.start, s, sizeof(s) - 1) == 0)
+    if (is_opt) {
+        if (WYN_VN_IS("Some")) { *cover_a = 1; return; }
+        if (WYN_VN_IS("None") || WYN_VN_IS("none")) { *cover_b = 1; return; }
+    } else {
+        if (WYN_VN_IS("Ok")) { *cover_a = 1; return; }
+        if (WYN_VN_IS("Err")) { *cover_b = 1; return; }
+    }
+    #undef WYN_VN_IS
+    // An arm naming neither half - treat it as a catch-all rather than guess.
+    *cover_a = 1; *cover_b = 1;
+}
 static Type* extern_map_type(Expr* type_expr) {
     if (!type_expr) return builtin_void;
     if (type_expr->type == EXPR_IDENT) {
@@ -145,6 +231,51 @@ static Type* extern_map_type(Expr* type_expr) {
 static bool had_error = false;
 static Type* current_function_return_type = NULL;
 static Type* current_self_type = NULL; // receiver type for extension methods
+
+// `spawn` on a closure: reject it, here, rather than let it return 0.
+//
+//     var n = 5
+//     g = (() => n * 2)
+//     print(g())               // 10 - the closure itself is fine
+//     f = spawn (() => n * 2)
+//     print(await f)           // 0  - check clean, build clean, exit 0, WRONG
+//
+// The worst class of bug there is: nothing anywhere told the programmer. `spawn`
+// hands the scheduler a function POINTER, and a closure's captured environment is
+// not carried across the task boundary, so the task reads zeroes.
+//
+// Deliberately NOT conditional on captured_count: measured on dev, a
+// non-capturing `spawn (() => 42)` returns 0 as well, and so does the
+// immediately-invoked `spawn (() => n * 2)()`, whose target is a CALL whose callee
+// is the lambda. The fire-and-forget statement form died with
+// "Internal codegen error: lambda at line 0 was never registered" - loud, but no
+// more use to the reader - and now gets this message too.
+//
+// Making closures genuinely spawnable is a larger piece (the captured env has to
+// be boxed and refcounted across the boundary) and is out of scope for v1.22 per
+// the current plan. This is the clean error and the workaround.
+//
+// One function, called from BOTH spawn forms (the EXPR_SPAWN expression and the
+// STMT_SPAWN statement), because the same rule emitted twice is how the two
+// spellings of a construct come to disagree.
+static bool reject_spawned_closure(Expr* target, int line) {
+    if (!target) return false;
+    bool is_closure = target->type == EXPR_LAMBDA ||
+                      (target->type == EXPR_CALL && target->call.callee &&
+                       target->call.callee->type == EXPR_LAMBDA);
+    if (!is_closure) return false;
+    fprintf(stderr, "\nError at line %d: `spawn` cannot run a closure\n", line);
+    show_source_line(line);
+    fprintf(stderr,
+        "  \033[34mHelp:\033[0m spawn needs a function pointer, and a closure's captured\n"
+        "        variables are not carried across the task boundary - the task reads\n"
+        "        zeroes, which is why this used to build and then answer 0. Pass the\n"
+        "        captured values as parameters to a named function and spawn that:\n"
+        "          \033[1mfn work(n: int) -> int { return n * 2 }\033[0m\n"
+        "          \033[1mf = spawn work(n)\033[0m\n");
+    had_error = true;
+    return true;
+}
 
 // Module visibility tracking
 static char current_module_name[256] = "";
@@ -407,7 +538,9 @@ static void print_type_name(Type* type) {
             fprintf(stderr, "HashMap<string, int>");
             break;
         case TYPE_SET:
-            fprintf(stderr, "HashSet<int>");
+            // See the note in error.c's friendly_type_name: the set is string-keyed,
+            // so `HashSet<int>` named an element type the language has never had.
+            fprintf(stderr, "HashSet<string>");
             break;
         case TYPE_STRUCT:
             if (type->struct_type.name.length > 0) {
@@ -801,6 +934,27 @@ static Type* resolve_array_elem_annotation(Expr* elem_type_expr) {
             inner->map_type.value_type = resolve_array_elem_annotation(elem_type_expr->call.args[1]);
         return inner;
     }
+    // Optional element: `[int?]`, `[P?]`. This returned NULL, so an ANNOTATED
+    // optional array had no element type at all while the same array inferred
+    // from a `-> int?` call carried the lowered family - so `a: [int?]` printed
+    // element POINTERS where `a = [g(1)]` printed values, and `a[0]` on the
+    // annotated one did not even compile. Resolve to the same concrete family
+    // the EXPR_OPTIONAL_TYPE case in check_expr produces, via the family
+    // authority, so the two spellings cannot disagree.
+    if (elem_type_expr->type == EXPR_OPTIONAL_TYPE) {
+        Expr* in = elem_type_expr->optional_type.inner_type;
+        if (!in || in->type != EXPR_IDENT) return NULL;
+        char pn[96];
+        token_to_cstr(pn, sizeof(pn), in->token);
+        extern const char* wyn_option_family(const char*, const char**, int*);
+        const char* fam = wyn_option_family(pn, NULL, NULL);
+        if (!fam) return NULL;
+        Type* t = make_type(TYPE_STRUCT);
+        // The family name has to outlive this call, and it comes back in a
+        // static buffer the next caller reuses.
+        t->struct_type.name = (Token){TOKEN_IDENT, strdup(fam), (int)strlen(fam), in->token.line};
+        return t;
+    }
     if (elem_type_expr->type != EXPR_IDENT) return NULL;
     Token n = elem_type_expr->token;
     StructStmt* struct_def = find_struct_definition(n);
@@ -822,6 +976,67 @@ static Type* resolve_array_elem_annotation(Expr* elem_type_expr) {
     if (n.length == 5 && memcmp(n.start, "float", 5) == 0) return builtin_float;
     if (n.length == 4 && memcmp(n.start, "bool", 4) == 0) return builtin_bool;
     return NULL;
+}
+
+// Is this type ANNOTATION an optional, in either of its two spellings?
+//
+//   f: T?           EXPR_OPTIONAL_TYPE
+//   f: Option<T>    EXPR_CALL with callee `Option` and one type argument
+//
+// Kept as a predicate separate from the resolver below so a caller can branch on "is
+// this an optional annotation" without also committing to a resolved type - the struct
+// field path needs exactly that, because a NULL resolution there means "no such field".
+static bool wyn_annotation_is_optlike(Expr* type_expr) {
+    if (!type_expr) return false;
+    if (type_expr->type == EXPR_OPTIONAL_TYPE) return true;
+    return type_expr->type == EXPR_CALL &&
+           type_expr->call.callee &&
+           type_expr->call.callee->type == EXPR_IDENT &&
+           type_expr->call.callee->token.length == 6 &&
+           memcmp(type_expr->call.callee->token.start, "Option", 6) == 0 &&
+           type_expr->call.arg_count == 1;
+}
+
+// Resolve an optional type ANNOTATION to its concrete Option family type, or NULL.
+//
+// Extracted from get_struct_field_type so that a struct field and any other annotation
+// site can agree. Previously only the field path knew how to turn `T?` / `Option<T>`
+// into OptionInt/OptionString/.../Option<Struct>, which is why the same spelling on a
+// LOCAL declaration silently kept the payload-less generic type.
+static Type* wyn_optlike_annotation_type(Expr* type_expr) {
+    if (!wyn_annotation_is_optlike(type_expr)) return NULL;
+    Expr* inner = (type_expr->type == EXPR_OPTIONAL_TYPE)
+        ? type_expr->optional_type.inner_type
+        : type_expr->call.args[0];
+    const char* fam = NULL;
+    if (inner && inner->type == EXPR_IDENT) {
+        Token t = inner->token;
+        if (t.length == 3 && memcmp(t.start, "int", 3) == 0) fam = "OptionInt";
+        else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) fam = "OptionString";
+        else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) fam = "OptionFloat";
+        else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) fam = "OptionBool";
+        else {
+            // A PLAIN enum payload's family is OptionInt (an enum is an int in C) -
+            // there is no `Option<Enum>` family symbol to find, so building the name
+            // `OptionCode` made the lookup MISS and return NULL, which the field caller
+            // reads as "struct 'H' has no field 'tag'". A data-carrying enum is a C
+            // struct, so it keeps the by-name path below.
+            Symbol* _es = find_symbol(global_scope, t);
+            if (_es && _es->type && _es->type->kind == TYPE_ENUM &&
+                !enum_name_is_data_enum(t)) {
+                fam = "OptionInt";
+            } else {
+                // Struct?: reuse the registered Option<Struct> family symbol.
+                char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
+                static char _famb[128]; snprintf(_famb, sizeof(_famb), "Option%s", _stn);
+                fam = _famb;
+            }
+        }
+    }
+    if (!fam) return NULL;
+    Token fam_tok = {TOKEN_IDENT, (char*)fam, (int)strlen(fam), 0};
+    Symbol* fsym = find_symbol(global_scope, fam_tok);
+    return (fsym && fsym->type) ? fsym->type : NULL;
 }
 
 // Helper function to get field type from struct definition
@@ -924,52 +1139,22 @@ static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
                     array_type->array_type.element_type = elem;
                 }
                 return array_type;
-            } else if ((field_type_expr->type == EXPR_OPTIONAL_TYPE) ||
-                       (field_type_expr->type == EXPR_CALL &&
-                        field_type_expr->call.callee &&
-                        field_type_expr->call.callee->type == EXPR_IDENT &&
-                        field_type_expr->call.callee->token.length == 6 &&
-                        memcmp(field_type_expr->call.callee->token.start, "Option", 6) == 0 &&
-                        field_type_expr->call.arg_count == 1)) {
-                // Optional field `f: T?` (EXPR_OPTIONAL_TYPE) or the generic form
-                // `f: Option<T>` (EXPR_CALL) - resolve to the Option<T> family type
-                // so field access (`x.f`) and match on it lower correctly (was
-                // falling through to NULL → default int, breaking match on the field).
-                Expr* inner = (field_type_expr->type == EXPR_OPTIONAL_TYPE)
-                    ? field_type_expr->optional_type.inner_type
-                    : field_type_expr->call.args[0];
-                const char* fam = NULL;
-                if (inner && inner->type == EXPR_IDENT) {
-                    Token t = inner->token;
-                    if (t.length == 3 && memcmp(t.start, "int", 3) == 0) fam = "OptionInt";
-                    else if (t.length == 6 && memcmp(t.start, "string", 6) == 0) fam = "OptionString";
-                    else if (t.length == 5 && memcmp(t.start, "float", 5) == 0) fam = "OptionFloat";
-                    else if (t.length == 4 && memcmp(t.start, "bool", 4) == 0) fam = "OptionBool";
-                    else {
-                        // A PLAIN enum payload's family is OptionInt (an enum is an int
-                        // in C) — there is no `Option<Enum>` family symbol to find, so
-                        // building the name `OptionCode` made the lookup below MISS and
-                        // return NULL, which the caller reads as "struct 'H' has no
-                        // field 'tag'". A data-carrying enum is a C struct, so it keeps
-                        // the by-name path below.
-                        Symbol* _es = find_symbol(global_scope, t);
-                        if (_es && _es->type && _es->type->kind == TYPE_ENUM &&
-                            !enum_name_is_data_enum(t)) {
-                            fam = "OptionInt";
-                        } else {
-                            // Struct?: reuse the registered Option<Struct> family symbol.
-                            char _stn[96]; token_to_cstr(_stn, sizeof(_stn), t);
-                            static char _famb[128]; snprintf(_famb, sizeof(_famb), "Option%s", _stn);
-                            fam = _famb;
-                        }
-                    }
-                }
-                if (fam) {
-                    Token fam_tok = {TOKEN_IDENT, (char*)fam, (int)strlen(fam), 0};
-                    Symbol* fsym = find_symbol(global_scope, fam_tok);
-                    if (fsym && fsym->type) return fsym->type;
-                }
-                return NULL;
+            } else if (wyn_annotation_is_optlike(field_type_expr)) {
+                // Optional field `f: T?` or the generic form `f: Option<T>` - resolve to
+                // the concrete Option<T> family so field access (`x.f`) and match on it
+                // lower correctly (was falling through to NULL -> default int, breaking
+                // match on the field). Both spellings, one authority.
+                return wyn_optlike_annotation_type(field_type_expr);
+            }
+
+            // A `Result<T, E>` field. Without this the resolution fell to the NULL below,
+            // and the CALLER reports NULL as "struct 'S' has no field 'r'" - naming a
+            // field that is declared right there in the struct, which is why this read as
+            // a parser or scoping bug rather than a missing type resolution. Option
+            // fields worked; Result fields simply did not exist.
+            {
+                Type* rf = wyn_result_annotation_type(field_type_expr);
+                if (rf) return rf;
             }
 
             return NULL;
@@ -979,11 +1164,31 @@ static Type* get_struct_field_type(StructStmt* struct_def, Token field_name) {
 }
 
 
+// A Json value IS a `long long` handle: an index into the runtime's node arena.
+// codegen lowers TYPE_JSON to `long long` (codegen_stmt.c, wyn_collection_c_type),
+// so json and int are ONE representation with two spellings, exactly as enum and int
+// are. Json.parse carries the named type - that is what gives `doc.get_string(k)` a
+// receiver to dispatch on, which used to emit nothing at all - and this pair of
+// predicates is what keeps every program that holds a handle in a plain `int`
+// checking exactly as before.
+//
+// Stated ONCE and used at all four sites that must know: call-argument
+// compatibility, overload conversion, comparison families, assignment. bool, enum
+// and channel each restate the same idea inline at a DIFFERENT subset of those sites
+// (which is why a channel still cannot be compared to an int); folding all of them
+// behind one predicate is logged, not done in a JSON change.
+static bool type_is_int_handle(const Type* t) {
+    return t && (t->kind == TYPE_INT || t->kind == TYPE_JSON);
+}
+static bool json_int_alias(const Type* a, const Type* b) {
+    return a && b && a->kind != b->kind && type_is_int_handle(a) && type_is_int_handle(b);
+}
+
 static bool wyn_is_type_compatible(Type* expected, Type* actual) {
     if (!expected || !actual) {
         return false;
     }
-    
+
     // Exact type match
     if (expected->kind == actual->kind) {
         return true;
@@ -1050,6 +1255,11 @@ static bool wyn_is_type_compatible(Type* expected, Type* actual) {
         return true;
     }
 
+    // Allow json <-> int, for exactly the channel reason above - see json_int_alias.
+    if (json_int_alias(expected, actual)) {
+        return true;
+    }
+
     return false;
 }
 
@@ -1110,6 +1320,27 @@ static Symbol* find_function_overload(SymbolTable* scope, Token name, Type** arg
 static int calculate_match_score(Type* fn_type, Type** arg_types, int arg_count);
 static bool can_convert_type(Type* from, Type* to);
 static void add_function_overload(SymbolTable* scope, Token name, Type* type, bool is_mutable);
+
+// A map value type's STORAGE signature - what actually has to agree across the
+// entries of a `{...}` literal, because `m[k]` emits ONE getter for the whole map.
+//
+// type_to_string() is not enough on its own: it renders EVERY struct as "struct",
+// and types_equal() answers true for any two TYPE_STRUCTs ("compare kinds for
+// now"), so `{"k": Some(1), "j": A{b:1}}` would look homogeneous while the two
+// values box to different C types. Aggregates are therefore identified by their
+// type NAME (OptionInt, ResultStringString, A, ...), which is exactly the name
+// codegen passes to hashmap_insert_struct.
+static void map_value_type_sig(Type* t, char* out, size_t n) {
+    if (!t) { snprintf(out, n, "unknown"); return; }
+    if (t->kind == TYPE_STRUCT || t->kind == TYPE_ENUM) {
+        Token nm = t->struct_type.name.start ? t->struct_type.name : t->name;
+        if (nm.start && nm.length > 0) {
+            snprintf(out, n, "%.*s", nm.length, nm.start);
+            return;
+        }
+    }
+    snprintf(out, n, "%s", type_to_string(t));
+}
 
 static Type* get_inner_type(Type* optional_type) {
     if (!is_optional_type(optional_type)) return optional_type;
@@ -1245,6 +1476,57 @@ static Symbol* find_local_noncallable(SymbolTable* scope, Token name) {
         }
     }
     return NULL;
+}
+
+// An array being printed needs a renderer built from its ELEMENT type: the boxed
+// element carries no type name at runtime, so the runtime formatters can only
+// ever print `<struct>` for it. Called from every print/println/interpolation
+// site, which is why it takes the type rather than a name - the three spellings
+// must register identically or they render differently again.
+//
+// Only struct-shaped elements need this. Scalars and strings already carry a
+// usable WynValue tag, and a nested array recurses inside the runtime.
+static void register_printed_array_elem_type(Type* t) {
+    if (!t || t->kind != TYPE_ARRAY) return;
+    Type* el = t->array_type.element_type;
+    if (!el) return;
+    char en[128];
+    if (el->kind == TYPE_STRUCT && el->struct_type.name.length > 0) {
+        token_to_cstr(en, sizeof(en), el->struct_type.name);
+    } else if (el->kind == TYPE_OPTIONAL) {
+        // `a: [int?]` annotates the element as TYPE_OPTIONAL, while the same
+        // array built from a `-> int?` call carries the already-lowered
+        // TYPE_STRUCT "OptionInt". Both must resolve to the same family, or the
+        // annotated spelling prints pointers while the inferred one prints
+        // values - the exact split this whole series is removing.
+        Type* in = el->optional_type.inner_type;
+        const char* pn = NULL;
+        char ib[96];
+        if (!in) return;
+        if (in->kind == TYPE_STRING)      pn = "string";
+        else if (in->kind == TYPE_FLOAT)  pn = "float";
+        else if (in->kind == TYPE_BOOL)   pn = "bool";
+        else if (in->kind == TYPE_INT)    pn = "int";
+        else if (in->kind == TYPE_STRUCT && in->struct_type.name.length > 0) {
+            token_to_cstr(ib, sizeof(ib), in->struct_type.name); pn = ib;
+        } else if (in->kind == TYPE_ENUM && in->name.length > 0) {
+            token_to_cstr(ib, sizeof(ib), in->name); pn = ib;
+        }
+        if (!pn) return;
+        extern const char* wyn_option_family(const char*, const char**, int*);
+        snprintf(en, sizeof(en), "%s", wyn_option_family(pn, NULL, NULL));
+    } else {
+        return;
+    }
+    extern void register_printed_array_elem(const char*);
+    register_printed_array_elem(en);
+    // A user struct element also needs its own stringifier, which is what the
+    // element renderer calls. An Option family element does not - its renderer
+    // is emitted from the family registry.
+    if (strncmp(en, "Option", 6) != 0 && strncmp(en, "Result", 6) != 0) {
+        extern void register_interpolated_struct(const char*);
+        register_interpolated_struct(en);
+    }
 }
 
 // Lazily register a monomorphic Option<Struct> family for a user-struct payload
@@ -1473,12 +1755,104 @@ static Type* register_result_struct_family_e(Type* struct_type, Type* err_type) 
 
     extern const char* register_result_family_for_types(const char*, const char*);
     register_result_family_for_types(ok_wyn, ename);
+    // Mirror of register_option_struct() in the Option registrar above: tell codegen that
+    // this STRUCT is used as a Result ok payload, so the family's typedef is emitted right
+    // after the struct's own - and therefore before any LATER struct that holds a
+    // `Result<S, E>` field can reference it. The only other registrar is the `Ok(S{..})`
+    // expression lowering, which runs after the typedefs, so a Result<Struct,E> field
+    // emitted `unknown type name 'ResultP'`.
+    if (struct_type->kind == TYPE_STRUCT) {
+        extern void register_result_struct(const char*);
+        register_result_struct(sname);
+    }
     return res_type;
 }
 // Backward-compatible shim: string-error family.
 static Type* register_result_struct_family(Type* struct_type) {
     return register_result_struct_family_e(struct_type, NULL);
 }
+
+// Resolve a `Result<T[, E]>` type ANNOTATION to its concrete family type, or NULL.
+//
+// Extracted from the function-return-type path, which was the only place that knew how
+// to do this. A LOCAL declaration spelled with the same annotation took a different
+// branch that threw the payloads away, so `r: Result<int,string> = Ok(5)` was rejected
+// with "Expected: unknown (unknown)" while `fn f() -> Result<int,string>` worked.
+//
+// Two rules are load-bearing and must not drift, which is the reason to have one copy:
+//   - E is resolved FIRST, because it decides whether a PRIMITIVE ok payload may use the
+//     builtin family at all. The builtin's err_value is hardcoded `const char*`, so
+//     reusing it for a non-string E silently discards E - uncompilable C for a struct E,
+//     a segfault for a scalar one.
+//   - `Result<Struct, E>` resolves the user struct and registers its own monomorphic
+//     family, mirroring the `-> Struct?` path, so the family carries the real err C type.
+static Type* wyn_result_annotation_type(Expr* type_expr) {
+    if (!type_expr || type_expr->type != EXPR_CALL || !type_expr->call.callee ||
+        type_expr->call.callee->type != EXPR_IDENT ||
+        type_expr->call.callee->token.length != 6 ||
+        memcmp(type_expr->call.callee->token.start, "Result", 6) != 0)
+        return NULL;
+    // Resolve Result<int, string> -> ResultInt, Result<string, string> -> ResultString
+    Token concrete = {TOKEN_IDENT, "ResultInt", 9, 0};
+    Type* struct_res = NULL;
+    if (type_expr->call.arg_count > 0 && type_expr->call.args[0]->type == EXPR_IDENT) {
+        Token inner = type_expr->call.args[0]->token;
+        Type* err_t = NULL;
+        if (type_expr->call.arg_count > 1 && type_expr->call.args[1]->type == EXPR_IDENT) {
+            Token en = type_expr->call.args[1]->token;
+            if (en.length == 6 && memcmp(en.start, "string", 6) == 0) err_t = builtin_string;
+            else if (en.length == 3 && memcmp(en.start, "int", 3) == 0) err_t = builtin_int;
+            else if (en.length == 5 && memcmp(en.start, "float", 5) == 0) err_t = builtin_float;
+            else if (en.length == 4 && memcmp(en.start, "bool", 4) == 0) err_t = builtin_bool;
+            else {
+                Symbol* es = find_symbol(global_scope, en);
+                if (es && es->type) err_t = es->type;
+            }
+        }
+        int err_is_str = (!err_t || err_t->kind == TYPE_STRING);
+        Type* prim_ok = NULL;
+        if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0) {
+            concrete = (Token){TOKEN_IDENT, "ResultString", 12, 0};
+            prim_ok = builtin_string;
+        } else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0) {
+            concrete = (Token){TOKEN_IDENT, "ResultFloat", 11, 0};
+            prim_ok = builtin_float;
+        } else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0) {
+            concrete = (Token){TOKEN_IDENT, "ResultBool", 10, 0};
+            prim_ok = builtin_bool;
+        } else if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0) {
+            prim_ok = builtin_int;   // `concrete` already ResultInt
+        }
+        if (prim_ok) {
+            if (!err_is_str)
+                struct_res = register_result_struct_family_e(prim_ok, err_t);
+        } else {
+            Symbol* st = find_symbol(global_scope, inner);
+            if (st && st->type && st->type->kind == TYPE_STRUCT)
+                struct_res = register_result_struct_family_e(st->type, err_t);
+        }
+    }
+    if (struct_res) return struct_res;
+    Symbol* sym = find_symbol(global_scope, concrete);
+    return sym ? sym->type : NULL;
+}
+
+// Resolve a DECLARED return-type annotation to a Type, or NULL if unrecognised.
+//
+// Routes through the three existing authorities in the order that matters: optional
+// (`T?` / `Option<T>`), then Result (`Result<T,E>`), then the leaf/array/map resolver.
+// Only the free-function path knew how to do any of this; an impl method's return type
+// was the literal placeholder `builtin_int` ("// Simplified"), which is why `-> int`
+// worked by accident and everything whose VALUE has its own methods did not.
+static Type* wyn_declared_return_type(Expr* type_expr) {
+    if (!type_expr) return NULL;
+    Type* t = wyn_optlike_annotation_type(type_expr);
+    if (t) return t;
+    t = wyn_result_annotation_type(type_expr);
+    if (t) return t;
+    return resolve_array_elem_annotation(type_expr);
+}
+
 
 // reg_fn - register one builtin function signature in the global scope.
 //
@@ -1709,7 +2083,10 @@ static bool can_convert_type(Type* from, Type* to) {
     // Allow enum <-> int (enums are represented as ints)
     if ((from->kind == TYPE_ENUM && to->kind == TYPE_INT) ||
         (from->kind == TYPE_INT && to->kind == TYPE_ENUM)) return true;
-    
+
+    // Allow json <-> int, for the same reason - see json_int_alias.
+    if (json_int_alias(from, to)) return true;
+
     return false;
 }
 
@@ -1741,6 +2118,414 @@ static int channel_const_capacity(const Expr* cap, long long* out) {
     if (errno != 0 || (endp && *endp) || v > 9223372036854775807ULL) return 0;
     *out = negate ? -(long long)v : (long long)v;
     return 1;
+}
+
+// An unknown method on a builtin namespace: ONE rule, EVERY spelling.
+//
+// `Ns.method()` and `Ns::method()` are the same call. The parser hands the first to
+// the checker as a METHOD_CALL and folds the second into a single `Ns::method`
+// IDENT that arrives as an EXPR_CALL, so they reach two different dispatch sites -
+// and #357 wired the unknown-method check to the METHOD_CALL site only. The result
+// was measured on dev @ 82f8d2bc: `Time.no_such_xyz()` rejected on 31 of 31
+// namespaces, `Time::no_such_xyz()` accepted on 31 of 31. `::` is the spelling the
+// docs and examples use most (`Time::sleep` is the single most common stdlib call
+// in this repo's corpus), so the release claim "if `wyn check` passes, it builds"
+// was still false for the more common form.
+//
+// That is this codebase's standing defect shape: one rule with more than one copy.
+// So the rule lives here, once, and a call site only hands it the namespace, the
+// method and the spelling the user typed. A third spelling inherits the check by
+// calling this; it cannot silently skip it.
+//
+// `separator` is quoted back in the message, so the diagnostic shows the user's own
+// code. `receiver` is the receiver expression's type for a dotted call and NULL for
+// a spelling with no receiver expression - the one guard that cannot be shared,
+// because `Ns::m()` has no receiver to type.
+//
+// Returns true when it reported; the caller then types the expression as int and
+// returns, exactly as it did before.
+static bool reject_unknown_namespace_method(const char* ns, const char* method,
+                                            const char* separator, int line,
+                                            Type* receiver) {
+    extern bool is_builtin_module(const char* name);
+    extern bool is_module_loaded(const char* name);
+    extern int wyn_namespace_c_symbol_spelled(const char*, const char*, const char*, char*, size_t);
+    extern int wyn_namespace_method_unknown_spelled(const char*, const char*, const char*);
+    extern int wyn_suggest_namespace_method_spelled(const char*, const char*, const char*,
+                                                   char*, size_t);
+    if (!ns || !method || !*ns || !*method) return false;
+
+    // Each guard is a case that is NOT a namespace typo:
+    //  - a LOADED user module may be named like a builtin namespace (`math` is in
+    //    is_builtin_module's list, and tests/modules import a local math.wyn) - its
+    //    own source is the authority.
+    if (!is_builtin_module(ns)) return false;
+    if (is_module_loaded(ns)) return false;
+    if (checking_same_module(ns)) return false;
+    //  - a real variable shadowing the name types as something other than the int
+    //    placeholder an import registers. MAP and SET are allowed alongside it
+    //    because init_checker registers the names `HashMap` and `HashSet` as the
+    //    collection TYPES, so the receiver of `HashMap.no_such()` types TYPE_MAP.
+    if (receiver && receiver->kind != TYPE_INT &&
+        receiver->kind != TYPE_MAP && receiver->kind != TYPE_SET) return false;
+    //  - a method name starting with a capital is an enum variant or a type
+    //    reference (`Shape::Circle`, `Color::Red`), not a stdlib call. This matters
+    //    far more for `::` than for `.`: `Enum::Variant` IS the `::` spelling.
+    if (method[0] >= 'A' && method[0] <= 'Z') return false;
+    //  - a struct/enum of that name means the same thing for the receiver half.
+    {
+        Token ns_tok = {TOKEN_IDENT, ns, (int)strlen(ns), line};
+        Symbol* shadow = find_symbol(global_scope, ns_tok);
+        if (shadow && shadow->type &&
+            (shadow->type->kind == TYPE_STRUCT || shadow->type->kind == TYPE_ENUM))
+            return false;
+    }
+    //  - a registry entry that names THE SYMBOL THIS SPELLING WILL EMIT. Deliberately
+    //    not "a registry entry for this name": the builtin registry is keyed by the
+    //    dotted `Ns_method` spelling, but `::` may emit something else, and the
+    //    question here is whether the emitted call will link. `File.read_lines` is
+    //    the case that makes the difference measurable - the runtime declares
+    //    `File_read_lines` and no `file_read_lines`, so the dotted form builds and
+    //    `File::read_lines` cannot. Skipping on the registered name alone let that
+    //    one keep passing `wyn check` and failing the C compile.
+    {
+        char sym[320], colons[320];
+        if (!wyn_namespace_c_symbol_spelled(ns, method, separator, sym, sizeof(sym)))
+            return false;
+        snprintf(colons, sizeof(colons), "%s::%s", ns, method);
+        Token st = {TOKEN_IDENT, sym, (int)strlen(sym), line};
+        Token ct = {TOKEN_IDENT, colons, (int)strlen(colons), line};
+        if (find_symbol(global_scope, st) || find_symbol(global_scope, ct)) return false;
+    }
+    if (!wyn_namespace_method_unknown_spelled(ns, method, separator)) return false;
+
+    char headline[384], help[512], sug[192];
+    snprintf(headline, sizeof(headline), "unknown method '%s%s%s' on namespace '%s'",
+             ns, separator, method, ns);
+    snprintf(help, sizeof(help),
+             "'%s' is not a function Wyn knows about. Check the spelling against the '%s' stdlib docs.",
+             method, ns);
+    // The suggester is given the separator too, so it answers in the spelling the user
+    // typed - telling someone who wrote `Time::millis()` to try `DateTime.millis()`
+    // hands them a second edit - and so it can offer the OTHER spelling when that is
+    // the real answer (`HashMap::set_int` -> `HashMap.set_int`, which is a different
+    // C symbol and does build).
+    int have_sug = wyn_suggest_namespace_method_spelled(ns, method, separator,
+                                                       sug, sizeof(sug));
+    // Tier 1 means Wyn HAS this function, just not in the spelling that was written -
+    // the two forms lower to different C symbols. Saying "not a function Wyn knows
+    // about" there would be the same kind of confidently-wrong help that #365 had to
+    // remove from the C-compile-step message, and it would send the reader to the
+    // docs to check a name that is already correct.
+    if (have_sug == 1)
+        snprintf(help, sizeof(help),
+                 "Wyn has '%s' on '%s', but the two call spellings lower to different C"
+                 " symbols and only the form above is built. Write it that way.",
+                 method, ns);
+    report_unknown_method(line, headline, have_sug ? sug : NULL, help);
+    had_error = true;
+    return true;
+}
+
+// V-28: an Option/Result predicate on an int / float / bool receiver. `x = 5;
+// x.is_err()` passed `wyn check` and died in the C compiler with "passing 'long long'
+// to parameter of incompatible type 'ResultInt'".
+//
+// The rejected set is not a taste judgement - it is transcribed from the ONE place
+// that creates the failure: codegen_expr.c's "Fallback: try Result/Option method
+// dispatch", which lowers exactly these names by ASSUMING the receiver is an
+// Option/Result struct (`ResultInt_is_err(recv)`, `OptionInt_is_some(recv)`) whenever
+// it has no better type for the receiver. On a numeric receiver that is always a C
+// type error, so rejecting here can only ever turn a guaranteed ICE into a message.
+// Measured before the rule was written: these 6 names x 8 receiver shapes the checker
+// types as a scalar = 48 combinations, 48 clean `wyn check`es, 48 build failures.
+//
+// `unwrap_or` is in that codegen list and is deliberately NOT here. It has a REAL
+// lowering ahead of the blind fallback - `m.get(k).unwrap_or(d)` becomes
+// hashmap_get_or_int - and so it does build on a receiver the checker typed int.
+// Re-stating that carve-out here would be a second copy of a codegen rule; leaving
+// the name out keeps this rule's promise (it never rejects something that builds)
+// with nothing to keep in sync.
+//
+// Why the rule is keyed on the METHOD NAME and not on the receiver: TYPE_INT is the
+// checker's fallback type for any expression it could not resolve, so "unknown method
+// on an int receiver" is not a usable rule - in this tree it would reject
+// `StringBuilder.new().append()`, `3.times(f)` (a real int method that is absent from
+// the signature table) and 1,038 `Test.assert_*` calls. Of 1,312 method calls on an
+// int/float/bool receiver in the corpus, 1,167 are namespace placeholders. The method
+// name is the only half of the pair that is certain, which is why a "real int receiver
+// type" is still owed before the receiver half can be checked strictly.
+//
+// `separator` is quoted back so the help shows the user's own spelling: `.` and `::`
+// lower to different C symbols (#369) and both reach this rule.
+static bool reject_option_method_on_scalar(const Type* receiver, const char* method,
+                                          const char* separator, int line) {
+    if (!receiver || !method || !*method) return false;
+    if (receiver->kind != TYPE_INT && receiver->kind != TYPE_FLOAT &&
+        receiver->kind != TYPE_BOOL) return false;
+
+    // Result-only, Option-only, and the one name both families share.
+    static const char* const result_only[] = {"is_ok", "is_err", "unwrap_err", NULL};
+    static const char* const option_only[] = {"is_some", "is_none", NULL};
+    const char* wants = NULL;
+    for (int i = 0; result_only[i]; i++)
+        if (strcmp(result_only[i], method) == 0) { wants = "a Result"; break; }
+    if (!wants)
+        for (int i = 0; option_only[i]; i++)
+            if (strcmp(option_only[i], method) == 0) { wants = "an Option"; break; }
+    if (!wants && strcmp(method, "unwrap") == 0) wants = "an Option or Result";
+    if (!wants) return false;
+
+    const char* kind = receiver->kind == TYPE_INT ? "int"
+                     : receiver->kind == TYPE_FLOAT ? "float" : "bool";
+    char headline[320], help[512];
+    snprintf(headline, sizeof(headline), "'%s()' needs %s receiver, not %s",
+             method, wants, kind);
+    snprintf(help, sizeof(help),
+             "Wyn lowers `%s%s()` by assuming the receiver is %s value, so it cannot"
+             " compile against %s. If the value really is a number, compare it instead;"
+             " if it was meant to be %s, annotate the thing that produced it so the"
+             " checker can see the type.",
+             separator, method, wants, kind, wants);
+    report_unknown_method(line, headline, NULL, help);
+    had_error = true;
+    return true;
+}
+
+// V-35: a non-string element handed to the string-keyed runtime set. `s = {:1, 2}`
+// passed `wyn check` and then SIGSEGV'd (exit 139) with the set never even used.
+//
+// The runtime set is string-keyed by construction - `hashset_add(WynHashSet*, const
+// char* key)` stores `strdup(key)` and compares with `strcmp` - and codegen emitted
+// the element expression straight into that parameter. `{:1, 2}` became
+// `hashset_add(set, 1)`: the integer 1 used as an address, dereferenced by strcmp.
+// Measured on dev @ 35ff414a, every non-string element crashed, on every spelling -
+// the literal, an int VARIABLE in the literal, `.add`/`.insert`/`.contains`/`.remove`,
+// and the `HashSet.add(s, x)` namespace form. A float element missed the segfault
+// only by failing in the C compiler instead.
+//
+// WHY THE ANSWER IS "REJECT" AND NOT "SUPPORT INT ELEMENTS". Making ints work at this
+// layer means stringifying into that same table, which collapses `{:1}` and `{:"1"}`
+// into one set - a silently wrong answer, which is worse than the crash. A genuinely
+// typed set needs an element type on TYPE_SET, which today carries none (while
+// type_to_string already prints the unearned `HashSet<int>`), so it is a feature and
+// is logged as one. HashMap has refused non-string keys all along ("HashMap keys must
+// be strings", parser.c), so this is one rule that had one copy, not a new limit.
+//
+// The element's TYPE is what is tested, not its syntax, because an int variable
+// (`x = 1; {:x}`) crashes exactly as hard as an int literal. That leans on the
+// checker's type for the element, and TYPE_INT is also its fallback for anything it
+// could not resolve (#372) - so the risk this rule runs is rejecting a string the
+// checker merely lost. Measured before it was written: every string shape that has to
+// be resolved THROUGH something unresolved still types as string - `sb.to_string()`
+// off a StringBuilder handle, a `fn -> string` call, `"a" + "b"`, an interpolation -
+// and `wyn check` over all 12,106 `.wyn` files in the tree fires this rule on none of
+// them. The StringBuilder shape is pinned as a canary in the gate.
+static bool reject_non_string_set_element(const Type* elem, const char* method, int line) {
+    if (!elem) return false;
+    if (elem->kind != TYPE_INT && elem->kind != TYPE_FLOAT && elem->kind != TYPE_BOOL)
+        return false;
+
+    const char* kind = elem->kind == TYPE_INT ? "an int"
+                     : elem->kind == TYPE_FLOAT ? "a float" : "a bool";
+    char headline[320], help[512];
+    if (method)
+        snprintf(headline, sizeof(headline),
+                 "HashSet stores strings, and '%s()' was given %s element", method, kind);
+    else
+        snprintf(headline, sizeof(headline),
+                 "HashSet stores strings, and this element is %s", kind);
+    snprintf(help, sizeof(help),
+             "A set element becomes a C string key (strdup/strcmp), so %s is used as an"
+             " address and crashes at run time. Convert it at the call: `.to_string()`."
+             " HashMap keys carry the same restriction.", kind);
+    report_unknown_method(line, headline, NULL, help);
+    had_error = true;
+    return true;
+}
+
+// The set methods whose single element argument this rule owns. `union`,
+// `intersection`, `difference`, `is_subset` and `is_disjoint` are deliberately absent:
+// their argument is another SET, not an element, so they are not this rule's business.
+// `add_int` and `contains_int` ARE here - src/types.c advertises them, lowering them to
+// wyn_hashset_add_int / wyn_hashset_contains_int, symbols no runtime source defines
+// (`nm runtime/libwyn_rt.a` has neither). They are the reason someone would believe
+// int elements are supported, and they answer with an internal codegen error, so the
+// rule takes them too.
+static const char* const set_element_methods[] = {
+    "add", "insert", "contains", "remove", "add_int", "contains_int", NULL
+};
+
+static bool is_set_element_method(const char* method) {
+    for (int i = 0; set_element_methods[i]; i++)
+        if (strcmp(set_element_methods[i], method) == 0) return true;
+    return false;
+}
+
+// `HashSet.insert(s, x)` does not exist in the NAMESPACE spelling at all - the method
+// form `s.insert(x)` does, but `HashSet.insert(s, "a")` is refused with a string element
+// too. So the element type is not that call's problem, and answering "HashSet stores
+// strings" would send the reader to fix the element and hit the same wall again. The
+// unknown-namespace-method rule (#369) owns that call; this one steps aside for it.
+//
+// The question "does this namespace have this method" is asked of that rule's own
+// authority rather than answered here with a second list of the namespace form's
+// methods - a list which would then have to be kept in agreement with it.
+// V-37: an Option/Result COMBINATOR the language does not have. types.c advertised ten
+// of them to the checker, so
+//
+//   fn g() -> int? { return Some(1) }
+//   print(g().map(fn(x: int) -> int { return x + 1 }))
+//
+// passed `wyn check` and then died in the C compiler with "unknown method 'OptionInt.map'
+// on namespace 'OptionInt'" - a message that calls a TYPE a namespace and tells the
+// reader to check the spelling of a method types.c itself lists. A wrong diagnosis for a
+// name the compiler advertised is worse than no diagnosis.
+//
+// WHY NONE OF THE TEN IS NEARLY WORKING, which is the part worth writing down. The
+// registry lowers them to `wyn_optional_map` / `wyn_result_map` and friends, and SOME of
+// those names really are in runtime/libwyn_rt.a (wyn_optional_expect,
+// wyn_optional_or_else, wyn_result_map, wyn_result_map_err, wyn_result_and_then). That is
+// a red herring: those take `WynOptional*` / `WynResult*`, a heap-boxed representation
+// that is NOT what codegen emits. Codegen emits the monomorphic value-struct family
+// (`OptionInt_map`, `ResultInt_expect`), which nothing defines. The archive functions
+// belong to a retired parallel model - the same shape as the retired WynJson* pairs model
+// types.c's own comment describes - so pointing the registry at them would not compile
+// either. They are two different representations, and only one of them is live.
+//
+// What the live representation provides was read off the archive rather than guessed
+// (`nm runtime/libwyn_rt.a | grep ' T _Option'`):
+//     Option: Some None is_some is_none unwrap unwrap_or to_string
+//     Result: Ok Err is_ok is_err unwrap unwrap_err unwrap_or to_string
+// The gate pins every one of those, because a rule that rejects the ten must not touch
+// them - and if a combinator is ever really implemented, its reject arm fails and says so.
+//
+// The receiver test goes through get_receiver_type_string(), the same authority the
+// signature-table lookup uses, so this rule sees exactly the receivers that table does -
+// including the TYPE_ENUM spellings of Option and Result, which a `kind ==` test misses.
+static bool reject_missing_option_combinator(const Type* receiver, Token method_tok,
+                                             const char* method, int line) {
+    extern const char* get_receiver_type_string(const Type* type);
+    if (!receiver || !method) return false;
+
+    // The receiver of `g().map(..)` where `g` returns `int?` is neither TYPE_OPTIONAL nor
+    // a TYPE_ENUM named Option: it is a TYPE_STRUCT whose struct_type.name is the
+    // MONOMORPHIC FAMILY NAME - "OptionInt", "OptionString", "ResultInt". That is the name
+    // wyn_option_family() mints and codegen emits methods against, so it is the contract,
+    // but it means get_receiver_type_string() alone answers NULL here (measured: kind=6,
+    // name empty, struct_name=OptionInt). Both routes are consulted, the declared one
+    // first, so the TYPE_OPTIONAL / TYPE_RESULT / TYPE_ENUM spellings are covered too.
+    const char* recv = get_receiver_type_string(receiver);
+    char sname[128] = "";
+    if (!recv && receiver->kind == TYPE_STRUCT && receiver->struct_type.name.length > 0) {
+        token_to_cstr(sname, sizeof(sname), receiver->struct_type.name);
+        if (strncmp(sname, "Option", 6) == 0)      recv = "option";
+        else if (strncmp(sname, "Result", 6) == 0) recv = "result";
+        // A USER struct may be named `Optional...` or `ResultSet`, and if it DEFINES one
+        // of these methods it must keep working - the prefix is not proof of family. The
+        // struct's own definition is the authority, and it is asked before rejecting.
+        if (recv) {
+            Token st = receiver->struct_type.name;
+            if (find_struct_definition(st) &&
+                (struct_has_method(global_scope, st, method_tok) ||
+                 is_field_of_struct(st, method_tok)))
+                return false;
+        }
+    }
+    if (!recv) return false;
+
+    static const char* const option_missing[] = {
+        "map", "and_then", "filter", "expect", "or_else", NULL };
+    static const char* const result_missing[] = {
+        "map", "and_then", "map_err", "expect", "or_else", NULL };
+
+    const char* const* missing;
+    const char* fam;
+    const char* have;
+    if (strcmp(recv, "option") == 0) {
+        missing = option_missing; fam = "Option";
+        have = "is_some(), is_none(), unwrap(), unwrap_or(d) and to_string()";
+    } else if (strcmp(recv, "result") == 0) {
+        missing = result_missing; fam = "Result";
+        have = "is_ok(), is_err(), unwrap(), unwrap_err(), unwrap_or(d) and to_string()";
+    } else return false;
+
+    bool hit = false;
+    for (int i = 0; missing[i]; i++)
+        if (strcmp(missing[i], method) == 0) { hit = true; break; }
+    if (!hit) return false;
+
+    char headline[320], help[512];
+    snprintf(headline, sizeof(headline), "%s does not have '%s()'", fam, method);
+    snprintf(help, sizeof(help),
+             "Wyn's %s supports %s. There is no combinator API yet, so branch on the"
+             " value instead: `if o.is_some() { ... }`, or take a default with"
+             " `o.unwrap_or(d)`.", fam, have);
+    report_unknown_method(line, headline, NULL, help);
+    had_error = true;
+    return true;
+}
+
+// V-36: a Json call handed the JSON TEXT where a parsed handle belongs.
+//
+//   s = "{\"a\": 1}"
+//   print(Json.is_valid(s))      # printed FALSE for valid JSON, exit 0
+//   print(Json.get_int(s, "a"))  # printed 0
+//   print(Json.keys(s))          # printed []
+//
+// Json has ONE representation in Wyn: a `long long` index into the runtime's node arena.
+// `Json_parse` is the only Json runtime function that takes a `const char*`; all eleven
+// others take that handle. So passing a string reinterpreted the POINTER as an arena
+// index, which is never in [0, json_node_count) - and every reader therefore returned its
+// not-found value while every writer became a silent no-op. Measured: is_valid false,
+// has 0, get_int 0, get_bool false, keys [], array_len 0, stringify null, and
+// set_int/set_string/set_null/free doing nothing at all.
+//
+// That is the worst shape available - exit 0 with a plausible answer - because a program
+// that simply forgot `Json.parse` is indistinguishable from one that parsed an empty
+// document.
+//
+// The RUNTIME is not at fault and is not changed: json_member_slot and json_find_child
+// both bounds-check the handle, which is why this was a wrong answer and not an
+// out-of-bounds write. The defect is that the checker let a string reach a parameter
+// that cannot accept one.
+//
+// Which methods are covered is asked of types.c's own dispatch table (the one codegen
+// lowers through), so a Json method added there inherits this rule. `parse` is excluded
+// by being absent from that table rather than by being named here.
+static bool reject_json_text_where_handle_expected(Expr* receiver, const char* method,
+                                                   Expr** args, int arg_count,
+                                                   int line, SymbolTable* scope) {
+    extern bool wyn_json_method_takes_handle(const char* method_name);
+    if (!receiver || receiver->type != EXPR_IDENT || !method || arg_count < 1) return false;
+    char ns[64]; token_to_cstr(ns, sizeof(ns), receiver->token);
+    if (strcmp(ns, "Json") != 0) return false;
+    if (!wyn_json_method_takes_handle(method)) return false;
+
+    Expr* first = args[0];
+    Type* t = first ? first->expr_type : NULL;
+    if (first && !t) t = check_expr(first, scope);
+    if (!t || t->kind != TYPE_STRING) return false;
+
+    char headline[320], help[512];
+    snprintf(headline, sizeof(headline),
+             "'Json.%s()' needs a parsed handle, not the JSON text", method);
+    snprintf(help, sizeof(help),
+             "A Json handle is an index into the parsed document, so a string is read as"
+             " an address and every answer comes back empty (`is_valid` false, `get_int`"
+             " 0, `keys` []). Parse once, then pass the handle:"
+             " `doc = Json.parse(text)` then `Json.%s(doc, ...)`.", method);
+    report_unknown_method(line, headline, NULL, help);
+    had_error = true;
+    return true;
+}
+
+static bool set_method_belongs_to_namespace_rule(Expr* receiver, const char* method) {
+    extern bool is_builtin_module(const char* name);
+    extern int wyn_namespace_method_unknown_spelled(const char*, const char*, const char*);
+    if (!receiver || receiver->type != EXPR_IDENT) return false;
+    char ns[128]; token_to_cstr(ns, sizeof(ns), receiver->token);
+    return is_builtin_module(ns) && wyn_namespace_method_unknown_spelled(ns, method, ".");
 }
 
 Type* check_expr(Expr* expr, SymbolTable* scope) {
@@ -1839,8 +2624,33 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // Found while building VisualWyn, which worked around it by renaming.
             if (expr->token.length == 4 && memcmp(expr->token.start, "none", 4) == 0 &&
                 !find_symbol(scope, expr->token)) {
-                expr->expr_type = builtin_int;  // Return type is pointer to Option
-                return builtin_int;
+                // Rewrite the node to the real no-value node. As a bare EXPR_IDENT
+                // it lowered to the C symbol `none` - which is optional.c's
+                // `WynOptional* none(void)` - so `print(none)` printed that
+                // FUNCTION's address as a decimal (4302194004) and exited 0. Every
+                // other site that understands no-value already accepts EXPR_NONE
+                // (the `== none` rewrite at the top of this function, the
+                // Option-return check below, codegen_stmt's return lowering), so
+                // this makes the ident spelling agree with the node spelling
+                // instead of each place re-testing the token.
+                //
+                // The type comes from wyn_none_type(), the same authority `case
+                // EXPR_NONE:` uses. It used to be hardcoded `builtin_int` here, so one
+                // node kind had TWO types depending only on how it had been spelled -
+                // and `int` is what made every context reject it:
+                //
+                //   o: int? = none          Expected: struct, Got: int
+                //   o = Some(5); o = none   Expected: OptionInt (struct), Got: int
+                //   [Some(1), none]         Array elements must have consistent types
+                //
+                // #335 deliberately left the type alone so that its own fix (the ident
+                // spelling lowering to optional.c's `WynOptional* none(void)`, whose
+                // ADDRESS `print(none)` printed) could be attributed on its own. This is
+                // that follow-up.
+                expr->type = EXPR_NONE;
+                Type* nt = wyn_none_type();
+                expr->expr_type = nt;
+                return nt;
             }
             
             // Check for boolean literals
@@ -2182,9 +2992,12 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 //   - generic type params (T): unknown, stay permissive so
                 //     `a == b` inside a generic fn still checks
                 // struct == struct and struct ordering are handled above.
-                bool left_num  = left->kind == TYPE_INT || left->kind == TYPE_FLOAT ||
+                // type_is_int_handle covers int AND json: a Json value is an arena
+                // index, so `a == b` on two handles (do these documents alias?) and
+                // `h > 500` are the same C comparison an int gets.
+                bool left_num  = type_is_int_handle(left) || left->kind == TYPE_FLOAT ||
                                  left->kind == TYPE_BOOL || left->kind == TYPE_ENUM;
-                bool right_num = right->kind == TYPE_INT || right->kind == TYPE_FLOAT ||
+                bool right_num = type_is_int_handle(right) || right->kind == TYPE_FLOAT ||
                                  right->kind == TYPE_BOOL || right->kind == TYPE_ENUM;
                 bool types_compatible =
                     (left_num && right_num) ||
@@ -2532,7 +3345,30 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 } else if (strcmp(name_buf, "print") == 0 || strcmp(name_buf, "println") == 0) {
                     // print(value) or println(value) - accepts any number of arguments
                     for (int i = 0; i < expr->call.arg_count; i++) {
-                        check_expr(expr->call.args[i], scope);
+                        Type* at = check_expr(expr->call.args[i], scope);
+                        // A struct passed to print/println needs the same
+                        // __wyn_str_<Name> helper that interpolation uses, so
+                        // register it here too. Without this, codegen fell back to
+                        // an inline field-by-field printf that casts every
+                        // non-scalar field to (long long): `print(flat_struct)`
+                        // failed to build outright, and a struct with a nested
+                        // struct or array field failed for BOTH print and println,
+                        // while `"${v}"` on the same value rendered correctly.
+                        // Registered in this pass because it is the one that
+                        // necessarily visits every expression with its type
+                        // resolved, so no print site can be missed.
+                        if (at && at->kind == TYPE_STRUCT && at->struct_type.name.length > 0) {
+                            char sn[128];
+                            token_to_cstr(sn, sizeof(sn), at->struct_type.name);
+                            extern void register_interpolated_struct(const char*);
+                            register_interpolated_struct(sn);
+                        }
+                        // An ARRAY of structs needs the element type registered
+                        // too. A boxed element carries no type name at runtime,
+                        // so print([P { x: 1 }]) could only ever render the box's
+                        // address (or the honest-but-empty <struct>); the element
+                        // renderer has to be built from the type known HERE.
+                        register_printed_array_elem_type(at);
                     }
                     expr->expr_type = builtin_void;
                     return builtin_void;
@@ -2936,6 +3772,101 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
                 
                 if (is_qualified && !best_match) {
+                    // The `::` spelling's unknown-method check, and it has to run
+                    // BEFORE the return-type lookups below, not after them.
+                    //
+                    // Those lookups resolve `Ns::method` through the builtin registry,
+                    // which is keyed by the DOTTED `Ns_method` name - so they answer
+                    // "yes, that has a type" for a call whose `::` lowering emits a
+                    // different, undeclared symbol, and return before any check could
+                    // run. `File::read_lines` is the measurable case: the runtime
+                    // declares `File_read_lines` and no `file_read_lines`, so the
+                    // dotted form builds and the `::` form cannot, yet the registry
+                    // entry made both look fine. Running the rule first, gated on the
+                    // declaration index, keeps every call that really does build.
+                    if (reject_unknown_namespace_method(qual_module, qual_func, "::",
+                                                        expr->call.callee->token.line,
+                                                        NULL)) {
+                        expr->expr_type = builtin_int;
+                        free(arg_types);
+                        return builtin_int;
+                    }
+                    // `x::is_err()` on a scalar variable, the `::` half of V-28. The
+                    // rule above cannot see it: its first guard is is_builtin_module(),
+                    // and `x` is not a namespace. Gated on the same three module tests
+                    // that rule uses, because an import registers the MODULE NAME as an
+                    // int-typed placeholder symbol - without them, a user module with a
+                    // `pub fn is_ok` would be rejected on its own name.
+                    {
+                        extern bool is_builtin_module(const char* name);
+                        extern bool is_module_loaded(const char* name);
+                        Token _rtok = {TOKEN_IDENT, qual_module, (int)strlen(qual_module),
+                                       expr->call.callee->token.line};
+                        Symbol* _rsym = find_symbol(scope, _rtok);
+                        if (_rsym && _rsym->type &&
+                            !is_builtin_module(qual_module) &&
+                            !is_module_loaded(qual_module) &&
+                            !checking_same_module(qual_module) &&
+                            reject_option_method_on_scalar(_rsym->type, qual_func, "::",
+                                                           expr->call.callee->token.line)) {
+                            expr->expr_type = builtin_int;
+                            free(arg_types);
+                            return builtin_int;
+                        }
+                        // `s::add("b")` where `s` holds a VALUE. The `::` lowering
+                        // concatenates the qualifier into a C symbol - it emitted `s_add`
+                        // and failed in the C compiler with "undeclared function 's_add'",
+                        // i.e. the compiler treating a local variable as a namespace.
+                        //
+                        // `.` is the spelling for a value and it works, so this says so
+                        // instead of letting it reach the C compiler. It cannot simply be
+                        // lowered like `.`: `::` on a MODULE is the common, correct case -
+                        // `tui::display_width(s)` and friends appear in 110 files - so the
+                        // module tests above must all pass first.
+                        //
+                        // Gated on the type NOT being int, and that is not fussiness: an
+                        // `import` registers the module name as an int-typed placeholder
+                        // symbol, so an int-typed qualifier is indistinguishable from a
+                        // module here. `x::foo()` on an int variable therefore still
+                        // reaches the C compiler, which is the pre-existing behaviour and
+                        // is noted in the gate.
+                        extern int is_enum_type(const char*);
+                        if (_rsym && _rsym->type &&
+                            !is_builtin_module(qual_module) &&
+                            !is_module_loaded(qual_module) &&
+                            !checking_same_module(qual_module) &&
+                            // ...and the qualifier is not a TYPE NAME. `User::default()`
+                            // calling a `fn User.default()` is a static function on a type
+                            // and is documented (book ch.11); a struct or enum name resolves
+                            // to a symbol here exactly as a variable does, so without this
+                            // the rule rejected it. Found by running the book's snippets
+                            // against the packaged artifact - the corpus sweep could not see
+                            // it, because the snippets live in markdown rather than .wyn.
+                            // The same carve-out as the namespace rule's, for the same reason.
+                            !find_struct_definition(_rtok) &&
+                            !is_enum_type(qual_module)) {
+                            TypeKind k = _rsym->type->kind;
+                            if (k == TYPE_SET || k == TYPE_MAP || k == TYPE_ARRAY ||
+                                k == TYPE_STRING || k == TYPE_STRUCT || k == TYPE_JSON ||
+                                k == TYPE_OPTIONAL || k == TYPE_RESULT) {
+                                char hl[320], help[512];
+                                snprintf(hl, sizeof(hl),
+                                         "use '.' to call a method on a value: '%s.%s()', not '%s::%s()'",
+                                         qual_module, qual_func, qual_module, qual_func);
+                                snprintf(help, sizeof(help),
+                                         "'::' qualifies a MODULE or an enum (`tui::pad_to(..)`,"
+                                         " `Color::Red`), and it lowers by joining the two names into"
+                                         " one C symbol - here that would be '%s_%s', which does not"
+                                         " exist. '%s' is a local value, so use the dot form.",
+                                         qual_module, qual_func, qual_module);
+                                report_unknown_method(expr->call.callee->token.line, hl, NULL, help);
+                                had_error = true;
+                                expr->expr_type = builtin_int;
+                                free(arg_types);
+                                return builtin_int;
+                            }
+                        }
+                    }
                     // Module-qualified function - check for known return types
                     if (strcmp(qual_module, "C_Parser") == 0) {
                         // C_Parser module functions
@@ -2968,6 +3899,29 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         if (_usym && _usym->type && _usym->type->kind == TYPE_FUNCTION &&
                             _usym->type->fn_type.return_type) {
                             Type* _r = freshen_container_ret(expr, _usym->type->fn_type.return_type);
+                            expr->expr_type = _r;
+                            free(arg_types);
+                            return _r;
+                        }
+                    }
+                    // Last stop before the int default: the SAME hardcoded stdlib
+                    // return-type table the DOTTED spelling falls back to
+                    // (check_expr's EXPR_METHOD_CALL arm). `Random::bool()` resolves
+                    // to no symbol, so it took the int default and printed `1` while
+                    // `Random.bool()` printed `true` - one registered `bool` return,
+                    // honoured on one of the two paths. Reading the one table from both
+                    // is what makes the spellings agree.
+                    {
+                        extern const char* lookup_module_fn_return_type(const char*);
+                        char _tname[264];
+                        snprintf(_tname, sizeof(_tname), "%s_%s", qual_module, qual_func);
+                        const char* _trt = lookup_module_fn_return_type(_tname);
+                        if (_trt) {
+                            Type* _r = strcmp(_trt, "bool") == 0   ? builtin_bool
+                                     : strcmp(_trt, "string") == 0 ? builtin_string
+                                     : strcmp(_trt, "float") == 0  ? builtin_float
+                                     : strcmp(_trt, "array") == 0  ? builtin_array
+                                     : builtin_int;
                             expr->expr_type = _r;
                             free(arg_types);
                             return _r;
@@ -3246,24 +4200,34 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // of the int default that S2 patched after the fact.
             // The week-one key-fn methods (sort_by/max_by/min_by/group_by) take
             // the same element-typed single-param lambda, so they share the seed.
+            // sort_by ALSO takes a two-parameter COMPARATOR lambda
+            // (`xs.sort_by((a, b) => b.n - a.n)`), and BOTH of its parameters are
+            // the element type. The seed used to require param_count == 1, so the
+            // comparator's parameters fell back to the `int` default and every
+            // field access on them died in the C compiler ("member reference base
+            // type 'long long' is not a structure or union") - reported as a bare
+            // "internal codegen error". V-19.
             if (object_type && object_type->kind == TYPE_ARRAY &&
                 object_type->array_type.element_type &&
                 expr->method_call.arg_count == 1 &&
-                expr->method_call.args[0]->type == EXPR_LAMBDA &&
-                expr->method_call.args[0]->lambda.param_count == 1 &&
-                ((expr->method_call.method.length == 3 &&
-                  memcmp(expr->method_call.method.start, "map", 3) == 0) ||
-                 (expr->method_call.method.length == 6 &&
-                  memcmp(expr->method_call.method.start, "filter", 6) == 0) ||
-                 (expr->method_call.method.length == 7 &&
-                  memcmp(expr->method_call.method.start, "sort_by", 7) == 0) ||
-                 (expr->method_call.method.length == 6 &&
-                  memcmp(expr->method_call.method.start, "max_by", 6) == 0) ||
-                 (expr->method_call.method.length == 6 &&
-                  memcmp(expr->method_call.method.start, "min_by", 6) == 0) ||
-                 (expr->method_call.method.length == 8 &&
-                  memcmp(expr->method_call.method.start, "group_by", 8) == 0))) {
-                lambda_ctx_param_seed = object_type->array_type.element_type;
+                expr->method_call.args[0]->type == EXPR_LAMBDA) {
+                int _pc = expr->method_call.args[0]->lambda.param_count;
+                bool _is_sort_by = (expr->method_call.method.length == 7 &&
+                                    memcmp(expr->method_call.method.start, "sort_by", 7) == 0);
+                bool _one_param_elem_fn = _pc == 1 &&
+                    (_is_sort_by ||
+                     (expr->method_call.method.length == 3 &&
+                      memcmp(expr->method_call.method.start, "map", 3) == 0) ||
+                     (expr->method_call.method.length == 6 &&
+                      memcmp(expr->method_call.method.start, "filter", 6) == 0) ||
+                     (expr->method_call.method.length == 6 &&
+                      memcmp(expr->method_call.method.start, "max_by", 6) == 0) ||
+                     (expr->method_call.method.length == 6 &&
+                      memcmp(expr->method_call.method.start, "min_by", 6) == 0) ||
+                     (expr->method_call.method.length == 8 &&
+                      memcmp(expr->method_call.method.start, "group_by", 8) == 0));
+                if (_one_param_elem_fn || (_pc == 2 && _is_sort_by))
+                    lambda_ctx_param_seed = object_type->array_type.element_type;
             }
             for (int i = 0; i < expr->method_call.arg_count; i++) {
                 check_expr(expr->method_call.args[i], scope);
@@ -3272,6 +4236,53 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
 
             Token method = expr->method_call.method;
             char method_name[256]; token_to_cstr(method_name, sizeof(method_name), method);
+
+            // A non-string element handed to a set method (V-35). This is deliberately
+            // the FIRST thing checked after the receiver, the args and the method name
+            // are known, because the set methods do not leave this case by one route:
+            // `contains`/`insert`/`remove` return from the signature-table lookup
+            // (types.c has entries for them), `HashSet.contains` returns even earlier
+            // from the module-return table, and `add` has no entry anywhere and falls
+            // through to the end. Hooking any of those spots caught some of the six
+            // names and not the others; hooking here is one site all of them pass.
+            //
+            // ONE SITE, BOTH SPELLINGS: the element is the LAST argument of both
+            // `s.add(x)` and `HashSet.add(s, x)`, because `HashSet` is registered as the
+            // TYPE and so its receiver types TYPE_SET here too. Keying on the last
+            // argument rather than on which spelling was written is what keeps this from
+            // being two rules that have to agree. Args were checked just above, so
+            // expr_type is populated.
+            // An Option/Result combinator the language does not have (V-37).
+            if (reject_missing_option_combinator(object_type, method, method_name,
+                                                 method.line)) {
+                expr->expr_type = builtin_int;
+                return builtin_int;
+            }
+
+            // A Json call given the text instead of a handle (V-36). Same placement
+            // reason as the set rule below: the Json namespace methods return from
+            // several different lookups further down, so the top of this case is the
+            // only point all of them pass.
+            if (reject_json_text_where_handle_expected(expr->method_call.object, method_name,
+                                                      expr->method_call.args,
+                                                      expr->method_call.arg_count,
+                                                      method.line, scope)) {
+                expr->expr_type = builtin_int;
+                return builtin_int;
+            }
+
+            if (object_type && object_type->kind == TYPE_SET &&
+                expr->method_call.arg_count >= 1 && is_set_element_method(method_name) &&
+                !set_method_belongs_to_namespace_rule(expr->method_call.object,
+                                                      method_name)) {
+                Expr* el = expr->method_call.args[expr->method_call.arg_count - 1];
+                Type* et = el ? el->expr_type : NULL;
+                if (el && !et) et = check_expr(el, scope);
+                if (reject_non_string_set_element(et, method_name, method.line)) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                }
+            }
 
             // `"fmt".format(a, b, ...)` - validate the format string at CHECK
             // time. `.format()` used to be a silent no-op: codegen called a
@@ -3610,6 +4621,43 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                             if (strncmp(mr, "array", 5) == 0) { expr->expr_type = builtin_array; return builtin_array; }
                         }
                     }
+
+                    // Nothing knows this name. On a BUILTIN namespace that used to
+                    // be the end of it: the call fell through, typed as int, and
+                    // died in clang on a symbol the programmer never wrote
+                    // (`Time_no_such_method_xyz`) - `wyn check` said the program was
+                    // fine on all 31 namespaces. Reject it here instead, but only
+                    // when the compiler can PROVE the symbol it would emit is
+                    // declared nowhere in the runtime; wyn_namespace_method_unknown()
+                    // returns 0 whenever it cannot tell, so a call that compiles
+                    // today still checks today.
+                    //
+                    // The guards, each for a case that is not a namespace typo:
+                    //  - a LOADED user module may be named like a builtin namespace
+                    //    (`math` is in is_builtin_module's list, and tests/modules
+                    //    import a local math.wyn) - its own AST is the authority.
+                    //  - a real variable shadowing the name types as something other
+                    //    than the int placeholder an import registers. MAP and SET are
+                    //    allowed alongside it because init_checker registers the names
+                    //    `HashMap` and `HashSet` as the collection TYPES, so the
+                    //    receiver of `HashMap.no_such()` types TYPE_MAP - without this
+                    //    those two namespaces, the two most typo-prone in the stdlib,
+                    //    were the only ones left unchecked (29 of 31).
+                    //  - a struct/enum of that name means `Name.X` is a type or
+                    //    variant reference, not a stdlib call - as does a method name
+                    //    that starts with a capital.
+                    //  - the `Ns_method` symbol existing at all (even with no usable
+                    //    return type, which is how execution reaches here).
+                    //
+                    // All of those now live INSIDE the rule, with the rule, so the
+                    // `::` spelling inherits every one of them rather than growing its
+                    // own near-copy. This is the DOT call site; see
+                    // reject_unknown_namespace_method() for the rule itself.
+                    if (reject_unknown_namespace_method(obj_name, method_name, ".",
+                                                        method.line, object_type)) {
+                        expr->expr_type = builtin_int;
+                        return builtin_int;
+                    }
                 }
             }
             
@@ -3936,6 +4984,21 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     } else if (strcmp(return_type_str, "bool") == 0) {
                         expr->expr_type = builtin_bool;
                         return builtin_bool;
+                    } else if (return_type_str[0] >= 'A' && return_type_str[0] <= 'Z') {
+                        // A NAMED type in the signature table (ResultInt,
+                        // ResultFloat, …): resolve it from the global scope,
+                        // where checker_builtins registered the family. One rule
+                        // for every builtin-struct-returning method instead of a
+                        // per-name branch that the next one has to remember to
+                        // add. Falls through to the generic paths if the name is
+                        // not registered, rather than inventing a type.
+                        Token named = {TOKEN_IDENT, return_type_str,
+                                       (int)strlen(return_type_str), method.line};
+                        Symbol* ns = find_symbol(global_scope, named);
+                        if (ns && ns->type) {
+                            expr->expr_type = ns->type;
+                            return ns->type;
+                        }
                     } else if (strcmp(return_type_str, "array") == 0) {
                         // Check if this is a method that returns string array
                         if (object_type && object_type->kind == TYPE_STRING) {
@@ -3987,6 +5050,29 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         Type* json_type = make_type(TYPE_JSON);
                         expr->expr_type = json_type;
                         return json_type;
+                    } else if (strcmp(return_type_str, "set") == 0) {
+                        // This chain handled string/int/float/bool/named/array/json/void
+                        // and NOT the two collection names, so a method the table
+                        // declares as returning `set` or `map` fell through to the int
+                        // default at the end. That is why `a.union(b).len()` reported
+                        // "Unknown method 'len' for type 'int'": the set-algebra half of
+                        // the HashSet API produced a value nothing could be done with,
+                        // for union, intersection, difference and symmetric_difference
+                        // alike. The runtime functions were there all along.
+                        Type* set_type = make_type(TYPE_SET);
+                        expr->expr_type = set_type;
+                        return set_type;
+                    } else if (strcmp(return_type_str, "map") == 0) {
+                        // Same gap, the map half. No caller reaches it today (the rows
+                        // that declare `map` - filter_keys, map_values - are refused
+                        // earlier as unknown methods on a map receiver), but leaving one
+                        // of the pair out is how this recurs: the next row added with a
+                        // `map` return would silently type as int.
+                        Type* map_type = make_type(TYPE_MAP);
+                        map_type->map_type.key_type = builtin_string;
+                        map_type->map_type.value_type = NULL;
+                        expr->expr_type = map_type;
+                        return map_type;
                     } else if (strcmp(return_type_str, "void") == 0) {
                         expr->expr_type = builtin_void;
                         return builtin_void;
@@ -4068,15 +5154,64 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 if (find_struct_definition(type_name) &&
                     !struct_has_method(global_scope, type_name, method) &&
                     !is_field_of_struct(type_name, method)) {
-                    fprintf(stderr, "\nError at line %d: struct '%s' has no method '%.*s'\n",
-                            method.line, sname, (int)method.length, method.start);
-                    show_source_line(method.line);
-                    fprintf(stderr, "  \033[34mHelp:\033[0m define it with `fn %.*s(self) { ... }` inside `struct %s { ... }` (or an `impl %s` block).\n",
-                            (int)method.length, method.start, sname, sname);
+                    char _hl[320], _help[512];
+                    snprintf(_hl, sizeof(_hl), "struct '%s' has no method '%.*s'",
+                             sname, (int)method.length, method.start);
+                    snprintf(_help, sizeof(_help),
+                             "define it with `fn %.*s(self) { ... }` inside `struct %s { ... }` (or an `impl %s` block).",
+                             (int)method.length, method.start, sname, sname);
+                    report_unknown_method(method.line, _hl, NULL, _help);
                     had_error = true;
                     expr->expr_type = builtin_int;
                     return builtin_int;
                 }
+            }
+
+            // `unwrap_or` on a scalar VARIABLE. V-28 deliberately left `unwrap_or` out of
+            // its set, because `m.get(k).unwrap_or(d)` has a real lowering ahead of the
+            // blind fallback and does build. But BREAKING that chain across a variable
+            //
+            //     o = m.get("a")
+            //     print(o.unwrap_or(9))     // internal codegen error
+            //
+            // loses the lowering and reaches the C compiler. Measured: that is the ONLY
+            // remaining broken shape - the inline chain works, a string-valued map already
+            // gives a clean "string has no method 'unwrap_or'", and a real Option in a
+            // variable works because it types as a STRUCT (OptionInt), not as a scalar.
+            //
+            // Keying on the receiver being an IDENT is what separates the two: the inline
+            // chain's receiver is a CALL, so it is untouched. That keeps V-28's promise
+            // (it never rejects something that builds) while closing the one hole.
+            if (object_type && expr->method_call.object &&
+                expr->method_call.object->type == EXPR_IDENT &&
+                strcmp(method_name, "unwrap_or") == 0 &&
+                (object_type->kind == TYPE_INT || object_type->kind == TYPE_FLOAT ||
+                 object_type->kind == TYPE_BOOL)) {
+                char hl[320], help[512];
+                const char* rk = object_type->kind == TYPE_INT ? "int"
+                               : object_type->kind == TYPE_FLOAT ? "float" : "bool";
+                snprintf(hl, sizeof(hl),
+                         "'unwrap_or()' needs an Option or Result receiver, not %s", rk);
+                snprintf(help, sizeof(help),
+                         "`map.get(k)` does not return an Option - it returns the value"
+                         " directly, and the zero value for a missing key. The chained form"
+                         " `m.get(k).unwrap_or(d)` works because it is lowered as one"
+                         " operation; storing the result first loses that. Either keep it on"
+                         " one line, or test presence with `m.contains(k)` before reading.");
+                report_unknown_method(method.line, hl, NULL, help);
+                had_error = true;
+                expr->expr_type = object_type;
+                return object_type;
+            }
+
+            // An Option/Result predicate on an int/float/bool receiver: reject at check
+            // time (V-28). Sits beside the string/array rule below because the two are
+            // the same promise from opposite directions - that one knows the receiver
+            // exhaustively, this one knows the METHOD exhaustively.
+            if (reject_option_method_on_scalar(object_type, method_name, ".",
+                                               method.line)) {
+                expr->expr_type = builtin_int;
+                return builtin_int;
             }
 
             // Unknown method on a STRING or ARRAY receiver: reject at check time.
@@ -4091,11 +5226,10 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 const char* recv = object_type->kind == TYPE_STRING ? "string" : "array";
                 extern const char* suggest_method_name(const char*, const char*);
                 const char* near = suggest_method_name(recv, method_name);
-                fprintf(stderr, "\nError at line %d: %s has no method '%s'\n",
-                        method.line, recv, method_name);
-                show_source_line(method.line);
-                if (near)
-                    fprintf(stderr, "  \033[33mDid you mean:\033[0m .%s()?\n", near);
+                char _hl[320], _sug[192];
+                snprintf(_hl, sizeof(_hl), "%s has no method '%s'", recv, method_name);
+                if (near) snprintf(_sug, sizeof(_sug), ".%s()", near);
+                report_unknown_method(method.line, _hl, near ? _sug : NULL, NULL);
                 had_error = true;
                 expr->expr_type = builtin_int;
                 return builtin_int;
@@ -4180,6 +5314,50 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 // still type-check the remaining entries
                 for (int _i = 0; _i < expr->array.count; _i++)
                     if (_i != 1) check_expr(expr->array.elements[_i], scope);
+
+                // ENFORCE the homogeneity the comment above ASSUMES. Nothing did,
+                // and the whole map took its value type from elements[1], so
+                // `{"a": 1, "b": "x"}` read m["b"] back through hashmap_index_int
+                // and printed 0 - a wrong answer at exit 0. `{"a": "x", "b": 1}`
+                // printed the empty string the same way.
+                //
+                // Wyn has no union value type and `m[k]` emits ONE getter for the
+                // whole map, so a mixed literal cannot be "correctly typed"; the
+                // honest outcome is a check-time error naming both types and the
+                // line (V-2). Deliberately mirrors EXPR_ARRAY's
+                // "elements must have consistent types" rule - a map literal is the
+                // same rule on the value slot.
+                //
+                // Aggregates are compared by C TYPE NAME, not just kind:
+                // Some(1) and A{b:1} are both TYPE_STRUCT, and types_equal() returns
+                // true for any two TYPE_STRUCTs ("compare kinds for now"), so a
+                // kind-only test would wave through two incompatible box types and
+                // reintroduce the same silent wrong answer one level up.
+                for (int _i = 3; _i < expr->array.count; _i += 2) {
+                    Type* ot = expr->array.elements[_i]->expr_type;
+                    if (!vt || !ot) continue;
+                    char a[128], b[128];
+                    map_value_type_sig(vt, a, sizeof a);
+                    map_value_type_sig(ot, b, sizeof b);
+                    if (strcmp(a, b) == 0) continue;
+                    // The KEY is always a string literal and always carries a real
+                    // line; a value expression may not (a struct-init node reported
+                    // line 0, which printed "Error at line 0").
+                    int line = expr->array.elements[_i - 1]->token.line;
+                    if (line <= 0) line = expr->array.elements[_i]->token.line;
+                    if (line <= 0) line = expr->token.line;
+                    fprintf(stderr,
+                        "\nError at line %d: map literal has mixed value types: '%s' and '%s'\n",
+                        line, a, b);
+                    show_source_line(line);
+                    fprintf(stderr,
+                        "  \033[34mHelp:\033[0m every value in a `{...}` literal must have the same "
+                        "type - `m[k]` reads them all back through one getter. Use separate maps, "
+                        "or give the values a common struct/enum type.\n");
+                    had_error = true;
+                    expr->expr_type = map_type;
+                    return map_type;
+                }
             } else {
                 // Empty `{}`: leave the value type OPEN so the first `m[k] = v`
                 // store fixes it (see EXPR_INDEX_ASSIGN). Defaulting to int here
@@ -4191,6 +5369,15 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
         }
         case EXPR_HASHSET_LITERAL: {
             // v1.3.1: {:} creates a hashset with TYPE_SET
+            // V-35: the elements were not visited at all before this, which is how an
+            // int element reached codegen and became `hashset_add(set, 1)`. Every
+            // element is checked (not just the first) because `{:"a", 1}` crashed too.
+            for (int i = 0; i < expr->array.count; i++) {
+                Expr* el = expr->array.elements[i];
+                if (!el) continue;
+                Type* et = check_expr(el, scope);
+                reject_non_string_set_element(et, NULL, el->token.line);
+            }
             Type* set_type = make_type(TYPE_SET);
             expr->expr_type = set_type;
             return set_type;
@@ -4388,7 +5575,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     }
                 }
                 if (sym_inner->kind != val_inner->kind &&
-                    sym_inner->kind != TYPE_STRUCT) {
+                    sym_inner->kind != TYPE_STRUCT &&
+                    // json and int are one representation - see json_int_alias. An
+                    // `int`-declared variable holding a Json.parse handle (or the
+                    // reverse) is the long-standing spelling and stays legal.
+                    !json_int_alias(sym_inner, val_inner)) {
                     fprintf(stderr, "\033[31m\033[1mError:\033[0m Type mismatch in assignment to '%.*s' (line %d)\n",
                             expr->assign.name.length, expr->assign.name.start, expr->assign.name.line);
                     fprintf(stderr, "  \033[1mExpected:\033[0m %s\n", type_to_string(sym_inner));
@@ -4430,7 +5621,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     // generated C: to_string is a _Generic whose default arm is
                     // int_to_string, so a struct used to be passed by value to a
                     // `long long` parameter and the C compile failed AFTER
-                    // `wyn check` reported no errors (PLAN_v1.21 S1). Recorded
+                    // `wyn check` reported no errors (S1). Recorded
                     // here rather than in codegen because this pass is the one
                     // that necessarily visits every expression with its type
                     // resolved, so no interpolation site can be missed.
@@ -4440,6 +5631,10 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         extern void register_interpolated_struct(const char*);
                         register_interpolated_struct(sn);
                     }
+                    // "${arr}" renders through the same element renderer print
+                    // uses, so the element type is registered from here too - or
+                    // the three spellings would disagree again.
+                    register_printed_array_elem_type(it);
                 }
             }
             // SET expr_type, do not merely return it. Bare-assignment hoisting
@@ -4475,6 +5670,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return builtin_int;
         case EXPR_SPAWN:
             if (expr->spawn.call) {
+                reject_spawned_closure(expr->spawn.call, expr->token.line);
                 Type* call_type = check_expr(expr->spawn.call, scope);
                 // The spawn returns a future wrapping the call's return type
                 // Store the inner type for await to use
@@ -5280,10 +6476,7 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return opt_type;
         }
         case EXPR_NONE: {
-            // Default to OptionInt - context would refine this
-            Token concrete_name = {TOKEN_IDENT, "OptionInt", 9, 0};
-            Symbol* sym = find_symbol(global_scope, concrete_name);
-            Type* opt_type = sym ? sym->type : make_type(TYPE_OPTIONAL);
+            Type* opt_type = wyn_none_type();
             expr->expr_type = opt_type;
             return opt_type;
         }
@@ -5573,6 +6766,63 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
             }
             
+            // Option/Result exhaustiveness. Both families are a TYPE_STRUCT named
+            // Option*/Result*, so neither the scalar rule nor the enum rule above sees
+            // them - and a match EXPRESSION missing an arm reads uninitialized memory.
+            // Measured on dev:
+            //
+            //   fn f() -> Result<int,string> { return Err("x") }
+            //   r = f()
+            //   y = match r { Ok(v) => v }   // wyn check: no errors
+            //   print(y)                     // -> 0
+            //
+            // A silent wrong answer at exit 0 - the v1.21 soundness rule broken, and the
+            // Err payload discarded without a word.
+            //
+            // The K3 scalar rule above appeared to cover the Option spelling, but only by
+            // accident: bare `none` was typed `int`, so `x = none; match x { Some(v) => v }`
+            // tripped "a match on an int must end with a wildcard". A real `int?` - from a
+            // function, an annotation, or a Some - never reached that rule.
+            // Two representations reach here for the same thing: a resolved family is a
+            // TYPE_STRUCT named OptionInt/ResultInt/..., while an unresolved `int?` (a
+            // declared return type, Task.try_recv's builtin_int_opt) is TYPE_OPTIONAL.
+            // Both are an Option as far as exhaustiveness is concerned.
+            if (!has_wildcard &&
+                (match_value_type->kind == TYPE_OPTIONAL ||
+                 (match_value_type->kind == TYPE_STRUCT &&
+                  match_value_type->struct_type.name.length > 0 &&
+                  match_value_type->struct_type.name.start))) {
+                int is_opt = match_value_type->kind == TYPE_OPTIONAL;
+                int is_res = 0;
+                if (match_value_type->kind == TYPE_STRUCT) {
+                    Token fam = match_value_type->struct_type.name;
+                    is_opt = fam.length >= 6 && memcmp(fam.start, "Option", 6) == 0;
+                    is_res = fam.length >= 6 && memcmp(fam.start, "Result", 6) == 0;
+                }
+                if (is_opt || is_res) {
+                    int cover_a = 0, cover_b = 0;
+                    for (int ai = 0; ai < expr->match.arm_count; ai++) {
+                        Pattern* pat = expr->match.arms[ai].pattern;
+                        // A guarded arm may not fire, so it never counts as coverage -
+                        // the same rule the enum check above applies.
+                        if (pat && pat->type == PATTERN_GUARD) continue;
+                        wyn_mark_optlike_arm(pat, is_opt, &cover_a, &cover_b);
+                    }
+                    if (!cover_a || !cover_b) {
+                        // Name the half that is MISSING, not the one already written:
+                        // cover_a is Some/Ok, cover_b is none/Err.
+                        const char* missing = is_opt ? (cover_a ? "none" : "Some")
+                                                     : (cover_a ? "Err" : "Ok");
+                        fprintf(stderr,
+                                "Error at line %d: non-exhaustive match - a match on %s must handle "
+                                "'%s' too (add that arm or a wildcard '_ =>' arm)\n",
+                                expr->match.value->token.line,
+                                is_opt ? "an Option" : "a Result", missing);
+                        had_error = true;
+                    }
+                }
+            }
+
             expr->expr_type = result_type ? result_type : builtin_void;
             return expr->expr_type;
         }
@@ -5687,9 +6937,77 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                     } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
                         init_type = make_type(TYPE_SET);
                     } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
-                        init_type = make_type(TYPE_OPTIONAL);
+                        // Carry the ANNOTATED payload type through, exactly as the
+                        // HashMap branch above does and for the same reason. This used
+                        // to be a bare `make_type(TYPE_OPTIONAL)`, i.e. "an optional of
+                        // nothing in particular", so `o: Option<int> = Some(5)`
+                        // type-checked CLEAN and then failed the C compile:
+                        //
+                        //   WynOptional* o = OptionInt_Some(5);
+                        //   error: initializing 'WynOptional *' with an expression of
+                        //          incompatible type 'OptionInt'
+                        //   error: call to undeclared function 'Option_is_some'
+                        //
+                        // A struct FIELD of the identical type always worked, because
+                        // only that path knew how to resolve the annotation. Both
+                        // spellings now go through the one authority.
+                        Type* fam = wyn_optlike_annotation_type(stmt->var.type);
+                        if (!fam && stmt->var.init) {
+                            // An `Option<Struct>` family symbol only exists once
+                            // something has constructed one, and the initializer is
+                            // checked AFTER this branch - so the lookup above misses on
+                            // the first `o: Option<P> = Some(P{..})` in a program. Check
+                            // the initializer now and adopt the family it resolved to.
+                            // The annotation stays authoritative whenever it resolves on
+                            // its own; this only fills in the payload the annotation
+                            // named but could not yet look up.
+                            Type* it = check_expr(stmt->var.init, scope);
+                            if (it && it->kind == TYPE_STRUCT && it->struct_type.name.length >= 6 &&
+                                memcmp(it->struct_type.name.start, "Option", 6) == 0)
+                                fam = it;
+                        }
+                        init_type = fam ? fam : make_type(TYPE_OPTIONAL);
                     } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
-                        init_type = make_type(TYPE_RESULT);
+                        // Carry the ANNOTATED ok/err types through, the same way the
+                        // Option branch above and the HashMap branch further up do. This
+                        // used to be a bare `make_type(TYPE_RESULT)` - "a result of
+                        // nothing in particular" - which nothing could be compared
+                        // against, so `r: Result<int,string> = Ok(5)` was rejected with
+                        //
+                        //   Type mismatch  Expected: unknown (unknown)  Got: struct
+                        //
+                        // while `fn f() -> Result<int,string>` had always worked, because
+                        // only the return-type path knew how to resolve the annotation.
+                        Type* fam = wyn_result_annotation_type(stmt->var.type);
+                        if (!fam && stmt->var.init) {
+                            // A `Result<Struct, E>` family symbol may not exist yet, and
+                            // the initializer is checked AFTER this branch. Same fallback
+                            // as the Option case: the annotation stays authoritative
+                            // whenever it resolves, otherwise adopt the initializer's.
+                            Type* it = check_expr(stmt->var.init, scope);
+                            if (it && it->kind == TYPE_STRUCT && it->struct_type.name.length >= 6 &&
+                                memcmp(it->struct_type.name.start, "Result", 6) == 0)
+                                fam = it;
+                        }
+                        init_type = fam ? fam : make_type(TYPE_RESULT);
+                        // Hand the resolved family to codegen on the ANNOTATION node.
+                        //
+                        // Codegen cannot read it off the initializer here, the way it can
+                        // for an Option: an Option family is fully determined by its
+                        // payload, which `Some(5)` knows, but a Result family also
+                        // depends on E - and a bare `Err(42)` or `Ok(P{..})` has no idea
+                        // what E is, so it resolves to ResultInt / ResultP while the
+                        // annotation says ResultInt_int / ResultP_E. Declaring the
+                        // variable from the initializer therefore produced
+                        //
+                        //   error: passing 'ResultInt' to parameter of incompatible type
+                        //          'ResultInt_int'
+                        //
+                        // because the METHODS were resolved from the annotation. For a
+                        // non-string E the annotation is the authority, and this is the
+                        // only place that knows what it resolved to. Nothing else in the
+                        // tree reads a type-annotation node's expr_type.
+                        if (fam) stmt->var.type->expr_type = fam;
                     } else if (find_struct_definition(type_name)) {
                         // Generic STRUCT annotation: `b: Box<int> = Box{val: 7}`.
                         // This fell through to check_expr, which read the
@@ -5800,7 +7118,10 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
             // array_get_int regardless of element type (string elements arrived
             // as NULL, float elements truncated) - and never marked the arg
             // identifiers used, so the arrays were falsely warned "unused".
-            if (stmt->spawn.call) check_expr(stmt->spawn.call, scope);
+            if (stmt->spawn.call) {
+                reject_spawned_closure(stmt->spawn.call, stmt->spawn.line);
+                check_expr(stmt->spawn.call, scope);
+            }
             break;
         case STMT_RETURN:
             if (stmt->ret.value) {
@@ -6365,7 +7686,25 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                     
                     fn_type->fn_type.param_types[j] = param_type;
                 }
-                fn_type->fn_type.return_type = builtin_int; // Simplified
+                // An impl method's return type used to be the placeholder
+                // `builtin_int` ("// Simplified"), so `-> int` worked by accident and
+                // every return type whose VALUE has its own methods did not:
+                //
+                //   impl P { fn maybe(self) -> int? { return Some(self.x) } }
+                //   p.maybe().is_some()
+                //   -> wyn check: no errors
+                //      error: returning 'OptionInt' from a function with incompatible
+                //             result type 'long long'
+                //      error: call to undeclared function 'P_is_some'
+                //
+                // `-> string`/`float`/`bool`/`Struct` happened to work because codegen
+                // resolves those elsewhere and nothing consulted this type; Option,
+                // Result and `[T]` all broke, because calling a method ON the result
+                // needs it. A free function with the identical signature always worked.
+                {
+                    Type* rt = wyn_declared_return_type(method->return_type);
+                    fn_type->fn_type.return_type = rt ? rt : builtin_int;
+                }
                 
                 // Register as extension method: Type_method
                 char* ext_name = malloc(stmt->impl.type_name.length + 1 + method->name.length + 1);
@@ -7744,7 +9083,14 @@ void check_program(Program* prog) {
         file_exists_type->fn_type.param_count = 1;
         file_exists_type->fn_type.param_types = malloc(sizeof(Type*) * 1);
         file_exists_type->fn_type.param_types[0] = builtin_string;
-        file_exists_type->fn_type.return_type = builtin_int;
+        // `bool`, agreeing with the File_exists entries in checker_builtins.c and
+        // types.c and with wyn_runtime.h's `bool File_exists(const char*)`. This block
+        // is a THIRD registry - it registers the `::` spellings by hand, with their own
+        // return types - so while this said int, `File::exists(".")` printed `1` and
+        // `File.exists(".")` printed `true`. One function, four places that have an
+        // opinion about its type. Fixing the three predicates here; the duplicate
+        // registry itself is filed, not refactored in this branch.
+        file_exists_type->fn_type.return_type = builtin_bool;
         add_symbol(global_scope, file_exists_tok, file_exists_type, false);
         
         Token file_delete_tok = {TOKEN_IDENT, "File::delete", 12, 0};
@@ -7771,7 +9117,7 @@ void check_program(Program* prog) {
         file_is_file_type->fn_type.param_count = 1;
         file_is_file_type->fn_type.param_types = malloc(sizeof(Type*) * 1);
         file_is_file_type->fn_type.param_types[0] = builtin_string;
-        file_is_file_type->fn_type.return_type = builtin_int;
+        file_is_file_type->fn_type.return_type = builtin_bool;
         add_symbol(global_scope, file_is_file_tok, file_is_file_type, false);
         
         Token file_is_dir_tok = {TOKEN_IDENT, "File::is_dir", 12, 0};
@@ -7779,7 +9125,7 @@ void check_program(Program* prog) {
         file_is_dir_type->fn_type.param_count = 1;
         file_is_dir_type->fn_type.param_types = malloc(sizeof(Type*) * 1);
         file_is_dir_type->fn_type.param_types[0] = builtin_string;
-        file_is_dir_type->fn_type.return_type = builtin_int;
+        file_is_dir_type->fn_type.return_type = builtin_bool;
         add_symbol(global_scope, file_is_dir_tok, file_is_dir_type, false);
         
         Token file_get_cwd_tok = {TOKEN_IDENT, "File::get_cwd", 13, 0};
@@ -8405,67 +9751,8 @@ void check_program(Program* prog) {
                             Symbol* sym = find_symbol(global_scope, concrete);
                             fn_type->fn_type.return_type = sym ? sym->type : builtin_int;
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
-                            // Resolve Result<int, string> -> ResultInt, Result<string, string> -> ResultString
-                            Token concrete = {TOKEN_IDENT, "ResultInt", 9, 0};
-                            Type* struct_res = NULL;
-                            if (fn->return_type->call.arg_count > 0 &&
-                                fn->return_type->call.args[0]->type == EXPR_IDENT) {
-                                Token inner = fn->return_type->call.args[0]->token;
-                                // Resolve E once, up front: it decides whether a PRIMITIVE
-                                // ok payload may use the builtin family at all. A primitive
-                                // ok with a non-string E must get its own monomorphic family
-                                // — the builtin's err_value is hardcoded `const char*`, so
-                                // reusing it silently discards E (uncompilable C for a struct
-                                // E, a segfault for a scalar E).
-                                Type* err_t = NULL;
-                                if (fn->return_type->call.arg_count > 1 &&
-                                    fn->return_type->call.args[1]->type == EXPR_IDENT) {
-                                    Token en = fn->return_type->call.args[1]->token;
-                                    if (en.length == 6 && memcmp(en.start, "string", 6) == 0) err_t = builtin_string;
-                                    else if (en.length == 3 && memcmp(en.start, "int", 3) == 0) err_t = builtin_int;
-                                    else if (en.length == 5 && memcmp(en.start, "float", 5) == 0) err_t = builtin_float;
-                                    else if (en.length == 4 && memcmp(en.start, "bool", 4) == 0) err_t = builtin_bool;
-                                    else {
-                                        Symbol* es = find_symbol(global_scope, en);
-                                        if (es && es->type) err_t = es->type;
-                                    }
-                                }
-                                int err_is_str = (!err_t || err_t->kind == TYPE_STRING);
-                                Type* prim_ok = NULL;
-                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0) {
-                                    concrete = (Token){TOKEN_IDENT, "ResultString", 12, 0};
-                                    prim_ok = builtin_string;
-                                } else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0) {
-                                    concrete = (Token){TOKEN_IDENT, "ResultFloat", 11, 0};
-                                    prim_ok = builtin_float;
-                                } else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0) {
-                                    concrete = (Token){TOKEN_IDENT, "ResultBool", 10, 0};
-                                    prim_ok = builtin_bool;
-                                } else if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0) {
-                                    prim_ok = builtin_int;   // `concrete` already ResultInt
-                                }
-                                if (prim_ok) {
-                                    // Primitive ok: builtin family for a string E (unchanged),
-                                    // own `Result<Tag>_<ErrTag>` family otherwise.
-                                    if (!err_is_str)
-                                        struct_res = register_result_struct_family_e(prim_ok, err_t);
-                                } else {
-                                    // `Result<Struct, E>` - resolve the user struct and
-                                    // make its monomorphic Result<Struct, E> family the
-                                    // signature type (mirrors the `-> Struct?` path). The
-                                    // error type E is resolved too (string/scalar/struct)
-                                    // so the family carries the real err C type.
-                                    Symbol* st = find_symbol(global_scope, inner);
-                                    if (st && st->type && st->type->kind == TYPE_STRUCT)
-                                        struct_res = register_result_struct_family_e(st->type, err_t);
-                                }
-                            }
-                            if (struct_res) {
-                                fn_type->fn_type.return_type = struct_res;
-                            } else {
-                                Symbol* sym = find_symbol(global_scope, concrete);
-                                fn_type->fn_type.return_type = sym ? sym->type : builtin_int;
-                            }
+                            Type* rt = wyn_result_annotation_type(fn->return_type);
+                            fn_type->fn_type.return_type = rt ? rt : builtin_int;
                         }
                     }
                 } else if (fn->return_type->type == EXPR_OPTIONAL_TYPE) {
@@ -9022,6 +10309,7 @@ bool types_equal(Type* a, Type* b) {
         case TYPE_MAP:
         case TYPE_OPTIONAL:
         case TYPE_UNION:
+        case TYPE_JSON:
             // For now, just compare kinds - more detailed comparison can be added later
             return true;
         default:
@@ -9045,6 +10333,11 @@ const char* type_to_string(Type* type) {
         case TYPE_MAP: return "map";
         case TYPE_OPTIONAL: return "optional";
         case TYPE_UNION: return "union";
+        // Without this a Json argument mismatch read "Expected: unknown (unknown)",
+        // which names nothing the programmer wrote. (TYPE_SET and TYPE_CHANNEL are
+        // still missing here; same one-line shape, logged rather than fixed in a
+        // JSON change.)
+        case TYPE_JSON: return "json";
         default: return "unknown";
     }
 }

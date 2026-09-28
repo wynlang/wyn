@@ -1,0 +1,92 @@
+// Regression: `r: Result<T, E> = ...` on a LOCAL threw both payload types away, so the
+// declaration was rejected with a type nothing could be compared against:
+//
+//   r: Result<int, string> = Ok(5)
+//   Error: Type mismatch  Expected: unknown (unknown)  Got: struct (struct)
+//
+// The checker's generic-annotation branch answered `make_type(TYPE_RESULT)` - "a result
+// of nothing in particular" - while `fn f() -> Result<int,string>` had always worked,
+// because only the return-type path knew how to resolve the annotation. Both spellings
+// now go through the one authority (wyn_result_annotation_type).
+//
+// THE PART WORTH KEEPING A TEST FOR: for a non-string E, the ANNOTATION is the authority
+// and the initializer is NOT. A Result family depends on E as well as the ok payload, and
+// a bare `Err(42)` or `Ok(P{..})` has no idea what E is - it resolves to ResultInt /
+// ResultP where the annotation says ResultInt_int / ResultP_E. Declaring the variable
+// from the initializer (which is what the Option case can safely do, since an Option
+// family is fully determined by its payload) produced:
+//
+//   error: passing 'ResultInt' to parameter of incompatible type 'ResultInt_int'
+//
+// because the METHOD calls were resolved from the annotation. The non-string-E rows below
+// are the ones that catch that.
+//
+// EXPECT: true
+// EXPECT: 5
+// EXPECT: true
+// EXPECT: 9
+// EXPECT: hi
+// EXPECT: 1.5
+// EXPECT: true
+// EXPECT: 7
+// EXPECT: 8
+// EXPECT: Ok(5)
+// EXPECT: true
+// EXPECT: 1
+// EXPECT: 2
+// EXPECT: true
+// EXPECT: 5
+// EXPECT: 5
+
+struct P { x: int }
+struct E { code: int }
+
+fn from_fn() -> Result<int, string> { return Ok(5) }
+
+fn main() {
+    // The core case and its payload types - each round-trips a real VALUE, because a
+    // clean compile alone would not prove the family is right.
+    a: Result<int, string> = Ok(5)
+    print(a.is_ok())
+    print(a.unwrap())
+
+    b: Result<int, string> = Err("bad")
+    print(b.is_err())
+    print(b.unwrap_or(9))
+
+    s: Result<string, string> = Ok("hi")
+    print(s.unwrap())
+    f: Result<float, string> = Ok(1.5)
+    print(f.unwrap())
+    bo: Result<bool, string> = Ok(true)
+    print(bo.unwrap())
+
+    // match needs the family detected at the declaration.
+    m: Result<int, string> = Ok(7)
+    y = match m { Ok(v) => v, Err(e) => -1 }
+    print(y)
+
+    // A struct ok payload.
+    sp: Result<P, string> = Ok(P { x: 8 })
+    print(sp.unwrap().x)
+
+    // Printing must agree with every other renderer.
+    pr: Result<int, string> = Ok(5)
+    print(pr)
+
+    // NON-STRING E. The initializer cannot know E, so these only work if the annotation
+    // is what the declaration is built from.
+    ei: Result<int, int> = Err(42)
+    print(ei.is_err())
+    eio: Result<int, int> = Ok(1)
+    print(eio.unwrap())
+    es: Result<P, E> = Ok(P { x: 2 })
+    print(es.unwrap().x)
+    ese: Result<P, E> = Err(E { code: 5 })
+    print(ese.is_err())
+
+    // No-regression: the routes that always worked must still work.
+    print(from_fn().unwrap())
+    inf = Ok(5)
+    print(inf.unwrap())
+}

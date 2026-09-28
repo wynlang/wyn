@@ -76,7 +76,7 @@ src/
 
 ## What to Work On
 
-Check [TASKS.md](../internal-docs/TASKS.md) for the current roadmap, or look for issues labeled `good first issue` on GitHub.
+Look for issues labeled `good first issue` on GitHub, or open one describing what you want to work on.
 
 ## Reporting Bugs
 

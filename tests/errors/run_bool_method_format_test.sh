@@ -20,9 +20,19 @@
 # one, and it printed a C-ism into user output. Same class of store/load disagreement
 # as the codegen type-selection defects: two sites decide a type and disagree.
 #
-# The fix casts at the emit site - `(bool)arr_contains(...)` - which is exactly what the
-# comparison operators already do (see _is_bool_op in codegen_expr.c). It changes the
-# TYPE the C expression has, not the value, so truthiness in conditions is unaffected.
+# The original fix cast at the emit site - `(bool)arr_contains(...)` - which is exactly
+# what the comparison operators already do (see _is_bool_op in codegen_expr.c). It
+# changes the TYPE the C expression has, not the value, so truthiness in conditions is
+# unaffected.
+#
+# 2026-09 (V-30): those four hand-written casts are GONE, and this file now tests the
+# general rule instead. Casting per spelling is what left fifteen other bool spellings
+# printing `1` - `"1.5".is_numeric()`, `3.is_odd()`, `Json.is_valid(h)`, `Random::bool()`
+# and the rest - so the rule moved to one place, cg_expr_is_bool_typed() in
+# codegen_expr.c, keyed on the type the checker already resolved. Removing the four
+# casts changed nothing in this file or in run_bool_in_print_test.sh, which is how the
+# authority was shown to subsume them rather than sit beside them. Keep BOTH gates: this
+# one pins the shapes the 2026-08 report named, in the words it named them.
 set -uo pipefail
 WYN="${WYN:-./wyn}"
 WYN_ABS="$(cd "$(dirname "$WYN")" && pwd)/$(basename "$WYN")"

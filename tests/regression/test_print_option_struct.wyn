@@ -1,0 +1,75 @@
+// Regression: the MONOMORPHIC Option families had no renderer, so printing an
+// Option whose payload is a user struct, or another Option, failed to build even
+// after the eight builtin families got one:
+//
+//   print(Some(P { x: 1 }))   -> "passing 'OptionP' to parameter of
+//   print(Some(Some(1)))         incompatible type 'long long'"
+//
+// and a struct with an Option FIELD rendered a placeholder that named nothing:
+//
+//   S { a: 1, b: <?> }        for  struct S { a: int, b: int? }
+//
+// Cause: Option<Struct> / Option<Option<T>> are emitted per-program (they name a
+// user type, so a shared runtime header cannot declare them) and only the seven
+// members were emitted - never a _to_string. The builtin families' renderers
+// live in wyn_runtime.h and could not cover these.
+//
+// The `b: <?>` case was the more misleading half: it exited 0 and looked like a
+// deliberate redaction rather than a missing feature.
+//
+// EXPECT: Some(P { x: 1, y: 2.5 })
+// EXPECT: Some(P { x: 1, y: 2.5 })
+// EXPECT: Some(P { x: 1, y: 2.5 })
+// EXPECT: Some(P { x: 3, y: 0.5 })
+// EXPECT: none
+// EXPECT: Some(Some(1))
+// EXPECT: Some(Some(1))
+// EXPECT: Some(Some(Some(7)))
+// EXPECT: Some(Some(P { x: 4, y: 0.0 }))
+// EXPECT: S { a: 1, b: Some(2) }
+// EXPECT: S { a: 3, b: none }
+// EXPECT: T { name: Some("x"), score: Some(1.5), ok: Some(true) }
+// EXPECT: U { p: Some(P { x: 9, y: 0.25 }) }
+
+struct P { x: int, y: float }
+struct S { a: int, b: int? }
+struct T { name: string?, score: float?, ok: bool? }
+struct U { p: P? }
+
+fn mk(n: int) -> P? { if n > 0 { return Some(P { x: n, y: 0.5 }) } return none }
+
+fn main() {
+    // A struct payload, all three spellings - they must agree byte for byte.
+    o = Some(P { x: 1, y: 2.5 })
+    print(o)
+    println(o)
+    print("${o}")
+
+    // Through a function return, both variants: the payload renders, and the
+    // empty case still says `none` rather than `Some(<garbage>)`.
+    print(mk(3))
+    print(mk(-1))
+
+    // Nested Options. The outer family's payload is the INNER family, so this
+    // only works if the renderer recurses through whatever the payload is.
+    n = Some(Some(1))
+    print(n)
+    println(n)
+    print(Some(Some(Some(7))))
+    print(Some(Some(P { x: 4, y: 0.0 })))
+
+    // An Option FIELD inside a printed struct, present and absent.
+    s = S { a: 1, b: Some(2) }
+    print(s)
+    e = S { a: 3, b: none }
+    print(e)
+
+    // Every payload type as a field, so a field cannot silently render as an int.
+    t = T { name: Some("x"), score: Some(1.5), ok: Some(true) }
+    print(t)
+
+    // A struct-payload Option as a field: the field renderer calls the family
+    // renderer, which calls the payload struct's own helper.
+    u = U { p: Some(P { x: 9, y: 0.25 }) }
+    print(u)
+}

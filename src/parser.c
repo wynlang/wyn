@@ -440,6 +440,11 @@ static Expr* primary() {
     if (match(TOKEN_SPAWN)) {
         Expr* expr = alloc_expr();
         expr->type = EXPR_SPAWN;
+        // Keep the `spawn` keyword token, the same way EXPR_CHANNEL keeps its own:
+        // the checker rejects `spawn <closure>` and the spawned expression may be a
+        // lambda, whose token is all-zero, so without this the diagnostic has no
+        // line to report.
+        expr->token = parser.previous;
         expr->spawn.call = call();  // Parse call expression
         return expr;
     }
@@ -530,7 +535,18 @@ static Expr* primary() {
             Expr* expr = alloc_expr();
             expr->type = EXPR_STRING_INTERP;
             expr->token = str_token;
-            
+
+            // The FIRST line of this literal. make_token() stamps a token with the
+            // line the lexer had reached AFTER scanning it, so a """ literal - or a
+            // regular one whose `${}` contains a newline - is stamped with its LAST
+            // line. Subtract the newlines the literal itself contains to recover the
+            // line it opened on; each interpolation below then adds the newlines that
+            // precede it inside the literal. (An escape sequence `\n` is two source
+            // characters, not a newline, so it is correctly not counted.)
+            int str_first_line = str_token.line;
+            for (int i = 0; i < str_token.length; i++)
+                if (str_token.start[i] == '\n') str_first_line--;
+
             // Parse interpolation expressions
             expr->string_interp.parts = malloc(sizeof(char*) * 64);
             expr->string_interp.expressions = malloc(sizeof(Expr*) * 64);
@@ -582,13 +598,21 @@ static Expr* primary() {
                         expr_str[expr_len + 1] = '\0';
                         
                         expr->string_interp.parts[expr->string_interp.count] = NULL;
-                        
+
+                        // Where this `${` actually is in the FILE, so the sub-parse's
+                        // tokens carry real positions instead of restarting at line 1.
+                        int interp_line = str_first_line;
+                        for (int k = 0; k < expr_start; k++)
+                            if (str[k] == '\n') interp_line++;
+
                         // Parse the expression properly using the real parser
                         extern void save_lexer_state();
                         extern void restore_lexer_state();
+                        extern void lexer_set_line(int line);
                         save_lexer_state();
                         save_parser_state();
                         init_lexer(expr_str);
+                        lexer_set_line(interp_line);
                         advance(); // prime the parser
                         Expr* parsed_expr = expression();
                         // Anything left after the expression is unsupported
@@ -613,7 +637,7 @@ static Expr* primary() {
                         if (interp_sub_error) parser.had_error = true;
                         if (interp_leftover) {
                             fprintf(stderr, "Error at line %d: Unsupported syntax in string interpolation: '${%.*s}'\n",
-                                    str_token.line, expr_len, expr_str);
+                                    interp_line, expr_len, expr_str);
                             if (leftover_is_spec) {
                                 fprintf(stderr, "  \033[34mHelp:\033[0m Format specs (:.2 etc.) are not supported yet.\n");
                                 fprintf(stderr, "        To round a float, use Math.round(x * 100.0) / 100.0\n");
@@ -751,6 +775,11 @@ static Expr* primary() {
 
             Expr* expr = alloc_expr();
             expr->type = EXPR_STRUCT_INIT;
+            // alloc_expr() callocs, so an unset token means line 0 - which is what
+            // `f(S { n: 1 })` reported ("Type mismatch at line 0:0"), and why the
+            // map-literal checker had to fall back to the key's line. The type name
+            // is this node's position.
+            expr->token = name;
             expr->struct_init.type_name = name;
             int _si_cap = 16;
             expr->struct_init.field_names = malloc(sizeof(Token) * _si_cap);
@@ -1208,6 +1237,7 @@ static Expr* primary() {
     if (match(TOKEN_PIPE)) {
         Expr* lambda_expr = alloc_expr();
         lambda_expr->type = EXPR_LAMBDA;
+        lambda_expr->token = parser.previous;  // the `|` - see EXPR_STRUCT_INIT above
 
         // Parse parameters
         lambda_expr->lambda.param_count = 0;
@@ -1310,7 +1340,8 @@ static Expr* primary() {
     if (match(TOKEN_FN)) {
         Expr* lambda_expr = alloc_expr();
         lambda_expr->type = EXPR_LAMBDA;
-        
+        lambda_expr->token = parser.previous;  // the `fn`
+
         expect(TOKEN_LPAREN, "Expected '(' after 'fn'");
 
         // Parse parameters
@@ -1340,12 +1371,49 @@ static Expr* primary() {
         
         expect(TOKEN_RPAREN, "Expected ')' after lambda parameters");
         
-        // Parse optional return type annotation
+        // Parse optional return type annotation.
+        //
+        // This consumed exactly ONE identifier, so any return type spelled with more than
+        // a bare name left tokens behind and the very next check reported
+        // "Expected '=>' or '{' after lambda signature" - pointing at the body, for a
+        // fault in the signature:
+        //
+        //   fn() -> int?              consumed `int`, left `?`
+        //   fn(x: int) -> [int]       consumed nothing, `[` is not an identifier
+        //   fn() -> Result<int, str>  consumed `Result`, left `<...`
+        //
+        // The first of those makes `Option.or_else`/`and_then` unwritable with a lambda at
+        // all, since they take a function returning an Option.
+        //
+        // Deliberately NOT parse_type(): line 1253's comment records that it consumes `|`
+        // for unions, and here the token after the type is the body's `{` or `=>`, which
+        // this must not swallow. So this skips the type's SHAPE and nothing beyond it - the
+        // annotation is discarded either way (the lambda's type comes from its body and
+        // from context), so shape is all that is needed.
         if (match(TOKEN_ARROW)) {
-            // Skip return type annotation for now (simplified)
-            if (check(TOKEN_IDENT)) {
+            if (check(TOKEN_LBRACKET)) {
+                // [T] or [[T]] - balanced, so a nested array type is consumed whole.
+                int depth = 0;
+                do {
+                    if (check(TOKEN_LBRACKET)) depth++;
+                    else if (check(TOKEN_RBRACKET)) depth--;
+                    advance();
+                } while (depth > 0 && !check(TOKEN_EOF));
+            } else if (check(TOKEN_IDENT)) {
                 advance();
+                // Generic arguments: Result<int, string>, Option<[int]>. Balanced on the
+                // angle brackets for the same reason.
+                if (check(TOKEN_LT)) {
+                    int depth = 0;
+                    do {
+                        if (check(TOKEN_LT)) depth++;
+                        else if (check(TOKEN_GT)) depth--;
+                        advance();
+                    } while (depth > 0 && !check(TOKEN_EOF));
+                }
             }
+            // The `?` of an optional type, after either shape above.
+            if (check(TOKEN_QUESTION)) advance();
         }
         
         // Support both => and { } syntax
@@ -1434,6 +1502,7 @@ static Expr* primary() {
         Token lam_params[16];
         Expr* lam_param_types[16] = {0};   // S3: keep annotations ((x: float) => ...)
         int lam_param_count = 0;
+        Token lam_open = parser.current;   // the `(` - this lambda's position
         advance(); // consume '('
         bool params_ok = true;
         if (!check(TOKEN_RPAREN)) {
@@ -1456,6 +1525,7 @@ static Expr* primary() {
             advance(); // consume '=>'
             Expr* lambda_expr = alloc_expr();
             lambda_expr->type = EXPR_LAMBDA;
+            lambda_expr->token = lam_open;
             lambda_expr->lambda.param_count = lam_param_count;
             lambda_expr->lambda.params = malloc(sizeof(Token) * (lam_param_count > 0 ? lam_param_count : 1));
             lambda_expr->lambda.param_types = calloc(lam_param_count > 0 ? lam_param_count : 1, sizeof(Expr*));
@@ -2438,6 +2508,7 @@ static Stmt* statement_impl() {
     if (match(TOKEN_SPAWN)) {
         Stmt* stmt = alloc_stmt();
         stmt->type = STMT_SPAWN;
+        stmt->spawn.line = parser.previous.line;
         stmt->spawn.call = expression();
         match(TOKEN_SEMI);
         return stmt;

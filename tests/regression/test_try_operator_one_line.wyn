@@ -57,7 +57,7 @@ fn main() {
 // EXPECT: 50
 // EXPECT: 51
 // EXPECT: 50
-// EXPECT: 1
+// EXPECT: true
 // EXPECT: 10
 // EXPECT: 7
 // EXPECT: 42

@@ -1,0 +1,65 @@
+// Regression: print/println of a struct went through an inline field-by-field
+// printf in codegen that cast every non-scalar field to (long long). So:
+//
+//   print(P{x:1})                       check clean -> BUILD FAILED
+//   println(B{p: P{...}, tags: [1,2]})  check clean -> BUILD FAILED
+//   "${b}"                              rendered correctly
+//
+// i.e. the value a program could interpolate was one it could not print. Both now
+// route through the same __wyn_str_<Name> helper interpolation uses, which handles
+// nested structs, arrays and floats. The checker registers struct arguments to
+// print/println so the helper is emitted for them (it previously only tracked
+// interpolation sites).
+//
+// The three spellings must agree byte for byte - that is the actual invariant, and
+// it is why every struct below is printed all three ways.
+//
+// EXPECT: P { x: 1, y: 2.5 }
+// EXPECT: P { x: 1, y: 2.5 }
+// EXPECT: P { x: 1, y: 2.5 }
+// EXPECT: B { label: "hi", p: P { x: 1, y: 2.5 }, tags: [1, 2, 3] }
+// EXPECT: B { label: "hi", p: P { x: 1, y: 2.5 }, tags: [1, 2, 3] }
+// EXPECT: B { label: "hi", p: P { x: 1, y: 2.5 }, tags: [1, 2, 3] }
+// EXPECT: Flags { on: true, off: false }
+// EXPECT: Flags { on: true, off: false }
+// EXPECT: Flags { on: true, off: false }
+// EXPECT: Empty { }
+// EXPECT: Empty { }
+// EXPECT: v= P { x: 1, y: 2.5 } 7
+// EXPECT: P { x: 9, y: 0.5 }
+
+struct P { x: int, y: float }
+struct B { label: string, p: P, tags: [int] }
+struct Flags { on: bool, off: bool }
+struct Empty { }
+
+fn mk(n: int) -> P { return P { x: n, y: 0.5 } }
+
+fn main() {
+    p = P { x: 1, y: 2.5 }
+    print(p)
+    println(p)
+    print("${p}")
+
+    // Nested struct AND an array field - the shape that failed both ways before.
+    b = B { label: "hi", p: p, tags: [1, 2, 3] }
+    print(b)
+    println(b)
+    print("${b}")
+
+    // Bools must render true/false, not 1/0.
+    f = Flags { on: true, off: false }
+    print(f)
+    println(f)
+    print("${f}")
+
+    e = Empty { }
+    print(e)
+    println(e)
+
+    // A struct alongside other arguments still gets space separators.
+    print("v=", p, 7)
+
+    // A struct returned from a call, not held in a variable.
+    print(mk(9))
+}

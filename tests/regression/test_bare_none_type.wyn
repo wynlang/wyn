@@ -1,0 +1,106 @@
+// Regression: bare `none` was typed `int`, so every context that expected an Option
+// rejected it - including the most ordinary way to declare an empty optional:
+//
+//   o: int? = none            Type mismatch  Expected: struct, Got: int
+//   o = Some(5); o = none     Type mismatch in assignment to 'o'
+//                             Expected: OptionInt (struct), Got: int
+//   [Some(1), none]           Array elements must have consistent types
+//
+// Root cause: `none` reaches the checker two ways - as EXPR_NONE from the parser, and
+// as an EXPR_IDENT that the ident case rewrites into EXPR_NONE - and the two sites
+// answered DIFFERENTLY. The parser node got the OptionInt struct; the rewritten ident
+// hardcoded `builtin_int`. One node kind, two types, decided by nothing but how the
+// program had been spelled. Both now call one authority, wyn_none_type().
+//
+// #335 deliberately left the type as int when it fixed the OTHER half of this (the
+// ident spelling lowered to optional.c's `WynOptional* none(void)`, so `print(none)`
+// printed that function's ADDRESS), so that each fix could be attributed on its own.
+// This is that follow-up.
+//
+// OptionInt is only a DEFAULT - no-value carries no payload type - so the interesting
+// assertions below are the non-int payloads, which must take their family from the
+// annotation and round-trip a real value.
+//
+// EXPECT: true
+// EXPECT: 5
+// EXPECT: true
+// EXPECT: 2
+// EXPECT: 1
+// EXPECT: true
+// EXPECT: true
+// EXPECT: hi
+// EXPECT: true
+// EXPECT: 2.5
+// EXPECT: true
+// EXPECT: true
+// EXPECT: true
+// EXPECT: 4
+// EXPECT: none
+// EXPECT: none
+// EXPECT: true
+// EXPECT: 42
+
+struct P { x: int }
+
+fn ret_none() -> int? { return none }
+
+// The ident-rewrite guard this fix touches is "rewrite `none` ONLY when no local of
+// that name is in scope". A local named `none` must still win.
+fn shadowed() -> int {
+    none = 42
+    return none
+}
+
+fn main() {
+    // Declare empty, then fill - the case that made this worth fixing.
+    o: int? = none
+    print(o.is_none())
+    o = Some(5)
+    print(o.unwrap())
+
+    // Reassign an inferred Option back to no-value.
+    r = Some(5)
+    r = none
+    print(r.is_none())
+
+    // A mixed array literal: `none` must unify with the Some elements, and both
+    // elements must still hold their real values.
+    a = [Some(1), none]
+    print(a.len())
+    print(a[0].unwrap())
+    print(a[1].is_none())
+
+    // A non-int payload must take its family from the annotation, not the default.
+    s: string? = none
+    print(s.is_none())
+    s = Some("hi")
+    print(s.unwrap())
+
+    f: float? = none
+    print(f.is_none())
+    f = Some(2.5)
+    print(f.unwrap())
+
+    b: bool? = none
+    print(b.is_none())
+    b = Some(true)
+    print(b.unwrap())
+
+    // A struct payload, same rule.
+    sp: P? = none
+    print(sp.is_none())
+    sp = Some(P { x: 4 })
+    print(sp.unwrap().x)
+
+    // No-regression: printing no-value prints `none`, not an address (#335), for the
+    // bare literal and for a typed empty optional.
+    print(none)
+    e: string? = none
+    print(e)
+
+    // No-regression: `return none` from an Option-returning fn still works.
+    print(ret_none().is_none())
+
+    // No-regression: a local may still be called `none`.
+    print(shadowed())
+}

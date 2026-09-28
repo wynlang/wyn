@@ -1,0 +1,239 @@
+#!/bin/bash
+# Every method the registry ADVERTISES must be callable from Wyn.
+#
+# `src/types.c`'s `method_signatures[]` is what tells the checker "a `map` receiver has
+# an `is_empty` method returning bool". Nothing verified that the advertised method
+# could actually be CALLED, and three separate things went wrong behind that gap:
+#
+#   m = {"a": 1}   print(m.is_empty())    # `wyn check` PASSED, build died: the
+#                                         # lowering names wyn_hashmap_is_empty, a
+#                                         # symbol NO runtime source defines
+#   r.to_bytes() / m.entries() / s.to_array()   # advertised, then refused by the
+#                                               # checker itself - dead table rows
+#   var c: char = 97   c.is_uppercase()   # `char` IS `int` in Wyn (checker.c), so the
+#                                         # whole `char` receiver family is
+#                                         # unreachable by construction
+#
+# WHY THIS COMPILES A CALL RATHER THAN CHECKING THE SYMBOL TABLE. The obvious cheap
+# gate - cross-check each `out->c_function` against `nm runtime/libwyn_rt.a` - gives
+# WRONG ANSWERS in both directions. 19 registry names are absent from the archive, yet
+# `map.clear()` is one of them and works fine, because codegen has its own lowering that
+# takes precedence over the registry; while `int_to_int` resolves as a `static inline` in
+# a header. Only building and running a real call answers the question the user actually
+# has, so that is what this does.
+#
+# HOW IT STAYS HONEST. The pairs are read out of `types.c` AT RUN TIME, so a new registry
+# entry enrols itself in this gate automatically and cannot be added unnoticed. The
+# KNOWN_BROKEN list is checked for EXACTNESS: an entry that starts working FAILS the gate,
+# so the list cannot rot into a list of things nobody has looked at since.
+#
+# Scope: the arity-0 entries (121 of the 242), which are the ones that can be called
+# without inventing argument types. Arity 1-2 entries are NOT covered - `Option.map` and
+# `Option.filter` advertise combinators whose C symbols do not exist either, and they are
+# out of reach here for exactly the argument-type reason. (2026-09)
+set -uo pipefail
+WYN="${WYN:-./wyn}"
+WYNABS=$(cd "$(dirname "$WYN")" && pwd)/$(basename "$WYN")
+SRC_TYPES="$(dirname "$WYNABS")/src/types.c"
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+PASS=0; FAIL=0
+ok(){ echo "  ok    $1"; PASS=$((PASS+1)); }
+bad(){ echo "  FAIL  $1"; FAIL=$((FAIL+1)); }
+
+# receiver.method -> why it cannot be called today. Every entry here is a REGISTRY ROW
+# THAT LIES; the fix is either to implement the method or to delete the row.
+known_broken(){
+  case "$1" in
+    # EMPTY, and that is the point: every entry this list ever held has been resolved
+    # rather than tolerated.
+    #   map.is_empty      the function was written (wyn_hashmap_is_empty)
+    #   string.to_bytes   its dispatch had an EMPTY body and `bytes` carried the
+    #                     assignment twice - a botched edit; both spellings now lower
+    #   map.entries       no runtime function existed; the advertising row was removed
+    #   set.to_array      ditto
+    #   char.*  (8 rows)  unreachable by construction - `char` IS `int` in Wyn, so a
+    #                     char-typed value resolves against the int table and never
+    #                     reached a "char" row. The ten rows were removed; a single
+    #                     character is a 1-length string, which the string receiver
+    #                     already serves.
+    # Each removal was forced by the exactness half below, which fails on an entry that
+    # has started working - so this list cannot quietly become a place defects go to die.
+    *) return 1;;
+  esac
+}
+
+# A value of each receiver type. The string fixture is "42" on purpose: `.to_int()` and
+# friends are real, working methods that PANIC on a non-numeric string, and a fixture
+# that panics would be reported as a broken method.
+fixture(){
+  case "$1" in
+    string) echo 'r = "42"';;
+    int)    echo 'r = 5';;
+    float)  echo 'r = 1.5';;
+    bool)   echo 'r = true';;
+    char)   echo 'var r: char = 97';;
+    array)  echo 'r = [1, 2, 3]';;
+    map)    echo 'r = {"a": 1}';;
+    set)    echo 'r = {:"a"}';;
+    json)   echo 'r = Json.parse("{\"a\": 1}")';;
+    option) echo 'r = reg_opt()';;
+    result) echo 'r = reg_res()';;
+    *)      echo "";;
+  esac
+}
+
+# Read the authority. Emits "receiver method returntype" per arity-0 row, de-duplicated
+# (the table registers some rows twice - `map.contains` and `map.len` among them).
+python3 - "$SRC_TYPES" > "$TMP/pairs.txt" <<'PY'
+import re, sys
+src = open(sys.argv[1]).read()
+m = re.search(r'method_signatures\[\]\s*=\s*\{(.*?)\n\};', src, re.S)
+if not m:
+    sys.stderr.write("could not find method_signatures[] in types.c\n"); sys.exit(2)
+rows = re.findall(r'\{"([a-z_]+)",\s*"([a-zA-Z_0-9]+)",\s*"([^"]+)",\s*(\d+)\}', m.group(1))
+seen = set()
+for recv, meth, ret, arity in rows:
+    if arity == '0' and (recv, meth) not in seen:
+        seen.add((recv, meth))
+        print(recv, meth, ret)
+PY
+if [ ! -s "$TMP/pairs.txt" ]; then
+  echo "  FAIL  could not read method_signatures[] from $SRC_TYPES"
+  echo ""; echo "registry-reachable: 0 pass, 1 fail"; exit 1
+fi
+
+TOTAL=$(wc -l < "$TMP/pairs.txt" | tr -d ' ')
+RECEIVERS=$(cut -d' ' -f1 "$TMP/pairs.txt" | sort -u)
+
+# emit_one <file> <receiver> <method> <returntype>
+# A void method must not have its result bound, or the gate reports a fixture error as a
+# broken method.
+emit_one(){
+  { echo 'fn reg_opt() -> int? { return Some(1) }'
+    echo 'fn reg_res() -> Result<int, string> { return Ok(1) }'
+    echo 'fn main() {'
+    echo "  $(fixture "$2")"
+    if [ "$4" = "void" ]; then echo "  r.$3()"; else echo "  v = r.$3()"; fi
+    echo '  print("REACHED")'
+    echo '}'; } > "$1"
+}
+
+builds_and_runs(){   # <file> -> 0 if it printed REACHED, in the mode MODE names
+  if [ "$MODE" = "release" ]; then
+    "$WYNABS" run --release "$1" 2>&1 | grep -q "REACHED"
+  else
+    "$WYNABS" run "$1" 2>&1 | grep -q "REACHED"
+  fi
+}
+
+# BOTH MODES. `--release` emits wyn_runtime_slim.h instead of wyn_runtime.h, and that
+# header is maintained BY HAND - so a method can be perfectly callable in a debug build
+# and fail to compile in release, which is exactly what happened to `map.clear`,
+# `int.to_int`, `char.to_int`, `"p".exists()`, `"p".is_dir()` and `"p".is_file()`. A
+# debug-only sweep reported all six as fine. The existing release gate
+# (run_release_slim_registry_test.sh) enumerates the NAMESPACE registry, not method
+# spellings, which is why none of them were caught there either.
+for MODE in debug release; do
+echo "== mode: $MODE =="
+echo "-- every advertised arity-0 method is callable ($TOTAL rows, batched per receiver)"
+# One program per receiver keeps the green path to ~11 compiles instead of ~121. Each
+# method gets its OWN fresh receiver inside that program, so a mutating method cannot
+# change the answer for a later one. A failing batch falls back to per-method compiles,
+# so the report still names the exact method.
+for recv in $RECEIVERS; do
+  methods=$(awk -v r="$recv" '$1==r {print $2" "$3}' "$TMP/pairs.txt")
+  batch="$TMP/batch_${MODE}_$recv.wyn"
+  n=0
+  { echo 'fn reg_opt() -> int? { return Some(1) }'
+    echo 'fn reg_res() -> Result<int, string> { return Ok(1) }'
+    echo 'fn main() {'
+    while read -r meth ret; do
+      [ -z "$meth" ] && continue
+      known_broken "$recv.$meth" && continue
+      n=$((n+1))
+      echo "  $(fixture "$recv")" | sed "s/^  r =/  r$n =/; s/^  var r:/  var r$n:/"
+      if [ "$ret" = "void" ]; then echo "  r$n.$meth()"; else echo "  v$n = r$n.$meth()"; fi
+    done <<< "$methods"
+    echo '  print("REACHED")'
+    echo '}'; } > "$batch"
+
+  if [ "$n" -eq 0 ]; then
+    ok "[$MODE] $recv: all rows are on the known-broken list (nothing to call)"
+    continue
+  fi
+  if builds_and_runs "$batch"; then
+    ok "[$MODE] $recv: $n advertised methods all callable"
+  else
+    # Attribute the failure to individual methods.
+    while read -r meth ret; do
+      [ -z "$meth" ] && continue
+      known_broken "$recv.$meth" && continue
+      one="$TMP/one_${MODE}_$recv.$meth.wyn"
+      emit_one "$one" "$recv" "$meth" "$ret"
+      if ! builds_and_runs "$one"; then
+        relflag=""; [ "$MODE" = "release" ] && relflag="--release"
+        why=$("$WYNABS" run $relflag "$one" 2>&1 | grep -iE "^Error|Error at line|Unknown method|internal codegen" \
+              | head -1 | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-90)
+        bad "[$MODE] $recv.$meth is advertised by types.c but not callable :: ${why:-unknown}"
+      fi
+    done <<< "$methods"
+    # A batch can fail while every method passes alone (an interaction, not a dead row).
+    # Say so rather than reporting a clean sweep.
+    if [ "$FAIL" -eq 0 ]; then
+      bad "[$MODE] $recv: the batch program failed but every method builds alone - interaction bug"
+    fi
+  fi
+done
+
+echo "-- the known-broken list is EXACT (a fixed entry must be removed from it)"
+# Without this half the list becomes a place where defects go to be forgotten.
+while read -r recv meth ret; do
+  known_broken "$recv.$meth" || continue
+  one="$TMP/kb_${MODE}_$recv.$meth.wyn"
+  emit_one "$one" "$recv" "$meth" "$ret"
+  if builds_and_runs "$one"; then
+    bad "[$MODE] $recv.$meth now WORKS - delete it from known_broken() in this file"
+  else
+    ok "[$MODE] still broken, still listed: $recv.$meth"
+  fi
+done < "$TMP/pairs.txt"
+
+echo "-- arity-1 methods, hand-written because their argument types cannot be generated"
+# The sweep above can only reach arity-0 rows. `.any(f)` and `.all(f)` are the reason
+# that limit matters: both work in debug, BOTH failed under --release (wyn_arr_any /
+# wyn_arr_all were missing from the slim header), and they are exactly what the 2026-08
+# any/all work added - whose gate never ran --release. A fix with no gate is how that
+# recurs, so the predicate-taking methods this PR touched are pinned here explicitly
+# until the sweep grows an argument-type column and absorbs them.
+#
+# <label> <program-body> <expected-output>
+a1(){
+  f="$TMP/a1_${MODE}_$1.wyn"
+  { echo 'fn reg_nop() -> int { return 1 }'
+    echo 'fn main() {'; printf '%b\n' "$2"; echo '}'; } > "$f"
+  if [ "$MODE" = "release" ]; then got=$("$WYNABS" run --release "$f" 2>&1)
+  else got=$("$WYNABS" run "$f" 2>&1); fi
+  got=$(echo "$got" | grep -vE 'Compiled in|^Warning|unused variable' | sed 's/\x1b\[[0-9;]*m//g')
+  if [ "$got" = "$3" ]; then ok "[$MODE] $1"
+  else bad "[$MODE] $1 - got [$(echo "$got" | tr '\n' '|' | cut -c1-90)] want [$3]"; fi
+}
+a1 "array.any"      '  a = [1, 2, 3]\n  print(a.any(fn(x: int) -> bool { return x > 2 }))' 'true'
+a1 "array.any-none" '  a = [1, 2, 3]\n  print(a.any(fn(x: int) -> bool { return x > 9 }))' 'false'
+a1 "array.all"      '  a = [1, 2, 3]\n  print(a.all(fn(x: int) -> bool { return x > 0 }))' 'true'
+a1 "array.all-not"  '  a = [1, 2, 3]\n  print(a.all(fn(x: int) -> bool { return x > 2 }))' 'false'
+a1 "array.map"      '  a = [1, 2, 3]\n  b = a.map(fn(x: int) -> int { return x * 2 })\n  print(b.len())' '3'
+a1 "array.filter"   '  a = [1, 2, 3]\n  b = a.filter(fn(x: int) -> bool { return x > 1 })\n  print(b.len())' '2'
+a1 "array.contains" '  a = [1, 2, 3]\n  print(a.contains(2))' 'true'
+# `every` and `times` are the two that survived the .any/.all fix: both take a function,
+# so the generated sweep cannot reach them, and both compiled in debug while failing under
+# --release on a missing slim-header declaration. run_slim_header_parity_test.sh now
+# catches that class statically; these arms pin the behaviour.
+a1 "array.every"     '  a = [1, 2, 3]\n  print(a.every(fn(x: int) -> bool { return x > 0 }))' 'true'
+a1 "array.every-not" '  a = [1, 2, 3]\n  print(a.every(fn(x: int) -> bool { return x > 2 }))' 'false'
+a1 "int.times"       '  3.times(reg_nop)\n  print("ticked")' 'ticked'
+a1 "map.contains"   '  m = {"a": 1}\n  print(m.contains("a"))' 'true'
+a1 "set.contains"   '  s = {:"a"}\n  print(s.contains("a"))' 'true'
+
+done   # MODE
+
+echo ""; echo "registry-reachable: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]

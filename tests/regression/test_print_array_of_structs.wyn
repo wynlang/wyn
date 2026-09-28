@@ -1,0 +1,93 @@
+// Regression: an array of structs or Options printed one address per element.
+//
+//   print([P { x: 1 }, P { x: 2 }])   ->   [4339262272, 4339262288]
+//   print([Some(1), Some(2)])         ->   [4355744752, 4355744768]
+//
+// check-clean, exit 0. All three spellings agreed with each other, so nothing
+// looked odd until you read the numbers.
+//
+// Cause: a struct pushed into an array is heap-boxed as WYN_TYPE_STRUCT with NO
+// type name, so the runtime's element formatters have nothing to dispatch on -
+// they can only fall through to the integer case (the address) or, after the
+// nested-array fix, print the honest-but-empty `<struct>`. The element type is
+// known at the PRINT SITE, so the renderer has to be built there: codegen emits
+// one __wyn_arrstr_<T> per element type the checker saw printed, and it calls
+// __wyn_str_<T> for a user struct or <Family>_to_string for an Option.
+//
+// A second, narrower defect sat underneath: an ANNOTATED optional array had no
+// element type at all, because resolve_array_elem_annotation returned NULL for
+// `T?`. So `a: [int?]` printed pointers where `a = [g(1)]` printed values, and
+// `a[0]` on the annotated one did not even compile - while the identical
+// inferred array worked.
+//
+// EXPECT: [P { x: 1, y: 2.5 }, P { x: 3, y: 0.5 }]
+// EXPECT: [P { x: 1, y: 2.5 }, P { x: 3, y: 0.5 }]
+// EXPECT: [P { x: 1, y: 2.5 }, P { x: 3, y: 0.5 }]
+// EXPECT: [B { p: P { x: 1, y: 0.0 }, tags: [1, 2] }]
+// EXPECT: []
+// EXPECT: [Some(1), Some(2)]
+// EXPECT: [Some(1), Some(2)]
+// EXPECT: [Some(1), Some(2)]
+// EXPECT: [Some(1), Some(2)]
+// EXPECT: [Some(1), none]
+// EXPECT: [Some("hi"), none]
+// EXPECT: [Some(1.5)]
+// EXPECT: [Some(true)]
+// EXPECT: 1
+// EXPECT: [1, 2, 3]
+// EXPECT: ["a", "b"]
+// EXPECT: [true, false]
+// EXPECT: [1.5]
+
+struct P { x: int, y: float }
+struct B { p: P, tags: [int] }
+
+fn g(n: int) -> int? { if n > 0 { return Some(n) } return none }
+fn gs(n: int) -> string? { if n > 0 { return Some("hi") } return none }
+
+fn main() {
+    // A user struct element, all three spellings - they must agree byte for byte.
+    ps = [P { x: 1, y: 2.5 }, P { x: 3, y: 0.5 }]
+    print(ps)
+    println(ps)
+    print("${ps}")
+
+    // An element whose own fields include a nested struct AND an array, so the
+    // element renderer has to go through the full struct helper, not a shortcut.
+    print([B { p: P { x: 1, y: 0.0 }, tags: [1, 2] }])
+
+    // Empty stays empty - no stray element, no placeholder.
+    none_yet: [P] = []
+    print(none_yet)
+
+    // Option elements, ANNOTATED and INFERRED, must render the same. The
+    // annotated spelling is the one that used to print pointers.
+    ann: [int?] = [Some(1), Some(2)]
+    print(ann)
+    println(ann)
+    print("${ann}")
+    inferred = [Some(1), Some(2)]
+    print(inferred)
+
+    // A none among them renders none, not a zero and not an address.
+    print([g(1), g(-1)])
+    print([gs(1), gs(-1)])
+
+    // Every payload family as an element type.
+    fs: [float?] = [Some(1.5)]
+    print(fs)
+    bs: [bool?] = [Some(true)]
+    print(bs)
+
+    // Indexing an ANNOTATED optional array: this did not compile at all, because
+    // the annotation left the element type NULL.
+    first = ann[0]
+    print(first.unwrap_or(0))
+
+    // No-regression: element types the runtime CAN tag still take the generic
+    // formatter, which stays allocation-free for them.
+    print([1, 2, 3])
+    print(["a", "b"])
+    print([true, false])
+    print([1.5])
+}

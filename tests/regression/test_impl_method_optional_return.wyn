@@ -1,0 +1,94 @@
+// Regression: an `impl` method could not return an Option or a Result. The checker's
+// impl-method loop set the return type to the literal placeholder `builtin_int`
+// ("// Simplified"), and BOTH codegen emitters for impl methods hardcoded
+// `Option<T>` -> OptionInt / `Result<T,E>` -> ResultInt and did not know the `T?`
+// spelling at all:
+//
+//   impl P { fn maybe(self) -> int? { return Some(self.x) } }
+//   p.maybe().is_some()
+//   -> wyn check: no errors
+//      error: returning 'OptionInt' from a function with incompatible result type
+//             'long long'
+//      error: call to undeclared function 'P_is_some'
+//
+// `-> int` worked by accident (the placeholder was right). `-> string`/`float`/`bool`/
+// `Struct` worked because codegen resolves those elsewhere and nothing consulted the
+// checker's type. Option and Result broke, because calling a method ON the result needs
+// it - and a FREE function with the identical signature always worked.
+//
+// A non-int payload was wrong twice over: `-> Option<string>` returned an OptionString
+// from a function declared to return OptionInt.
+//
+// The two codegen copies were byte-identical chains that must name the same type or C
+// reports "conflicting types for '<fn>'"; they are now one call.
+//
+// EXPECT: true
+// EXPECT: 3
+// EXPECT: true
+// EXPECT: n
+// EXPECT: true
+// EXPECT: hi
+// EXPECT: 2.5
+// EXPECT: none
+// EXPECT: true
+// EXPECT: 5
+// EXPECT: z
+// EXPECT: true
+// EXPECT: 4
+// EXPECT: hello
+// EXPECT: 1.5
+// EXPECT: true
+// EXPECT: 9
+// EXPECT: true
+
+struct Q { y: int }
+
+struct P { x: int }
+impl P {
+    // The `?` spelling - the one that fell through to "long long".
+    fn maybe(self) -> int? { return Some(self.x) }
+    fn name(self) -> string? { return Some("n") }
+    fn nothing(self) -> int? { return none }
+    // The generic spelling, with payloads that the hardcoded OptionInt got wrong.
+    fn gen(self) -> Option<int> { return Some(self.x) }
+    fn gstr(self) -> Option<string> { return Some("hi") }
+    fn gflt(self) -> Option<float> { return Some(2.5) }
+    // Result, likewise.
+    fn res(self) -> Result<int, string> { return Ok(5) }
+    fn rstr(self) -> Result<string, string> { return Ok("z") }
+    // Controls: these already worked and must keep working.
+    fn plain(self) -> int { return 4 }
+    fn greet(self) -> string { return "hello" }
+    fn half(self) -> float { return 1.5 }
+    fn ok(self) -> bool { return true }
+    fn q(self) -> Q { return Q { y: 9 } }
+}
+
+fn free_maybe(x: int) -> int? { return Some(x) }
+
+fn main() {
+    p = P { x: 3 }
+
+    print(p.maybe().is_some())
+    print(p.maybe().unwrap())
+    print(p.name().is_some())
+    print(p.name().unwrap())
+    print(p.gen().is_some())
+    print(p.gstr().unwrap())
+    print(p.gflt().unwrap())
+    // The none arm must render as none, not as an address or a 0.
+    print(p.nothing())
+
+    print(p.res().is_ok())
+    print(p.res().unwrap())
+    print(p.rstr().unwrap())
+
+    // Controls.
+    print(p.plain() == 4)
+    print(p.plain())
+    print(p.greet())
+    print(p.half())
+    print(p.ok())
+    print(p.q().y)
+    print(free_maybe(1).is_some())
+}
