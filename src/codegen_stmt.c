@@ -518,6 +518,53 @@ static void emit_line(Stmt* s) {
     }
 }
 
+// Is this call expression one that `spawn` can actually dispatch?
+//
+// It can only wrap a call whose callee is a plain identifier naming a USER
+// function, because dispatch needs a generated __spawn_wrapper_<fn> and those are
+// emitted per function name (codegen_lambda.c). A namespaced builtin such as
+// `Time.sleep(200)` lexes as ONE identifier containing "::", so a wrapper for it
+// would be spelled `__spawn_wrapper_Time::sleep` - invalid C - and a method call
+// has no single name to key on at all. Both currently fall back to a synchronous
+// call; see the tracked defect for that.
+//
+// Every place that decides "does this parallel-block branch become a spawn?" must
+// ask THIS function, and codegen_lambda.c's wrapper-collection scan must accept
+// exactly the same set. When the two disagree the program either silently runs
+// sequentially or fails to link against a wrapper nobody emitted.
+bool par_call_is_spawnable(Expr* call) {
+    extern const char* get_function_return_type(const char*);
+    if (!call || call->type != EXPR_CALL) return false;
+    if (!call->call.callee || call->call.callee->type != EXPR_IDENT) return false;
+    char fn[256];
+    token_to_cstr(fn, sizeof(fn), call->call.callee->token);
+    return get_function_return_type(fn) != NULL;
+}
+
+// The C type a parallel-block branch's value variable must have, derived from the
+// spawned function's Wyn return type. `slot` indexes per-block storage for struct
+// type names, which have to outlive this call.
+static const char* par_spawn_value_ctype(Expr* call, int slot) {
+    extern const char* get_function_return_type(const char*);
+    if (!call || call->type != EXPR_CALL ||
+        !call->call.callee || call->call.callee->type != EXPR_IDENT) return "long long";
+    char fn[256];
+    token_to_cstr(fn, sizeof(fn), call->call.callee->token);
+    const char* rt = get_function_return_type(fn);
+    if (!rt) return "long long";
+    if (strcmp(rt, "string") == 0) return "const char*";
+    if (strcmp(rt, "float") == 0) return "double";
+    if (strcmp(rt, "bool") == 0) return "bool";
+    if (strcmp(rt, "int") == 0) return "long long";
+    // Struct return: the wrapper heap-boxes the result; the value var is declared
+    // as the struct type and the box is dereferenced at the join. (It used to stay
+    // long long - the pointer leaked into the value var as an int.)
+    static char _par_st[64][64];
+    if (slot < 0 || slot >= 64) return "long long";
+    snprintf(_par_st[slot], 64, "%s", rt);
+    return _par_st[slot];
+}
+
 void codegen_stmt(Stmt* stmt) {
     if (!stmt) return;
     emit_line(stmt);
@@ -2911,6 +2958,53 @@ void codegen_stmt(Stmt* stmt) {
                 // Wrap its call in an EXPR_SPAWN and reuse the joinable expression
                 // lowering, capturing the future with no value var (empty name →
                 // joined for the barrier only).
+                // `x = f()` where x was declared ABOVE the block. Assignment is an
+                // EXPRESSION in this AST, so this arrives as STMT_EXPR/EXPR_ASSIGN
+                // and used to fall through to the sequential else-branch below -
+                // which meant the shape the documentation's own parallel{} example
+                // uses (declare outside, assign inside) did not overlap at all.
+                // Measured before this change: two branches of equal-cost work took
+                // 61ms against a 30ms single-branch baseline, i.e. exactly serial.
+                //
+                // Spawns the call and joins into the EXISTING variable, so unlike
+                // the `var x = f()` case no declaration is emitted - x already
+                // exists in the enclosing scope and must stay the same variable.
+                if (s->type == STMT_EXPR && s->expr && s->expr->type == EXPR_ASSIGN &&
+                    par_call_is_spawnable(s->expr->assign.value) &&
+                    joined_count < 64 && implicit_spawn_count < 64) {
+                    Expr* isp = &implicit_spawns[implicit_spawn_count++];
+                    isp->type = EXPR_SPAWN;
+                    isp->spawn.call = s->expr->assign.value;
+                    isp->_codegen_temp_id = -1;
+                    char vn[128]; token_to_cstr(vn, sizeof(vn), s->expr->assign.name);
+                    snprintf(joined_names[joined_count], 128, "%s", vn);
+                    snprintf(joined_futs[joined_count], 160, "__par_fut_%d_%d", par_id, joined_count);
+                    joined_ctypes[joined_count] = par_spawn_value_ctype(s->expr->assign.value, joined_count);
+                    emit("    Future* %s = ", joined_futs[joined_count]);
+                    codegen_expr(isp);
+                    emit(";\n");
+                    joined_count++;
+                    continue;
+                }
+                // A bare call statement whose result is discarded - `f()` on its own
+                // line inside the block. Also STMT_EXPR, also previously sequential.
+                // Joined for the barrier only, exactly like a bare `spawn f()`.
+                if (s->type == STMT_EXPR && s->expr &&
+                    par_call_is_spawnable(s->expr) &&
+                    joined_count < 64 && implicit_spawn_count < 64) {
+                    Expr* isp = &implicit_spawns[implicit_spawn_count++];
+                    isp->type = EXPR_SPAWN;
+                    isp->spawn.call = s->expr;
+                    isp->_codegen_temp_id = -1;
+                    snprintf(joined_names[joined_count], 128, "%s", "");   // no binding
+                    snprintf(joined_futs[joined_count], 160, "__par_fut_%d_%d", par_id, joined_count);
+                    joined_ctypes[joined_count] = "long long";
+                    emit("    Future* %s = ", joined_futs[joined_count]);
+                    codegen_expr(isp);
+                    emit(";\n");
+                    joined_count++;
+                    continue;
+                }
                 if (s->type == STMT_SPAWN && s->spawn.call && joined_count < 64) {
                     Expr spawn_expr = {0};   // see implicit_spawns above: MUST be zeroed
                     spawn_expr.type = EXPR_SPAWN;
@@ -2926,30 +3020,7 @@ void codegen_stmt(Stmt* stmt) {
                     continue;
                 }
                 if (is_spawn_var && joined_count < 64) {
-                    // Resolve the value C type from the spawned fn's return type.
-                    const char* vctype = "long long";
-                    Expr* call = s->var.init->spawn.call;
-                    if (call && call->type == EXPR_CALL &&
-                        call->call.callee->type == EXPR_IDENT) {
-                        char fn[256]; token_to_cstr(fn, sizeof(fn), call->call.callee->token);
-                        const char* rt = get_function_return_type(fn);
-                        if (rt) {
-                            if (strcmp(rt, "string") == 0) vctype = "const char*";
-                            else if (strcmp(rt, "float") == 0) vctype = "double";
-                            else if (strcmp(rt, "bool") == 0) vctype = "bool";
-                            else if (strcmp(rt, "int") == 0) vctype = "long long";
-                            else {
-                                // Struct return: the wrapper heap-boxes the
-                                // result; declare the value var as the struct
-                                // type and deref the box at the join. (It used
-                                // to stay long long - the pointer leaked into
-                                // the value var as an int.)
-                                static char _par_st[64][64];
-                                snprintf(_par_st[joined_count], 64, "%s", rt);
-                                vctype = _par_st[joined_count];
-                            }
-                        }
-                    }
+                    const char* vctype = par_spawn_value_ctype(s->var.init->spawn.call, joined_count);
                     char vn[128]; token_to_cstr(vn, sizeof(vn), s->var.name);
                     snprintf(joined_names[joined_count], 128, "%s", vn);
                     snprintf(joined_futs[joined_count], 160, "__par_fut_%d_%d", par_id, joined_count);

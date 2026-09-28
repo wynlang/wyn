@@ -54,9 +54,28 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
                 // (see codegen_stmt.c STMT_PARALLEL), so it needs the same
                 // __spawn_wrapper_f_N that an explicit `spawn f()` needs.
                 // Scan it AS a spawn expression to collect that wrapper.
-                if (stmt->type == STMT_PARALLEL && _bs && _bs->type == STMT_VAR &&
-                    _bs->var.init && _bs->var.init->type == EXPR_CALL &&
-                    _bs->var.init->call.callee->type == EXPR_IDENT) {
+                // The three implicit-spawn shapes, which must match
+                // codegen_stmt.c's STMT_PARALLEL lowering exactly: a new variable
+                // bound to a call, an assignment to a variable declared outside the
+                // block, and a bare call statement. All three are dispatched there,
+                // so all three need their __spawn_wrapper_f_N collected here - a
+                // shape accepted by the lowering but missed here fails to link.
+                Expr* _pcall = NULL;
+                if (stmt->type == STMT_PARALLEL && _bs) {
+                    if (_bs->type == STMT_VAR && _bs->var.init &&
+                        _bs->var.init->type == EXPR_CALL)
+                        _pcall = _bs->var.init;
+                    else if (_bs->type == STMT_EXPR && _bs->expr &&
+                             _bs->expr->type == EXPR_ASSIGN &&
+                             _bs->expr->assign.value &&
+                             _bs->expr->assign.value->type == EXPR_CALL)
+                        _pcall = _bs->expr->assign.value;
+                    else if (_bs->type == STMT_EXPR && _bs->expr &&
+                             _bs->expr->type == EXPR_CALL)
+                        _pcall = _bs->expr;
+                }
+                if (_pcall && _pcall->call.callee &&
+                    _pcall->call.callee->type == EXPR_IDENT) {
                     // MUST use the SAME predicate as the codegen_stmt.c lowering:
                     // get_function_return_type() != NULL, i.e. a known user fn.
                     // Without it, `t = Time::now_millis()` (a builtin, lexed as
@@ -64,7 +83,7 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
                     // `void* __spawn_wrapper_Time::now_millis(...)` - invalid C.
                     extern const char* get_function_return_type(const char*);
                     char _pfn[256];
-                    token_to_cstr(_pfn, sizeof(_pfn), _bs->var.init->call.callee->token);
+                    token_to_cstr(_pfn, sizeof(_pfn), _pcall->call.callee->token);
                     if (get_function_return_type(_pfn)) {
                         // Zeroed for the same reason as codegen_stmt.c's synthesized
                         // spawn Exprs: only three fields are assigned below, and any
@@ -72,7 +91,7 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
                         // rather than stack residue.
                         Expr _sp = {0};
                         _sp.type = EXPR_SPAWN;
-                        _sp.spawn.call = _bs->var.init;
+                        _sp.spawn.call = _pcall;
                         _sp._codegen_temp_id = -1;
                         scan_expr_for_lambdas(&_sp);
                     }
