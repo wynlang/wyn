@@ -43,5 +43,7 @@ int wyn_rc_count(const void* ptr);
 int wyn_rc_is_heap(const void* ptr);
 void wyn_rc_set_length(const void* ptr, uint32_t len);
 uint32_t wyn_rc_get_length(const void* ptr);
+#define WYN_RC_NOT_CACHEABLE 0xFFFFFFFFu
+uint32_t wyn_rc_length_probe(const void* ptr);
 
 #endif

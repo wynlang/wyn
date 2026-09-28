@@ -10,6 +10,8 @@ void wyn_rc_retain(const void* ptr);
 void wyn_rc_release(const void* ptr);
 void wyn_rc_set_length(const void* ptr, unsigned int len);
 unsigned int wyn_rc_get_length(const void* ptr);
+#define WYN_RC_NOT_CACHEABLE 0xFFFFFFFFu
+unsigned int wyn_rc_length_probe(const void* ptr);
 
 // Inline spawn for non-yielding functions (spawn_fast.c)
 struct Future;
@@ -1426,12 +1428,19 @@ int range_next(WynRange* r) { return r->current++; }
 // runtime grows or edits one in place (wyn_rc_set_capacity has zero callers - the
 // realloc paths allocate a NEW buffer and release the old). A length of 0 doubles
 // as "not yet known", which costs nothing: strlen("") is free.
+// ONE RC header validation, via wyn_rc_length_probe: it reports the cached length
+// and whether this pointer can hold one at all. The previous shape called
+// wyn_rc_get_length then wyn_rc_set_length, validating twice on a miss - and a
+// string literal misses every call, so literals paid for a cache they can never
+// use (1M `.len()` on a 44-char literal: 1.53ms before memoization, 2.69ms after,
+// 1.5ms now). strlen stays HERE so the C compiler can still inline and
+// constant-fold it for a literal receiver; moving it into wyn_rc.c measured 5.6ms.
 int string_length(const char* str) {
     if (!str) return 0;
-    unsigned int cached = wyn_rc_get_length(str);
-    if (cached > 0) return (int)cached;
+    unsigned int cached = wyn_rc_length_probe(str);
+    if (cached > 0 && cached != WYN_RC_NOT_CACHEABLE) return (int)cached;
     size_t n = strlen(str);
-    wyn_rc_set_length(str, (unsigned int)n);  // no-op for literals / non-RC pointers
+    if (cached == 0) wyn_rc_set_length(str, (unsigned int)n);
     return (int)n;
 }
 char* string_substring(const char* str, int start, int end) {
