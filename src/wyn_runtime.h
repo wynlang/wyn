@@ -1903,6 +1903,30 @@ bool set_is_superset(WynHashSet* set1, WynHashSet* set2) {
 bool set_is_disjoint(WynHashSet* set1, WynHashSet* set2) {
     return wyn_hashset_is_disjoint(set1, set2);
 }
+// V-38 (#391): materialise a set's TAGGED elements as a WynArray, so `for x in s`
+// has something to walk. It lives here rather than in hashset.c for the same reason
+// hashmap_keys() does: only this header sees WynArray. The element tag picks the
+// push, so an int set yields int cells rather than the string "1".
+//
+// Bucket order, NOT insertion order (same caveat as hashmap_keys). The `for x in s`
+// lowering calls this ONCE per loop, which is what keeps iteration O(n) despite
+// hashset_elem_at being O(n) per call.
+WynArray hashset_elements(WynHashSet* set) {
+    WynArray arr = array_new();
+    if (!set) return arr;
+    int n = hashset_count(set);
+    for (int i = 0; i < n; i++) {
+        HashSetElem e;
+        if (!hashset_elem_at(set, i, &e)) break;
+        switch (e.type) {
+            case HASHSET_STRING: array_push_str(&arr, e.as_string ? e.as_string : ""); break;
+            case HASHSET_INT:    array_push_int(&arr, e.as_int); break;
+            case HASHSET_FLOAT:  array_push_float(&arr, e.as_float); break;
+            case HASHSET_BOOL:   array_push_bool(&arr, e.as_bool); break;
+        }
+    }
+    return arr;
+}
 
 double int_to_float(int n) { return (double)n; }
 // Identity: .to_int() on an int is a no-op. Exists because bool-valued results

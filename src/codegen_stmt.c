@@ -4773,6 +4773,50 @@ void codegen_stmt(Stmt* stmt) {
                     pop_scope(); emit("}\n");
                     break;
                 }
+                // V-38 (#391): set iteration, `for x in s`. This had NO branch at all,
+                // so it fell through to the array path and emitted
+                // `WynArray __iter_array = s;` against a `WynHashSet*` - iterating any
+                // set passed `wyn check` and then failed as a bare "internal codegen
+                // error". The elements are materialised ONCE per loop
+                // (hashset_elements), then walked with the element-typed getter, so the
+                // loop is O(n) and an int set binds a `long long` rather than reading
+                // its members as `char*`.
+                //
+                // ORDER IS BUCKET ORDER, not insertion order - the same caveat
+                // hashmap_keys() carries. Nothing in the language promises otherwise.
+                if (stmt->for_stmt.array_expr->expr_type &&
+                    stmt->for_stmt.array_expr->expr_type->kind == TYPE_SET) {
+                    Type* set_elem = stmt->for_stmt.array_expr->expr_type->set_type.element_type;
+                    const char* eget = "array_get_str"; const char* ecty = "const char*";
+                    if (set_elem) {
+                        switch (set_elem->kind) {
+                            case TYPE_INT:   eget = "array_get_int";   ecty = "long long"; break;
+                            case TYPE_FLOAT: eget = "array_get_float"; ecty = "double"; break;
+                            case TYPE_BOOL:  eget = "array_get_bool";  ecty = "bool"; break;
+                            default: break;
+                        }
+                    }
+                    Token lv = stmt->for_stmt.loop_var;
+                    emit("{\n"); push_scope();
+                    emit("    WynArray __for_set = hashset_elements(");
+                    codegen_expr(stmt->for_stmt.array_expr);
+                    emit(");\n");
+                    emit("    for (long long __si = 0; __si < __for_set.count; __si++) {\n");
+                    emit("        %s %.*s = %s(__for_set, __si);\n",
+                         ecty, lv.length, lv.start, eget);
+                    if (strcmp(ecty, "const char*") == 0) {
+                        char _lb[256]; token_to_cstr(_lb, sizeof(_lb), lv);
+                        extern void register_string_var(const char*); register_string_var(_lb);
+                    }
+                    if (stmt->for_stmt.has_index) {
+                        emit("        long long %.*s = __si;\n",
+                             stmt->for_stmt.index_var.length, stmt->for_stmt.index_var.start);
+                    }
+                    if (stmt->for_stmt.body) codegen_stmt(stmt->for_stmt.body);
+                    emit("    }\n");
+                    pop_scope(); emit("}\n");
+                    break;
+                }
                 // L3: Iterator-based for-in (generator functions)
                 if (stmt->for_stmt.array_expr->type == EXPR_CALL &&
                     stmt->for_stmt.array_expr->call.callee->type == EXPR_IDENT) {

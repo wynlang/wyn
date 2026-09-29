@@ -538,9 +538,15 @@ static void print_type_name(Type* type) {
             fprintf(stderr, "HashMap<string, int>");
             break;
         case TYPE_SET:
-            // See the note in error.c's friendly_type_name: the set is string-keyed,
-            // so `HashSet<int>` named an element type the language has never had.
-            fprintf(stderr, "HashSet<string>");
+            // V-38 (#391): the REAL element type. This printed a hardcoded
+            // `HashSet<int>` while the set was string-only, was corrected to a
+            // hardcoded `HashSet<string>` in #374, and is now neither hardcoded nor a
+            // guess - TYPE_SET carries the element. An OPEN set (`{:}` with nothing
+            // added yet) has no element type to name, and says so.
+            fprintf(stderr, "HashSet<");
+            if (type->set_type.element_type) print_type_name(type->set_type.element_type);
+            else fprintf(stderr, "?");
+            fprintf(stderr, ">");
             break;
         case TYPE_STRUCT:
             if (type->struct_type.name.length > 0) {
@@ -599,6 +605,11 @@ static Type* freshen_container_ret(Expr* call_expr, Type* ret) {
         fresh->map_type.key_type = ret->map_type.key_type;
         fresh->map_type.value_type = ret->map_type.value_type;
     }
+    // V-38: the set's element type needs the same carry-through, and for the same
+    // reason: `HashSet.new()` shares ONE builtin return node, so without a fresh
+    // copy every set in a program would alias one element_type and only the first
+    // `.add()` would decide it.
+    if (ret->kind == TYPE_SET) fresh->set_type.element_type = ret->set_type.element_type;
     if (call_expr) call_expr->expr_type = fresh;
     return fresh;
 }
@@ -934,6 +945,20 @@ static Type* resolve_array_elem_annotation(Expr* elem_type_expr) {
             inner->map_type.value_type = resolve_array_elem_annotation(elem_type_expr->call.args[1]);
         return inner;
     }
+    // V-38 (#391): nested set annotation - `[HashSet<int>]`, `HashMap<string,
+    // HashSet<int>>`, a `HashSet<int>` struct field. Resolved here so a set nested
+    // inside another annotation carries its element type, the same way the HashMap
+    // branch above carries K and V.
+    if (elem_type_expr->type == EXPR_CALL &&
+        elem_type_expr->call.callee &&
+        elem_type_expr->call.callee->type == EXPR_IDENT &&
+        elem_type_expr->call.callee->token.length == 7 &&
+        memcmp(elem_type_expr->call.callee->token.start, "HashSet", 7) == 0) {
+        Type* inner = make_type(TYPE_SET);
+        if (elem_type_expr->call.arg_count >= 1)
+            inner->set_type.element_type = resolve_array_elem_annotation(elem_type_expr->call.args[0]);
+        return inner;
+    }
     // Optional element: `[int?]`, `[P?]`. This returned NULL, so an ANNOTATED
     // optional array had no element type at all while the same array inferred
     // from a `-> int?` call carried the lowered family - so `a: [int?]` printed
@@ -976,6 +1001,27 @@ static Type* resolve_array_elem_annotation(Expr* elem_type_expr) {
     if (n.length == 5 && memcmp(n.start, "float", 5) == 0) return builtin_float;
     if (n.length == 4 && memcmp(n.start, "bool", 4) == 0) return builtin_bool;
     return NULL;
+}
+
+// V-38 (#391): is this annotation the `HashSet<T>` spelling?
+static bool wyn_annotation_is_set(Expr* type_expr) {
+    return type_expr && type_expr->type == EXPR_CALL &&
+           type_expr->call.callee &&
+           type_expr->call.callee->type == EXPR_IDENT &&
+           type_expr->call.callee->token.length == 7 &&
+           memcmp(type_expr->call.callee->token.start, "HashSet", 7) == 0;
+}
+
+// V-38 (#391): `HashSet<T>` -> TYPE_SET carrying T. ONE helper, because the element
+// type has to be carried at every annotation site (var, param signature, param body,
+// return type, nested annotation) and a site that forgot would hand codegen an OPEN
+// set - which then picks the string-keyed runtime call for an int set. Bare `HashSet`
+// has no type argument and stays OPEN, which is the correct answer for it.
+static Type* wyn_set_annotation_type(Expr* type_expr) {
+    Type* st = make_type(TYPE_SET);
+    if (wyn_annotation_is_set(type_expr) && type_expr->call.arg_count >= 1)
+        st->set_type.element_type = resolve_array_elem_annotation(type_expr->call.args[0]);
+    return st;
 }
 
 // Is this type ANNOTATION an optional, in either of its two spellings?
@@ -2292,66 +2338,120 @@ static bool reject_option_method_on_scalar(const Type* receiver, const char* met
     return true;
 }
 
-// V-35: a non-string element handed to the string-keyed runtime set. `s = {:1, 2}`
-// passed `wyn check` and then SIGSEGV'd (exit 139) with the set never even used.
+// V-38 (#391): the element type of a set, enforced.
 //
-// The runtime set is string-keyed by construction - `hashset_add(WynHashSet*, const
-// char* key)` stores `strdup(key)` and compares with `strcmp` - and codegen emitted
-// the element expression straight into that parameter. `{:1, 2}` became
-// `hashset_add(set, 1)`: the integer 1 used as an address, dereferenced by strcmp.
-// Measured on dev @ 35ff414a, every non-string element crashed, on every spelling -
-// the literal, an int VARIABLE in the literal, `.add`/`.insert`/`.contains`/`.remove`,
-// and the `HashSet.add(s, x)` namespace form. A float element missed the segfault
-// only by failing in the C compiler instead.
+// HISTORY THIS REPLACES. TYPE_SET carried no element type, so a set was effectively
+// untyped: `{:1, 2}` passed `wyn check` and SIGSEGV'd (the int 1 reached
+// `hashset_add(WynHashSet*, const char*)` and was dereferenced by strcmp), and
+// `type_to_string` printed an element name it had not earned. #374 stopped the crash
+// by REFUSING every non-string element, and said why the cheap alternative was worse:
+// stringifying an int into the same string table collapses `{:1}` and `{:"1"}` into
+// one set - a silently wrong answer. The runtime element is tagged now (see
+// src/hashset.c), so int/float/bool sets are real and distinct, and the rule that
+// refused them is replaced by the rule below: the element type must MATCH.
 //
-// WHY THE ANSWER IS "REJECT" AND NOT "SUPPORT INT ELEMENTS". Making ints work at this
-// layer means stringifying into that same table, which collapses `{:1}` and `{:"1"}`
-// into one set - a silently wrong answer, which is worse than the crash. A genuinely
-// typed set needs an element type on TYPE_SET, which today carries none (while
-// type_to_string already prints the unearned `HashSet<int>`), so it is a feature and
-// is logged as one. HashMap has refused non-string keys all along ("HashMap keys must
-// be strings", parser.c), so this is one rule that had one copy, not a new limit.
+// TWO rules live here, and they are deliberately separate:
 //
-// The element's TYPE is what is tested, not its syntax, because an int variable
-// (`x = 1; {:x}`) crashes exactly as hard as an int literal. That leans on the
-// checker's type for the element, and TYPE_INT is also its fallback for anything it
-// could not resolve (#372) - so the risk this rule runs is rejecting a string the
-// checker merely lost. Measured before it was written: every string shape that has to
-// be resolved THROUGH something unresolved still types as string - `sb.to_string()`
-// off a StringBuilder handle, a `fn -> string` call, `"a" + "b"`, an interpolation -
-// and `wyn check` over all 12,106 `.wyn` files in the tree fires this rule on none of
-// them. The StringBuilder shape is pinned as a canary in the gate.
-static bool reject_non_string_set_element(const Type* elem, const char* method, int line) {
-    if (!elem) return false;
-    if (elem->kind != TYPE_INT && elem->kind != TYPE_FLOAT && elem->kind != TYPE_BOOL)
-        return false;
+//  1. HASHABLE. A set element must be a string, int, float or bool - the four kinds
+//     the runtime tags. A struct/array/map/set/Option element is refused. This is the
+//     one genuinely NEW rejection (#374 only refused int/float/bool, so a struct
+//     element passed check and miscompiled), and it is what the corpus sweep for this
+//     change was run against.
+//  2. MATCH. Once a set's element type is known, every element handed to it must be
+//     that type. No int->float widening: the set's literals are strict for the same
+//     reason array and map literals are (`[1, 2.5]` and `{"a":1,"b":2.5}` are both
+//     refused today), and a widening that only worked on some paths is how the
+//     `.push()` int-into-float-array shape came to pass check and fail the C compile.
+//
+// WHAT DOES *NOT* GET STRICTER. TYPE_INT is the checker's fallback for anything it
+// could not resolve (#372), so a rule keyed on an element's type risks rejecting a
+// value the checker merely lost. Every shape #374's gate pinned as a canary - a
+// StringBuilder-derived string, a `fn -> string` call, `"a" + "b"`, an interpolation -
+// still types as string and so still lands in a `HashSet<string>`. And the direction
+// of travel is towards FEWER rejections: everything #374 refused outright now either
+// compiles (an int set) or is refused only when it disagrees with a known element type.
+static const char* set_elem_kind_name(const Type* t) {
+    if (!t) return "unknown";
+    switch (t->kind) {
+        case TYPE_INT: return "int";
+        case TYPE_FLOAT: return "float";
+        case TYPE_BOOL: return "bool";
+        case TYPE_STRING: return "string";
+        default: return type_to_string((Type*)t);
+    }
+}
 
-    const char* kind = elem->kind == TYPE_INT ? "an int"
-                     : elem->kind == TYPE_FLOAT ? "a float" : "a bool";
+static bool set_elem_is_hashable(const Type* t) {
+    if (!t) return true;   // unresolved: not this rule's business
+    return t->kind == TYPE_STRING || t->kind == TYPE_INT ||
+           t->kind == TYPE_FLOAT || t->kind == TYPE_BOOL;
+}
+
+// Same element type? Exact kind match; a struct/enum element never gets here because
+// the hashable rule refuses it first.
+static bool set_elem_matches(const Type* declared, const Type* actual) {
+    if (!declared || !actual) return true;
+    return declared->kind == actual->kind;
+}
+
+// An element whose type the runtime cannot tag. `method` is the method name for the
+// call form, NULL inside a `{:...}` literal.
+static bool reject_unhashable_set_element(const Type* elem, const char* method, int line) {
+    if (set_elem_is_hashable(elem)) return false;
     char headline[320], help[512];
+    const char* kind = set_elem_kind_name(elem);
     if (method)
         snprintf(headline, sizeof(headline),
-                 "HashSet stores strings, and '%s()' was given %s element", method, kind);
+                 "HashSet elements must be string, int, float or bool, and '%s()' was given %s",
+                 method, kind);
     else
         snprintf(headline, sizeof(headline),
-                 "HashSet stores strings, and this element is %s", kind);
+                 "HashSet elements must be string, int, float or bool, and this element is %s",
+                 kind);
     snprintf(help, sizeof(help),
-             "A set element becomes a C string key (strdup/strcmp), so %s is used as an"
-             " address and crashes at run time. Convert it at the call: `.to_string()`."
-             " HashMap keys carry the same restriction.", kind);
+             "A set element is stored as a tagged scalar, so %s has no hash or equality"
+             " the set can use. Store a field of it instead (e.g. an id string or int),"
+             " or use an array if you need the whole value.", kind);
     report_unknown_method(line, headline, NULL, help);
     had_error = true;
     return true;
 }
 
-// The set methods whose single element argument this rule owns. `union`,
-// `intersection`, `difference`, `is_subset` and `is_disjoint` are deliberately absent:
-// their argument is another SET, not an element, so they are not this rule's business.
-// `add_int` and `contains_int` ARE here - src/types.c advertises them, lowering them to
-// wyn_hashset_add_int / wyn_hashset_contains_int, symbols no runtime source defines
-// (`nm runtime/libwyn_rt.a` has neither). They are the reason someone would believe
-// int elements are supported, and they answer with an internal codegen error, so the
-// rule takes them too.
+// An element that disagrees with the set's element type.
+static bool reject_set_element_mismatch(const Type* declared, const Type* actual,
+                                        const char* method, int line) {
+    if (!declared || !actual) return false;
+    if (set_elem_matches(declared, actual)) return false;
+    if (!set_elem_is_hashable(actual)) return false;   // the hashable rule owns it
+    char headline[320], help[512];
+    if (method)
+        snprintf(headline, sizeof(headline),
+                 "'%s()' on a HashSet<%s> was given %s", method,
+                 set_elem_kind_name(declared), set_elem_kind_name(actual));
+    else
+        snprintf(headline, sizeof(headline),
+                 "HashSet literal has mixed element types: '%s' and '%s'",
+                 set_elem_kind_name(declared), set_elem_kind_name(actual));
+    snprintf(help, sizeof(help),
+             "A set has ONE element type - the runtime tags each element, so a member"
+             " typed %s never equals a member typed %s and every lookup would have to"
+             " guess which was meant. Convert at the call (`.to_string()` /"
+             " `.to_int()` / `.to_float()`), or use a separate set.",
+             set_elem_kind_name(declared), set_elem_kind_name(actual));
+    report_unknown_method(line, headline, NULL, help);
+    had_error = true;
+    return true;
+}
+
+// The set methods whose single argument is an ELEMENT. `union`, `intersection`,
+// `difference`, `is_subset`, `is_superset` and `is_disjoint` are deliberately absent:
+// their argument is another SET (checked separately, below).
+//
+// `add_int` and `contains_int` ARE here. types.c has advertised them since before the
+// element type existed, lowering them to wyn_hashset_add_int / wyn_hashset_contains_int
+// - symbols no runtime source defined, so the language's answer to the two methods that
+// sounded like int support was an internal codegen error. They are the int family now
+// (src/hashset.c), so they are element-checked like every other spelling.
 static const char* const set_element_methods[] = {
     "add", "insert", "contains", "remove", "add_int", "contains_int", NULL
 };
@@ -2360,6 +2460,42 @@ static bool is_set_element_method(const char* method) {
     for (int i = 0; set_element_methods[i]; i++)
         if (strcmp(set_element_methods[i], method) == 0) return true;
     return false;
+}
+
+// The set methods whose single argument is another SET.
+static bool is_set_algebra_method(const char* method) {
+    static const char* const names[] = {
+        "union", "intersection", "difference",
+        "is_subset", "is_superset", "is_disjoint", NULL
+    };
+    for (int i = 0; names[i]; i++)
+        if (strcmp(method, names[i]) == 0) return true;
+    return false;
+}
+
+// `s.union(t)` where s and t hold different element kinds. Deliberately narrow: it
+// fires ONLY when both sides are TYPE_SET and BOTH element types are known. A
+// non-set argument is not reported here, because the checker's int fallback (#372)
+// would make that rule reject a set it merely failed to resolve.
+static bool reject_set_algebra_mismatch(const Type* a, const Type* b,
+                                        const char* method, int line) {
+    if (!a || !b || a->kind != TYPE_SET || b->kind != TYPE_SET) return false;
+    const Type* ea = a->set_type.element_type;
+    const Type* eb = b->set_type.element_type;
+    if (!ea || !eb || set_elem_matches(ea, eb)) return false;
+    char headline[320], help[512];
+    snprintf(headline, sizeof(headline),
+             "'%s()' needs two sets of the same element type, got HashSet<%s> and HashSet<%s>",
+             method, set_elem_kind_name(ea), set_elem_kind_name(eb));
+    snprintf(help, sizeof(help),
+             "Set algebra compares tagged elements, so a member typed %s never equals a"
+             " member typed %s - the result would silently be the left set"
+             " (intersection: empty; union: both sets concatenated) rather than anything"
+             " the reader meant.",
+             set_elem_kind_name(ea), set_elem_kind_name(eb));
+    report_unknown_method(line, headline, NULL, help);
+    had_error = true;
+    return true;
 }
 
 // `HashSet.insert(s, x)` does not exist in the NAMESPACE spelling at all - the method
@@ -2810,7 +2946,8 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             if (type_name.length == 7 && memcmp(type_name.start, "HashMap", 7) == 0) {
                 base_type = make_type(TYPE_MAP);
             } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
-                base_type = make_type(TYPE_SET);
+                // V-38 (#391): carry the declared element type (`HashSet<int>`).
+                base_type = wyn_set_annotation_type(expr);
             } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
                 base_type = make_type(TYPE_OPTIONAL);
             } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
@@ -4555,6 +4692,11 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 return builtin_int;
             }
 
+            // V-38 (#391): the set element type, enforced and INFERRED, for both
+            // spellings at once. The element is the LAST argument of both `s.add(x)`
+            // and `HashSet.add(s, x)` (`HashSet` is registered as the collection TYPE,
+            // so it types as TYPE_SET here too), which is what keeps this one rule
+            // rather than two that have to agree.
             if (object_type && object_type->kind == TYPE_SET &&
                 expr->method_call.arg_count >= 1 && is_set_element_method(method_name) &&
                 !set_method_belongs_to_namespace_rule(expr->method_call.object,
@@ -4562,7 +4704,53 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 Expr* el = expr->method_call.args[expr->method_call.arg_count - 1];
                 Type* et = el ? el->expr_type : NULL;
                 if (el && !et) et = check_expr(el, scope);
-                if (reject_non_string_set_element(et, method_name, method.line)) {
+                if (reject_unhashable_set_element(et, method_name, method.line)) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                }
+                // WHICH set. In the method form `s.add(x)` it is the receiver; in the
+                // NAMESPACE form `HashSet.add(s, x)` the receiver is the `HashSet` TYPE
+                // symbol - one Type node shared by every mention of the name - and the
+                // real set is the first argument. Getting this wrong is not just a
+                // missed check: inferring an OPEN set's element type onto that shared
+                // node would fix the element type of the `HashSet` NAME itself, for the
+                // whole program. No set method takes two arguments, so an argument count
+                // of 2 or more IS the namespace form.
+                Type* set_t = object_type;
+                if (expr->method_call.arg_count >= 2) {
+                    Type* a0 = expr->method_call.args[0]->expr_type;
+                    if (!a0) a0 = check_expr(expr->method_call.args[0], scope);
+                    if (!a0 || a0->kind != TYPE_SET) { set_t = NULL; }   // unresolved: no rule
+                    else set_t = a0;
+                }
+                if (!set_t) { /* nothing to compare against */ }
+                else {
+                Type* declared = set_t->set_type.element_type;
+                if (!declared) {
+                    // An OPEN set (`{:}` / `HashSet.new()` / a bare `HashSet` param).
+                    // An INSERTING call fixes the element type; `contains`/`remove`
+                    // deliberately do not, because asking whether a set contains
+                    // something is not a claim about what it holds - and fixing the
+                    // type from a question would make the first lookup decide the set.
+                    bool inserts = strcmp(method_name, "add") == 0 ||
+                                   strcmp(method_name, "insert") == 0 ||
+                                   strcmp(method_name, "add_int") == 0;
+                    if (inserts && et) set_t->set_type.element_type = et;
+                } else if (reject_set_element_mismatch(declared, et, method_name, method.line)) {
+                    expr->expr_type = builtin_int;
+                    return builtin_int;
+                }
+                }
+            }
+
+            // V-38: `s.union(t)` / `.intersection` / `.difference` / `.is_subset` /
+            // `.is_superset` / `.is_disjoint` over two sets of DIFFERENT element types.
+            if (object_type && object_type->kind == TYPE_SET &&
+                expr->method_call.arg_count == 1 && is_set_algebra_method(method_name)) {
+                Expr* other = expr->method_call.args[0];
+                Type* ot = other ? other->expr_type : NULL;
+                if (other && !ot) ot = check_expr(other, scope);
+                if (reject_set_algebra_mismatch(object_type, ot, method_name, method.line)) {
                     expr->expr_type = builtin_int;
                     return builtin_int;
                 }
@@ -4870,7 +5058,14 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         // getter and answered 0, silently, exit 0. The `{}` and `{:}`
                         // LITERAL paths already route through this authority (see the
                         // comment on freshen_container_ret, which describes this very
-                        // aliasing); this path was the one that did not.
+                        // aliasing); this path was the one that did not. Landed as #418.
+                        //
+                        // V-38 (#391) DEPENDS on this line: a typed HashSet cannot work
+                        // without it, because every `HashSet.new()` would otherwise share
+                        // one element type and the first `.add()` would fix it for all of
+                        // them - `HashSet.add(c, "y")` on an unrelated `c` became an
+                        // int/string mismatch. freshen_container_ret carries the SET's
+                        // element type across for the same reason it carries the map's.
                         Type* ret = freshen_container_ret(expr, ns_sym->type->fn_type.return_type);
                         if (ret) {
                             expr->expr_type = ret;
@@ -5420,6 +5615,13 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         // for union, intersection, difference and symmetric_difference
                         // alike. The runtime functions were there all along.
                         Type* set_type = make_type(TYPE_SET);
+                        // V-38 (#391): set algebra PRESERVES the element type. Without
+                        // this, `a.union(b)` came back as an OPEN set, so
+                        // `a.union(b).contains(1)` lowered to the string-keyed
+                        // `hashset_contains` on a set of ints and answered false for
+                        // every member it holds.
+                        if (object_type && object_type->kind == TYPE_SET)
+                            set_type->set_type.element_type = object_type->set_type.element_type;
                         expr->expr_type = set_type;
                         return set_type;
                     } else if (strcmp(return_type_str, "map") == 0) {
@@ -5729,16 +5931,24 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
         }
         case EXPR_HASHSET_LITERAL: {
             // v1.3.1: {:} creates a hashset with TYPE_SET
-            // V-35: the elements were not visited at all before this, which is how an
-            // int element reached codegen and became `hashset_add(set, 1)`. Every
-            // element is checked (not just the first) because `{:"a", 1}` crashed too.
+            // V-38 (#391): the literal is where a set's element type is INFERRED.
+            // Every element is visited (not just the first) because `{:"a", 1}` is a
+            // mixed literal and only the second element says so.
+            Type* set_type = make_type(TYPE_SET);
+            Type* elem_t = NULL;
             for (int i = 0; i < expr->array.count; i++) {
                 Expr* el = expr->array.elements[i];
                 if (!el) continue;
                 Type* et = check_expr(el, scope);
-                reject_non_string_set_element(et, NULL, el->token.line);
+                if (reject_unhashable_set_element(et, NULL, el->token.line)) continue;
+                if (!elem_t) { elem_t = et; continue; }
+                reject_set_element_mismatch(elem_t, et, NULL, el->token.line);
             }
-            Type* set_type = make_type(TYPE_SET);
+            // An EMPTY `{:}` stays OPEN (NULL element type) so the first
+            // `.add()`/`.insert()` fixes it - the same rule an empty `{}` map uses for
+            // its value type. Defaulting to string here would reject `s = {:}` followed
+            // by `s.add(1)`, which is the most natural way to build an int set.
+            set_type->set_type.element_type = elem_t;
             expr->expr_type = set_type;
             return set_type;
         }
@@ -7295,7 +7505,9 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                             init_type->map_type.value_type =
                                 resolve_array_elem_annotation(stmt->var.type->call.args[1]);
                     } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
-                        init_type = make_type(TYPE_SET);
+                        // V-38 (#391): `s: HashSet<int> = ...` carries int, exactly as
+                        // the HashMap branch above carries K and V.
+                        init_type = wyn_set_annotation_type(stmt->var.type);
                     } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
                         // Carry the ANNOTATED payload type through, exactly as the
                         // HashMap branch above does and for the same reason. This used
@@ -7661,6 +7873,20 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                         // single var is the key (string)
                         add_symbol(&for_scope, stmt->for_stmt.loop_var, builtin_string, false);
                     }
+                } else if (array_type && array_type->kind == TYPE_SET) {
+                    // V-38 (#391): `for x in s` binds x to the set's ELEMENT type.
+                    // Before the element type existed this fell through to the array
+                    // path, which assigns the iterable to a `WynArray`: iterating any
+                    // set passed `wyn check` and then died as a bare "internal codegen
+                    // error" (`initializing 'WynArray' with ... 'WynHashSet *'`). An
+                    // OPEN set has no element type to bind, so string is the default -
+                    // matching what the runtime holds for the only shape that can be
+                    // open and non-empty (a bare `HashSet` parameter).
+                    Type* et = array_type->set_type.element_type;
+                    if (!et) et = builtin_string;
+                    add_symbol(&for_scope, stmt->for_stmt.loop_var, et, false);
+                    if (stmt->for_stmt.has_index)
+                        add_symbol(&for_scope, stmt->for_stmt.index_var, builtin_int, false);
                 } else {
                     // A STRING is not iterable. Codegen's for-in fallthrough assigns
                     // the iterable to a `WynArray` unconditionally, so `for c in s`
@@ -7782,6 +8008,14 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                             mt->map_type.value_type =
                                 resolve_array_elem_annotation(fn->param_types[j]->call.args[1]);
                         param_type = mt;
+                    } else if (wyn_annotation_is_set(fn->param_types[j])) {
+                        // V-38 (#391): `s: HashSet<int>` parameter. Only HashMap was
+                        // handled here, so the generic SET spelling fell through to the
+                        // builtin_int default - `fn f(s: HashSet<int>)` was rejected at
+                        // the call with "Expected: int, Got: unknown", while the bare
+                        // `s: HashSet` (a different code path) worked. Bare HashSet stays
+                        // an OPEN set; the generic form carries its element.
+                        param_type = wyn_set_annotation_type(fn->param_types[j]);
                     }
                 }
 
@@ -10070,6 +10304,14 @@ void check_program(Program* prog) {
                             mt->map_type.value_type =
                                 resolve_array_elem_annotation(fn->param_types[j]->call.args[1]);
                         param_type = mt;
+                    } else if (wyn_annotation_is_set(fn->param_types[j])) {
+                        // V-38 (#391): `s: HashSet<int>` parameter. Only HashMap was
+                        // handled here, so the generic SET spelling fell through to the
+                        // builtin_int default - `fn f(s: HashSet<int>)` was rejected at
+                        // the call with "Expected: int, Got: unknown", while the bare
+                        // `s: HashSet` (a different code path) worked. Bare HashSet stays
+                        // an OPEN set; the generic form carries its element.
+                        param_type = wyn_set_annotation_type(fn->param_types[j]);
                     }
                 }
                 fn_type->fn_type.param_types[j] = param_type;
@@ -10125,7 +10367,9 @@ void check_program(Program* prog) {
                                 fn_type->fn_type.return_type->map_type.value_type =
                                     resolve_array_elem_annotation(fn->return_type->call.args[1]);
                         } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
-                            fn_type->fn_type.return_type = make_type(TYPE_SET);
+                            // V-38: `-> HashSet<int>` carries int, else the caller
+                            // reads the returned set through the string-keyed calls.
+                            fn_type->fn_type.return_type = wyn_set_annotation_type(fn->return_type);
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
                             // Resolve Option<int> -> OptionInt, Option<string> -> OptionString
                             Token concrete = {TOKEN_IDENT, "OptionInt", 9, 0};
@@ -10368,7 +10612,9 @@ void check_program(Program* prog) {
                                 current_function_return_type->map_type.value_type =
                                     resolve_array_elem_annotation(fn->return_type->call.args[1]);
                         } else if (type_name.length == 7 && memcmp(type_name.start, "HashSet", 7) == 0) {
-                            current_function_return_type = make_type(TYPE_SET);
+                            // V-38: see the signature pass above - same annotation,
+                            // same element type.
+                            current_function_return_type = wyn_set_annotation_type(fn->return_type);
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Option", 6) == 0) {
                             Token concrete = {TOKEN_IDENT, "OptionInt", 9, 0};
                             if (fn->return_type->call.arg_count > 0 &&
@@ -10533,6 +10779,14 @@ void check_program(Program* prog) {
                             mt->map_type.value_type =
                                 resolve_array_elem_annotation(fn->param_types[j]->call.args[1]);
                         param_type = mt;
+                    } else if (wyn_annotation_is_set(fn->param_types[j])) {
+                        // V-38 (#391): `s: HashSet<int>` parameter. Only HashMap was
+                        // handled here, so the generic SET spelling fell through to the
+                        // builtin_int default - `fn f(s: HashSet<int>)` was rejected at
+                        // the call with "Expected: int, Got: unknown", while the bare
+                        // `s: HashSet` (a different code path) worked. Bare HashSet stays
+                        // an OPEN set; the generic form carries its element.
+                        param_type = wyn_set_annotation_type(fn->param_types[j]);
                     }
                 }
 
@@ -10733,10 +10987,10 @@ const char* type_to_string(Type* type) {
         case TYPE_OPTIONAL: return "optional";
         case TYPE_UNION: return "union";
         // Without this a Json argument mismatch read "Expected: unknown (unknown)",
-        // which names nothing the programmer wrote. (TYPE_SET and TYPE_CHANNEL are
-        // still missing here; same one-line shape, logged rather than fixed in a
-        // JSON change.)
+        // which names nothing the programmer wrote. (TYPE_CHANNEL is still missing
+        // here; same one-line shape, logged rather than fixed here.)
         case TYPE_JSON: return "json";
+        case TYPE_SET: return "set";   // V-38
         default: return "unknown";
     }
 }

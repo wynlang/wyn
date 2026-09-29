@@ -535,6 +535,11 @@ WynHashSet* set_difference(WynHashSet* set1, WynHashSet* set2);
 bool set_is_subset(WynHashSet* set1, WynHashSet* set2);
 bool set_is_superset(WynHashSet* set1, WynHashSet* set2);
 bool set_is_disjoint(WynHashSet* set1, WynHashSet* set2);
+// V-38 (#391): declared HERE as well as defined in wyn_runtime.h, because
+// `--release` emits this header and would otherwise fail to link every `for x in s`
+// loop (the family of set element functions themselves need no entry: they are real
+// symbols in hashset.c and this header already includes hashset.h).
+WynArray hashset_elements(WynHashSet* set);
 double int_to_float(int n);
 int int_abs(int n);
 int int_pow(int base, int exp);
