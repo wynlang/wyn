@@ -215,11 +215,31 @@ fn main() -> int {
         spawn nap(10)
         spawn nap(10)
     }
-    // Two reps; the shell takes the MIN per key. Contention only ever adds time, so
+    // FOUR reps; the shell takes the MIN per key. Contention only ever adds time, so
     // the minimum is the closest reading to the real cost on a shared runner.
+    //
+    // It was two, and two was not enough: EVERY reading here, baseline included, is a
+    // sample that contention can only inflate, and with two samples a hosted runner
+    // inflated BOTH copies of one key. Two real flakes, in opposite directions, neither
+    // caused by the change under test:
+    //
+    //   ceiling, macos-15-intel: 252ms against a 154ms baseline (1.64x, bound 1.6x) -
+    //                            the MEASUREMENT was inflated
+    //   floor,   macos-15:       160ms against a 216ms baseline (0.74x, floor 0.8x) -
+    //                            the BASELINE was inflated, and 160ms was the correct
+    //                            answer for a 150ms sleep
+    //
+    // The gate's premise is that contention scales both readings together, which is only
+    // true in aggregate: at one sample per key it is false, and either side can move
+    // alone. Four reps cost a few seconds and make an uncontended sample much likelier
+    // for every key. On an idle box this arm set reads 151-157ms against 151-154ms, so
+    // the bound is nowhere near marginal when the box is quiet - the flakes were the
+    // runner, not the margin.
     var r1 = battery(1)
     var r2 = battery(2)
-    if r1 + r2 != 3 { print("battery did not run twice") }
+    var r3 = battery(3)
+    var r4 = battery(4)
+    if r1 + r2 + r3 + r4 != 10 { print("battery did not run four times") }
     return 0
 }
 WYN
@@ -260,11 +280,25 @@ run_mode() {  # $1 = "" | "--release" ; $2 = label
         bad "[$label] baseline too small to compare against (${BASE}ms - raise NAP)"; return
     fi
 
+    # A dispatched-and-joined branch must take ABOUT one branch's time: not two branches'
+    # worth (it did not overlap) and not zero (it did not run, or was not joined). Both
+    # ends are needed.
+    #
+    # The FLOOR was missing, and a 0ms reading passed. Found by mutation: with
+    # par_branch_classify() forced to refuse every branch, ten of these arms correctly
+    # reddened at a sequential 2x - but the two explicit-spawn arms reported
+    # "overlaps (0ms vs 150ms)" and PASSED. A refused `spawn` is emitted as a plain
+    # statement, a bare `spawn` statement is fire-and-forget, so it returns at once and
+    # the sleeps never land inside the window. That is the same ceiling-only hole
+    # check_waited() already has a floor for, and 0ms passing a gate is exactly the shape
+    # that let `parallel { }` look correct for several releases.
     check(){  # $1=key  $2=label
         local ms; ms=$(read_ms "$1")
         if [ -z "$ms" ]; then bad "[$label] $2 (no reading)"; return; fi
-        # ms*10 <= BASE*RATIO_NUM  i.e.  ms <= 1.6 * BASE
-        if [ $((ms * 10)) -le $((BASE * RATIO_NUM)) ]; then
+        # BASE*8 <= ms*10 <= BASE*RATIO_NUM   i.e.  0.8 * BASE <= ms <= 1.6 * BASE
+        if [ $((ms * 10)) -lt $((BASE * 8)) ]; then
+            bad "[$label] $2 did not RUN: ${ms}ms is under 0.8x of ${BASE}ms for one branch (0ms means the call was dropped or never joined)"
+        elif [ $((ms * 10)) -le $((BASE * RATIO_NUM)) ]; then
             ok "[$label] $2 overlaps (${ms}ms vs ${BASE}ms for one branch)"
         else
             bad "[$label] $2 did NOT overlap: ${ms}ms vs ${BASE}ms for one branch (bound 1.6x; 2x means sequential)"
