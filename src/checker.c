@@ -4577,7 +4577,17 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                                 had_error = true;
                             }
                         }
-                        Type* ret = ns_sym->type->fn_type.return_type;
+                        // freshen_container_ret, NOT the registered node directly:
+                        // `HashMap.new` / `HashSet.new` are registered ONCE, with one
+                        // return-type Type*, so adopting it made every `HashMap.new()`
+                        // in a program the SAME node - and whichever `.set()` ran first
+                        // fixed MapType.value_type for all of them. A second map with a
+                        // different value type was then read through the first one's
+                        // getter and answered 0, silently, exit 0. The `{}` and `{:}`
+                        // LITERAL paths already route through this authority (see the
+                        // comment on freshen_container_ret, which describes this very
+                        // aliasing); this path was the one that did not.
+                        Type* ret = freshen_container_ret(expr, ns_sym->type->fn_type.return_type);
                         if (ret) {
                             expr->expr_type = ret;
                             return ret;

@@ -453,6 +453,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_set_element_type_test.sh
 	@echo "=== Running void-call-type test (a void call is not an int) ==="
 	@WYN=./wyn bash tests/errors/run_void_call_type_test.sh
+	@echo "=== Running container-fresh-type test (two HashMap.new() are independent) ==="
+	@WYN=./wyn bash tests/errors/run_container_fresh_type_test.sh
 	@WYN=./wyn bash tests/errors/run_registry_reachable_test.sh
 	@bash tests/errors/run_slim_header_parity_test.sh
 	@WYN=./wyn bash tests/errors/run_collection_return_type_test.sh
