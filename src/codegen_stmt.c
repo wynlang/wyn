@@ -518,6 +518,111 @@ static void emit_line(Stmt* s) {
     }
 }
 
+// Is this call one that a per-NAME __spawn_wrapper_<fn> can dispatch, i.e. does
+// its callee name a USER function? Only such a call can have its RESULT joined
+// back into a variable, because the value's C type is read from the callee's
+// declared Wyn return type (par_spawn_value_ctype).
+bool par_call_is_spawnable(Expr* call) {
+    extern const char* get_function_return_type(const char*);
+    if (!call || call->type != EXPR_CALL) return false;
+    if (!call->call.callee || call->call.callee->type != EXPR_IDENT) return false;
+    char fn[256];
+    token_to_cstr(fn, sizeof(fn), call->call.callee->token);
+    return get_function_return_type(fn) != NULL;
+}
+
+// Is this call one that can be dispatched when its VALUE IS DISCARDED? That is
+// the per-name wrapper above, OR a per-call-site wrapper - which needs no callee
+// name and so covers a namespaced builtin in either spelling (`Time.sleep(200)`,
+// `Time::sleep(200)`). See the SpawnSite block in codegen.c for what a site
+// refuses and why.
+bool par_call_is_dispatchable_discarded(Expr* call) {
+    if (!call) return false;
+    if (par_call_is_spawnable(call)) return true;
+    return spawn_site_feasible(call) != 0;
+}
+
+// THE classifier for "what does this parallel{} branch lower to".
+//
+// Both the lowering below and codegen_lambda.c's wrapper-collecting scan call
+// this, so a shape one accepts cannot be a shape the other misses - which would
+// reference a wrapper nobody emitted, or silently run a branch sequentially. The
+// two used to carry hand-copied shape lists and a hand-copied predicate; keeping
+// them byte-identical was a standing comment in both files rather than a property
+// of the code.
+//
+// *out_call  - the call expression to spawn (all kinds but PAR_SEQ)
+// *out_bound - the variable the joined value lands in (PAR_SPAWN_BOUND only)
+// *out_declares - 1 = the lowering must also DECLARE that variable
+ParBranch par_branch_classify(Stmt* s, Expr** out_call, Token* out_bound,
+                              int* out_declares) {
+    if (out_call) *out_call = NULL;
+    if (out_declares) *out_declares = 0;
+    if (!s) return PAR_SEQ;
+
+    // `var x = spawn f()` - the explicit form.
+    if (s->type == STMT_VAR && s->var.init && s->var.init->type == EXPR_SPAWN) {
+        if (out_call) *out_call = s->var.init->spawn.call;
+        if (out_bound) *out_bound = s->var.name;
+        if (out_declares) *out_declares = 1;
+        return PAR_SPAWN_BOUND;
+    }
+    // `var x = f()` - no `spawn` keyword. Dispatched as an implicit spawn so it
+    // joins at `}` like the explicit form.
+    if (s->type == STMT_VAR && s->var.init && par_call_is_spawnable(s->var.init)) {
+        if (out_call) *out_call = s->var.init;
+        if (out_bound) *out_bound = s->var.name;
+        if (out_declares) *out_declares = 1;
+        return PAR_SPAWN_BOUND;
+    }
+    // `x = f()` where x was declared ABOVE the block. Assignment is an EXPRESSION
+    // in this AST, so it arrives as STMT_EXPR/EXPR_ASSIGN. No declaration is
+    // emitted - x already exists and must stay the same variable.
+    if (s->type == STMT_EXPR && s->expr && s->expr->type == EXPR_ASSIGN &&
+        par_call_is_spawnable(s->expr->assign.value)) {
+        if (out_call) *out_call = s->expr->assign.value;
+        if (out_bound) *out_bound = s->expr->assign.name;
+        return PAR_SPAWN_BOUND;
+    }
+    // A bare `spawn f()` MUST be joined at the closing brace too, else it escapes
+    // the structured-concurrency barrier and could outlive the block.
+    if (s->type == STMT_SPAWN && s->spawn.call) {
+        if (out_call) *out_call = s->spawn.call;
+        return PAR_SPAWN_DISCARD;
+    }
+    // A bare call statement whose result is discarded - `f()` on its own line.
+    if (s->type == STMT_EXPR && s->expr &&
+        par_call_is_dispatchable_discarded(s->expr)) {
+        if (out_call) *out_call = s->expr;
+        return PAR_SPAWN_DISCARD;
+    }
+    return PAR_SEQ;
+}
+
+// The C type a parallel-block branch's value variable must have, derived from the
+// spawned function's Wyn return type. `slot` indexes per-block storage for struct
+// type names, which have to outlive this call.
+static const char* par_spawn_value_ctype(Expr* call, int slot) {
+    extern const char* get_function_return_type(const char*);
+    if (!call || call->type != EXPR_CALL ||
+        !call->call.callee || call->call.callee->type != EXPR_IDENT) return "long long";
+    char fn[256];
+    token_to_cstr(fn, sizeof(fn), call->call.callee->token);
+    const char* rt = get_function_return_type(fn);
+    if (!rt) return "long long";
+    if (strcmp(rt, "string") == 0) return "const char*";
+    if (strcmp(rt, "float") == 0) return "double";
+    if (strcmp(rt, "bool") == 0) return "bool";
+    if (strcmp(rt, "int") == 0) return "long long";
+    // Struct return: the wrapper heap-boxes the result; the value var is declared
+    // as the struct type and the box is dereferenced at the join. (It used to stay
+    // long long - the pointer leaked into the value var as an int.)
+    static char _par_st[64][64];
+    if (slot < 0 || slot >= 64) return "long long";
+    snprintf(_par_st[slot], 64, "%s", rt);
+    return _par_st[slot];
+}
+
 void codegen_stmt(Stmt* stmt) {
     if (!stmt) return;
     emit_line(stmt);
@@ -701,18 +806,19 @@ void codegen_stmt(Stmt* stmt) {
                     // agree by construction instead of emitting C that mixes the
                     // two (check-passes-then-codegen-fails, or worse a silent
                     // wrong answer for `xs[i] = v`). See codegen.c's veto block.
-                    if (is_int_array) {
-                        char _vvn[128]; token_to_cstr(_vvn, sizeof(_vvn), stmt->var.name);
-                        extern int is_int_array_vetoed(const char*);
-                        if (is_int_array_vetoed(_vvn)) is_int_array = false;
-                    }
-                    if (is_int_array) {
-                        c_type = "WynIntArray";
+                    //
+                    // Via THE authority, which also folds in the spawn-future
+                    // table and records the answer, so the initializer expression
+                    // and every accessor read the same decision. This branch used
+                    // to ask the veto ALONE while the initializer asked the
+                    // spawn-future table alone: `var ts: [int] = []` + a loop of
+                    // `ts.push(spawn f())` emitted
+                    // `WynArray ts = ({ WynIntArray ... })`.
+                    {
                         char _vn[128]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
-                        extern void register_int_array_var(const char*);
-                        register_int_array_var(_vn);
-                    } else {
-                        c_type = "WynArray";
+                        extern const char* wyn_array_decl_c_type(const char*, int, Type*);
+                        c_type = wyn_array_decl_c_type(_vn, is_int_array ? 1 : 0,
+                                    stmt->var.init ? stmt->var.init->expr_type : NULL);
                     }
                     needs_arc_management = false;
                 } else if (stmt->var.type->type == EXPR_CALL) {
@@ -939,14 +1045,15 @@ void codegen_stmt(Stmt* stmt) {
                         c_type = "long long";
                     }
                 } else if (stmt->var.init->type == EXPR_ARRAY || stmt->var.init->type == EXPR_LIST_COMP) {
-                    // Check if this array holds spawn futures (detected in pre-scan)
+                    // Representation via THE authority (codegen.c): it folds the
+                    // spawn-future table, the [int] opt-in and the veto into one
+                    // answer and records it. This branch used to consult the
+                    // spawn-future table ALONE and ignore the veto, the mirror
+                    // image of the annotated branch above.
                     char _vn[256]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
-                    if (is_spawn_array(_vn)) {
-                        c_type = "WynIntArray";
-                    } else {
-                        c_type = "WynArray";
-                        register_array_var(_vn);
-                    }
+                    extern const char* wyn_array_decl_c_type(const char*, int, Type*);
+                    c_type = wyn_array_decl_c_type(_vn, 0, stmt->var.init->expr_type);
+                    if (strcmp(c_type, "WynArray") == 0) register_array_var(_vn);
                     needs_arc_management = false;
                 } else if (stmt->var.init->type == EXPR_MAP) {
                     // Map type - use the typedef
@@ -1013,7 +1120,24 @@ void codegen_stmt(Stmt* stmt) {
                         // Check if object is a string - these methods return string, not array
                         bool _obj_is_string = stmt->var.init->method_call.object->expr_type &&
                             stmt->var.init->method_call.object->expr_type->kind == TYPE_STRING;
-                        if (!_obj_is_string && (strcmp(_mn2, "sort") == 0 || strcmp(_mn2, "reverse") == 0 ||
+                        // This list is METHOD NAMES ONLY - it never asked what the
+                        // receiver was, beyond "not a string". `map` and `filter` are
+                        // also Option/Result combinators (#392), so `o = g().map(f)`
+                        // was declared `WynArray` and initialised from an OptionInt
+                        // ("initializing 'WynArray' with an expression of incompatible
+                        // type 'OptionInt'"). The checker's own answer wins where it has
+                        // one: it types a combinator result as the family struct.
+                        bool _res_is_optlike = false;
+                        if (stmt->var.init->expr_type &&
+                            stmt->var.init->expr_type->kind == TYPE_STRUCT &&
+                            stmt->var.init->expr_type->struct_type.name.length > 6) {
+                            char _rsn[128];
+                            token_to_cstr(_rsn, sizeof(_rsn), stmt->var.init->expr_type->struct_type.name);
+                            _res_is_optlike = strncmp(_rsn, "Option", 6) == 0 ||
+                                              strncmp(_rsn, "Result", 6) == 0;
+                        }
+                        if (!_obj_is_string && !_res_is_optlike &&
+                            (strcmp(_mn2, "sort") == 0 || strcmp(_mn2, "reverse") == 0 ||
                             strcmp(_mn2, "filter") == 0 || strcmp(_mn2, "map") == 0 ||
                             strcmp(_mn2, "unique") == 0 || strcmp(_mn2, "slice") == 0 ||
                             strcmp(_mn2, "flat_map") == 0 || strcmp(_mn2, "collect") == 0)) {
@@ -2388,11 +2512,14 @@ void codegen_stmt(Stmt* stmt) {
             if (needs_arc_management) {
                 codegen_expr(stmt->var.init);
             } else {
-                // Set spawn/int array flag for WynIntArray emission
+                // Emit the initializer in the representation the DECLARATION above
+                // just chose, via THE authority - which has recorded it, so the two
+                // cannot disagree. (This site used to OR the spawn-future and [int]
+                // tables while the declaration consulted the veto instead.)
                 bool _was_int_array = codegen_emit_int_array;
                 { char _vn[256]; token_to_cstr(_vn, sizeof(_vn), stmt->var.name);
-                  extern int is_int_array_var(const char*);
-                  if (is_spawn_array(_vn) || is_int_array_var(_vn)) codegen_emit_int_array = true; }
+                  extern int wyn_array_is_packed(const char*);
+                  if (wyn_array_is_packed(_vn)) codegen_emit_int_array = true; }
                 codegen_expr(stmt->var.init);
                 codegen_emit_int_array = _was_int_array;
             }
@@ -2710,9 +2837,23 @@ void codegen_stmt(Stmt* stmt) {
         case STMT_SPAWN: {
             // Fire-and-forget spawn: no Future, no return value
             // Uses wyn_spawn_fast for maximum throughput
-            if (stmt->spawn.call->type == EXPR_CALL && 
-                stmt->spawn.call->call.callee->type == EXPR_IDENT) {
-                
+            //
+            // A call no per-name wrapper can dispatch (a namespaced builtin in
+            // either spelling) uses the per-CALL-SITE wrapper the scan registered.
+            // This is a value-discarding position by construction, which is exactly
+            // what a site wrapper supports.
+            SpawnSite* _site = stmt->spawn.call ? spawn_site_lookup(stmt->spawn.call) : NULL;
+            if (_site) {
+                emit("{ ");
+                spawn_site_emit_args(_site);
+                emit("wyn_spawn_fast_traced((TaskFunc)__spawn_site_%d, __ss%d, __FILE__, __LINE__); }\n",
+                     _site->id, _site->id);
+                break;
+            }
+            if (stmt->spawn.call->type == EXPR_CALL &&
+                stmt->spawn.call->call.callee->type == EXPR_IDENT &&
+                spawn_callee_is_c_identifier(stmt->spawn.call->call.callee->token)) {
+
                 Expr* call = stmt->spawn.call;
                 Expr* callee = call->call.callee;
                 char func_name[256]; token_to_cstr(func_name, sizeof(func_name), callee->token);
@@ -2862,99 +3003,59 @@ void codegen_stmt(Stmt* stmt) {
             char joined_futs[64][160];
             const char* joined_ctypes[64];
             int joined_count = 0;
-            // Storage for synthesized implicit-spawn Exprs. These are written back
-            // into s->var.init, which the joining pass below re-reads, so they must
-            // outlive the loop iteration that creates them.
-            Expr implicit_spawns[64];
+            // Storage for synthesized implicit-spawn Exprs - one per dispatched
+            // branch that was not already written as `spawn`.
+            //
+            // ZERO-INITIALISED, and that is load-bearing: a synthesized Expr only ever
+            // has `type`, `spawn.call` and `_codegen_temp_id` assigned, so every other
+            // field - notably `expr_type`, which codegen_expr() now dereferences on
+            // EVERY expression via cg_expr_is_bool_typed() - would otherwise be
+            // whatever the reused stack frame happened to hold. That read is a garbage
+            // pointer dereference at -O2 and usually benign at -g, i.e. a crash that
+            // only appears in the build we ship.
+            Expr implicit_spawns[64] = {0};
             int implicit_spawn_count = 0;
 
             for (int i = 0; i < stmt->block.count; i++) {
                 Stmt* s = stmt->block.stmts[i];
-                bool is_spawn_var = (s->type == STMT_VAR && s->var.init &&
-                                     s->var.init->type == EXPR_SPAWN);
-                // `a = f()` inside parallel{} (no `spawn` keyword) used to lower
-                // to a PLAIN SEQUENTIAL CALL - the block named after parallelism
-                // was the only construct that didn't overlap. Treat a direct call
-                // to a known user fn as an implicit spawn so it joins at `}` like
-                // the explicit form. The synthesized EXPR_SPAWN reuses the exact
-                // same lowering, so pack/unpack can't disagree.
-                // NOTE: the guard MUST stay get_function_return_type() != NULL and
-                // MUST match codegen_lambda.c's STMT_PARALLEL scan byte for byte -
-                // namespaced builtins (`Time::now_millis`) lex as ONE identifier and
-                // would emit `void* __spawn_wrapper_Time::now_millis(...)`.
-                if (!is_spawn_var && s->type == STMT_VAR && s->var.init &&
-                    s->var.init->type == EXPR_CALL &&
-                    s->var.init->call.callee->type == EXPR_IDENT &&
-                    implicit_spawn_count < 64) {
-                    char _fn[256]; token_to_cstr(_fn, sizeof(_fn), s->var.init->call.callee->token);
-                    if (get_function_return_type(_fn)) {
-                        Expr* isp = &implicit_spawns[implicit_spawn_count++];
-                        isp->type = EXPR_SPAWN;
-                        isp->spawn.call = s->var.init;
-                        isp->_codegen_temp_id = -1;
-                        s->var.init = isp;
-                        is_spawn_var = true;
-                    }
-                }
-                // An UNBOUND spawn - bare `spawn f()` inside the block (its own
-                // STMT_SPAWN) - must ALSO be joined at the closing brace, else it
-                // escapes the structured-concurrency barrier (it would lower to a
-                // fire-and-forget wyn_spawn_fast_traced and could outlive the block).
-                // Wrap its call in an EXPR_SPAWN and reuse the joinable expression
-                // lowering, capturing the future with no value var (empty name →
-                // joined for the barrier only).
-                if (s->type == STMT_SPAWN && s->spawn.call && joined_count < 64) {
-                    Expr spawn_expr; spawn_expr.type = EXPR_SPAWN;
-                    spawn_expr.spawn.call = s->spawn.call;
-                    spawn_expr._codegen_temp_id = -1;
-                    snprintf(joined_names[joined_count], 128, "%s", "");   // no binding
-                    snprintf(joined_futs[joined_count], 160, "__par_fut_%d_%d", par_id, joined_count);
-                    joined_ctypes[joined_count] = "long long";
-                    emit("    Future* %s = ", joined_futs[joined_count]);
-                    codegen_expr(&spawn_expr);   // emits a joinable wyn_spawn_*(...)
-                    emit(";\n");
-                    joined_count++;
-                    continue;
-                }
-                if (is_spawn_var && joined_count < 64) {
-                    // Resolve the value C type from the spawned fn's return type.
-                    const char* vctype = "long long";
-                    Expr* call = s->var.init->spawn.call;
-                    if (call && call->type == EXPR_CALL &&
-                        call->call.callee->type == EXPR_IDENT) {
-                        char fn[256]; token_to_cstr(fn, sizeof(fn), call->call.callee->token);
-                        const char* rt = get_function_return_type(fn);
-                        if (rt) {
-                            if (strcmp(rt, "string") == 0) vctype = "const char*";
-                            else if (strcmp(rt, "float") == 0) vctype = "double";
-                            else if (strcmp(rt, "bool") == 0) vctype = "bool";
-                            else if (strcmp(rt, "int") == 0) vctype = "long long";
-                            else {
-                                // Struct return: the wrapper heap-boxes the
-                                // result; declare the value var as the struct
-                                // type and deref the box at the join. (It used
-                                // to stay long long - the pointer leaked into
-                                // the value var as an int.)
-                                static char _par_st[64][64];
-                                snprintf(_par_st[joined_count], 64, "%s", rt);
-                                vctype = _par_st[joined_count];
-                            }
-                        }
-                    }
-                    char vn[128]; token_to_cstr(vn, sizeof(vn), s->var.name);
-                    snprintf(joined_names[joined_count], 128, "%s", vn);
-                    snprintf(joined_futs[joined_count], 160, "__par_fut_%d_%d", par_id, joined_count);
-                    joined_ctypes[joined_count] = vctype;
-                    // Declare value var + spawn into hidden future.
-                    emit("    %s %s;\n", vctype, vn);
-                    emit("    Future* %s = ", joined_futs[joined_count]);
-                    codegen_expr(s->var.init);   // emits wyn_spawn_*(...)
-                    emit(";\n");
-                    joined_count++;
-                } else {
+                Expr* pcall = NULL; Token pbound = {0}; int pdeclares = 0;
+                ParBranch kind = par_branch_classify(s, &pcall, &pbound, &pdeclares);
+                if (kind == PAR_SEQ || joined_count >= 64 || implicit_spawn_count >= 64) {
                     emit("    ");
                     codegen_stmt(s);
+                    continue;
                 }
+                // Every dispatched shape goes through ONE emission: wrap the call in
+                // an EXPR_SPAWN and let the joinable spawn-expression lowering emit
+                // it, so pack and unpack cannot disagree between shapes.
+                // `var x = spawn f()` already IS an EXPR_SPAWN - reuse that node
+                // rather than nesting a second one around its call.
+                Expr* isp;
+                if (s->type == STMT_VAR && s->var.init &&
+                    s->var.init->type == EXPR_SPAWN) {
+                    isp = s->var.init;
+                } else {
+                    isp = &implicit_spawns[implicit_spawn_count++];
+                    isp->type = EXPR_SPAWN;
+                    isp->spawn.call = pcall;
+                    isp->_codegen_temp_id = -1;
+                }
+                snprintf(joined_futs[joined_count], 160, "__par_fut_%d_%d", par_id, joined_count);
+                if (kind == PAR_SPAWN_DISCARD) {
+                    snprintf(joined_names[joined_count], 128, "%s", "");   // no binding
+                    joined_ctypes[joined_count] = "long long";
+                } else {
+                    char vn[128]; token_to_cstr(vn, sizeof(vn), pbound);
+                    snprintf(joined_names[joined_count], 128, "%s", vn);
+                    joined_ctypes[joined_count] = par_spawn_value_ctype(pcall, joined_count);
+                    // Only a NEW declaration emits the value variable; `x = f()`
+                    // joins into the x that already exists in the enclosing scope.
+                    if (pdeclares) emit("    %s %s;\n", joined_ctypes[joined_count], vn);
+                }
+                emit("    Future* %s = ", joined_futs[joined_count]);
+                codegen_expr(isp);           // emits a joinable wyn_spawn_*(...)
+                emit(";\n");
+                joined_count++;
             }
 
             // Join all spawned tasks before leaving the block. With a timeout,
@@ -4677,6 +4778,50 @@ void codegen_stmt(Stmt* stmt) {
                     pop_scope(); emit("}\n");
                     break;
                 }
+                // V-38 (#391): set iteration, `for x in s`. This had NO branch at all,
+                // so it fell through to the array path and emitted
+                // `WynArray __iter_array = s;` against a `WynHashSet*` - iterating any
+                // set passed `wyn check` and then failed as a bare "internal codegen
+                // error". The elements are materialised ONCE per loop
+                // (hashset_elements), then walked with the element-typed getter, so the
+                // loop is O(n) and an int set binds a `long long` rather than reading
+                // its members as `char*`.
+                //
+                // ORDER IS BUCKET ORDER, not insertion order - the same caveat
+                // hashmap_keys() carries. Nothing in the language promises otherwise.
+                if (stmt->for_stmt.array_expr->expr_type &&
+                    stmt->for_stmt.array_expr->expr_type->kind == TYPE_SET) {
+                    Type* set_elem = stmt->for_stmt.array_expr->expr_type->set_type.element_type;
+                    const char* eget = "array_get_str"; const char* ecty = "const char*";
+                    if (set_elem) {
+                        switch (set_elem->kind) {
+                            case TYPE_INT:   eget = "array_get_int";   ecty = "long long"; break;
+                            case TYPE_FLOAT: eget = "array_get_float"; ecty = "double"; break;
+                            case TYPE_BOOL:  eget = "array_get_bool";  ecty = "bool"; break;
+                            default: break;
+                        }
+                    }
+                    Token lv = stmt->for_stmt.loop_var;
+                    emit("{\n"); push_scope();
+                    emit("    WynArray __for_set = hashset_elements(");
+                    codegen_expr(stmt->for_stmt.array_expr);
+                    emit(");\n");
+                    emit("    for (long long __si = 0; __si < __for_set.count; __si++) {\n");
+                    emit("        %s %.*s = %s(__for_set, __si);\n",
+                         ecty, lv.length, lv.start, eget);
+                    if (strcmp(ecty, "const char*") == 0) {
+                        char _lb[256]; token_to_cstr(_lb, sizeof(_lb), lv);
+                        extern void register_string_var(const char*); register_string_var(_lb);
+                    }
+                    if (stmt->for_stmt.has_index) {
+                        emit("        long long %.*s = __si;\n",
+                             stmt->for_stmt.index_var.length, stmt->for_stmt.index_var.start);
+                    }
+                    if (stmt->for_stmt.body) codegen_stmt(stmt->for_stmt.body);
+                    emit("    }\n");
+                    pop_scope(); emit("}\n");
+                    break;
+                }
                 // L3: Iterator-based for-in (generator functions)
                 if (stmt->for_stmt.array_expr->type == EXPR_CALL &&
                     stmt->for_stmt.array_expr->call.callee->type == EXPR_IDENT) {
@@ -4706,11 +4851,15 @@ void codegen_stmt(Stmt* stmt) {
                         break;
                     }
                 }
-                // Check if iterating over a WynIntArray
+                // Check if iterating over a WynIntArray - via THE authority, so this
+                // lowering covers every variable that IS one. It used to ask the
+                // [int] opt-in table alone, so an array of spawn futures (declared
+                // WynIntArray by the spawn-future table) fell through to the generic
+                // arm below and emitted `WynArray __iter_array = ts;`.
                 if (stmt->for_stmt.array_expr->type == EXPR_IDENT) {
                     char _ian[128]; token_to_cstr(_ian, sizeof(_ian), stmt->for_stmt.array_expr->token);
-                    extern int is_int_array_var(const char*);
-                    if (is_int_array_var(_ian)) {
+                    extern int wyn_array_is_packed(const char*);
+                    if (wyn_array_is_packed(_ian)) {
                         emit("{\n"); push_scope();
                         emit("    WynIntArray __iter_iarr = "); codegen_expr(stmt->for_stmt.array_expr); emit(";\n");
                         emit("    for (long long __i = 0; __i < __iter_iarr.count; __i++) {\n");

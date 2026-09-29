@@ -1,5 +1,8 @@
 #!/bin/bash
-# The registry advertises ten Option/Result combinators the language does not have.
+# THE HISTORY THIS GATE CARRIES, because the arms below were INVERTED once and the reason
+# matters more than the arms.
+#
+# src/types.c used to advertise ten Option/Result combinators the language did not have.
 # Calling one passed `wyn check` and then failed in the C compiler, with a message that
 # called a TYPE a namespace and blamed the user's spelling:
 #
@@ -9,29 +12,33 @@
 #       # then: Error: unknown method 'OptionInt.map' on namespace 'OptionInt'
 #       #       Help: 'map' is not a function Wyn knows about. Check the spelling...
 #
-# ...for a method `src/types.c` itself lists. That is the worst kind of wrong diagnosis:
-# it sends the reader to check a name the compiler advertised.
+# ...for a method `src/types.c` itself listed. The rows were removed and the calls were
+# rejected with a real message, and THIS GATE PINNED THAT REJECTION - with a note saying
+# "if a combinator is ever really implemented, its reject arm fails and says so."
 #
-# THE TEN: option {map, and_then, filter, expect, or_else}
-#          result {map, map_err, and_then, expect, or_else}
+# #392 implemented them, so those fourteen arms have been flipped to ACCEPT arms here,
+# deliberately. They are kept rather than deleted because they are the only arms that
+# pin the original *diagnosis* path staying dead: nothing may report "Option does not
+# have 'map()'" again.
 #
-# WHY NONE OF THEM IS "NEARLY WORKING". The registry lowers them to `wyn_optional_map`,
-# `wyn_result_map` and friends, and SOME of those names really are in the archive
-# (wyn_optional_expect, wyn_optional_or_else, wyn_result_map, wyn_result_map_err,
-# wyn_result_and_then). That is a red herring, and checking it is what took the time:
-# those functions take `WynOptional*` / `WynResult*` - a heap-boxed representation that
-# is NOT what codegen emits. Codegen emits the monomorphic value struct family instead
-# (`OptionInt_map`, `ResultInt_expect`), which is why the C compiler asks for a name
-# nothing defines. The archive functions belong to a retired parallel model, the same way
-# types.c's own comment describes a retired WynJson* pairs model. So wiring the registry
-# to them would not compile either; they are two different representations.
+# WHY THE OLD REJECTION WAS RIGHT AT THE TIME, and why the implementation did NOT reuse
+# the registry rows. Those rows lowered to `wyn_optional_map`, `wyn_result_map` and
+# friends, and SOME of those names really are in the archive (wyn_optional_expect,
+# wyn_optional_or_else, wyn_result_map, wyn_result_map_err, wyn_result_and_then). That is
+# a red herring: those functions take `WynOptional*` / `WynResult*` - a heap-boxed
+# representation that is NOT what codegen emits. Codegen emits the monomorphic value
+# struct family (`OptionInt`, `ResultString`), so repointing the registry at the archive
+# would not have compiled either; they are two different representations. #392 therefore
+# lowers each combinator INLINE over the family struct and adds no runtime function at
+# all. Full coverage (every method x every payload x both build modes) lives in
+# tests/errors/run_option_combinator_api_test.sh; this file keeps the ORIGINAL programs
+# from the defect report, now asserted to produce answers.
 #
-# What the live representation actually provides, read off the archive rather than
-# guessed - `nm runtime/libwyn_rt.a | grep ' T _Option'`:
+# What the live representation provides, read off the archive rather than guessed -
+# `nm runtime/libwyn_rt.a | grep ' T _Option'`:
 #     Option: Some None is_some is_none unwrap unwrap_or to_string
 #     Result: Ok Err is_ok is_err unwrap unwrap_err unwrap_or to_string
-# Every one of those is pinned in the allow half below, because a rule that rejects the
-# ten must not touch the eight. (2026-09)
+# Every one of those is still pinned in the allow half below. (2026-09)
 set -uo pipefail
 WYN="${WYN:-./wyn}"
 WYNABS=$(cd "$(dirname "$WYN")" && pwd)/$(basename "$WYN")
@@ -43,14 +50,9 @@ bad(){ echo "  FAIL  $1"; FAIL=$((FAIL+1)); }
 OPT_SRC='fn g() -> int? { return Some(1) }'
 RES_SRC='fn h() -> Result<int, string> { return Ok(1) }'
 
-# reject <label> <program>
-reject(){
-  printf '%b\n' "$2" > "$TMP/r.wyn"
-  out=$("$WYNABS" check "$TMP/r.wyn" 2>&1); code=$?
-  if [ $code -ne 0 ] && echo "$out" | grep -q "does not have"; then
-    ok "reject: $1"
-  else bad "reject: $1 (code=$code) [$(echo "$out" | tr '\n' '|' | cut -c1-130)]"; fi
-}
+# Every arm that used to call reject() now calls allow(): #392 implemented these. The
+# "does not have" message must NOT come back for any of them, which allow() proves by
+# requiring `wyn check` to pass AND the program to produce the right answer.
 
 # allow <label> <program> <expected-stdout>
 allow(){
@@ -65,28 +67,42 @@ allow(){
   else bad "allow: $1 - got [$(echo "$got" | tr '\n' '|')] want [$(echo "$3" | tr '\n' '|')]"; fi
 }
 
-echo "-- rejected: the five Option combinators the language does not have"
-reject "option.map"      "$OPT_SRC\nfn main() {\n  print(g().map(fn(x: int) -> int { return x + 1 }))\n}"
-reject "option.and_then" "$OPT_SRC\nfn main() {\n  print(g().and_then(fn(x: int) -> int { return x + 1 }))\n}"
-reject "option.filter"   "$OPT_SRC\nfn main() {\n  print(g().filter(fn(x: int) -> bool { return x > 0 }))\n}"
-reject "option.expect"   "$OPT_SRC\nfn main() {\n  print(g().expect(\"boom\"))\n}"
+echo "-- the five Option combinators, on the EXACT programs from the defect report"
+allow "option.map"      "$OPT_SRC\nfn main() {\n  print(g().map(fn(x: int) -> int { return x + 1 }))\n}" 'Some(2)'
+# and_then FLATTENS, so its callback has to return an Option. The original arm passed a
+# plain `-> int` lambda, which is now a typed error of its own (pinned below); the program
+# is corrected here to the shape and_then means.
+allow "option.and_then" "fn inc1(x: int) -> int? { return Some(x + 1) }\n$OPT_SRC\nfn main() {\n  print(g().and_then(inc1))\n}" 'Some(2)'
+allow "option.filter"   "$OPT_SRC\nfn main() {\n  print(g().filter(fn(x: int) -> bool { return x > 0 }))\n}" 'Some(1)'
+allow "option.expect"   "$OPT_SRC\nfn main() {\n  print(g().expect(\"boom\"))\n}" '1'
 # or_else takes a NAMED function, not a lambda: a lambda cannot declare an `int?` return
-# ("Expected '=>' or '{' after lambda signature"), which is a separate parser gap. Written
-# this way so the arm exercises THIS rule rather than that parse error.
-reject "option.or_else"  "fn fb() -> int? { return Some(2) }\n$OPT_SRC\nfn main() {\n  print(g().or_else(fb))\n}"
+# ("Expected '=>' or '{' after lambda signature"), which is a separate parser gap and is
+# still true. Written this way so the arm exercises the combinator, not that parse error.
+allow "option.or_else"  "fn fb() -> int? { return Some(2) }\n$OPT_SRC\nfn main() {\n  print(g().or_else(fb))\n}" 'Some(1)'
 
-echo "-- rejected: the five Result combinators, same story"
-reject "result.map"      "$RES_SRC\nfn main() {\n  print(h().map(fn(x: int) -> int { return x + 1 }))\n}"
-reject "result.and_then" "$RES_SRC\nfn main() {\n  print(h().and_then(fn(x: int) -> int { return x + 1 }))\n}"
-reject "result.map_err"  "$RES_SRC\nfn main() {\n  print(h().map_err(fn(e: string) -> string { return e }))\n}"
-reject "result.expect"   "$RES_SRC\nfn main() {\n  print(h().expect(\"boom\"))\n}"
-reject "result.or_else"  "fn rfb() -> Result<int, string> { return Ok(2) }\n$RES_SRC\nfn main() {\n  print(h().or_else(rfb))\n}"
+echo "-- the five Result combinators, same programs"
+allow "result.map"      "$RES_SRC\nfn main() {\n  print(h().map(fn(x: int) -> int { return x + 1 }))\n}" 'Ok(2)'
+allow "result.and_then" "fn inc1(x: int) -> Result<int, string> { return Ok(x + 1) }\n$RES_SRC\nfn main() {\n  print(h().and_then(inc1))\n}" 'Ok(2)'
+allow "result.map_err"  "$RES_SRC\nfn main() {\n  print(h().map_err(fn(e: string) -> string { return e }))\n}" 'Ok(1)'
+allow "result.expect"   "$RES_SRC\nfn main() {\n  print(h().expect(\"boom\"))\n}" '1'
+allow "result.or_else"  "fn rfb() -> Result<int, string> { return Ok(2) }\n$RES_SRC\nfn main() {\n  print(h().or_else(rfb))\n}" 'Ok(1)'
 
-echo "-- rejected: independent of the payload type, and of lambda vs named function"
-reject "OptionString.map"  "fn gs() -> string? { return Some(\"a\") }\nfn main() {\n  print(gs().map(fn(x: string) -> string { return x }))\n}"
-reject "OptionFloat.filter" "fn gf() -> float? { return Some(1.5) }\nfn main() {\n  print(gf().filter(fn(x: float) -> bool { return x > 0.0 }))\n}"
-reject "option.map named fn" "fn inc(x: int) -> int { return x + 1 }\n$OPT_SRC\nfn main() {\n  print(g().map(inc))\n}"
-reject "chained off unwrap_or" "$OPT_SRC\nfn main() {\n  print(g().map(fn(x: int) -> int { return x }).unwrap_or(0))\n}"
+echo "-- independent of the payload type, and of lambda vs named function"
+allow "OptionString.map"  "fn gs() -> string? { return Some(\"a\") }\nfn main() {\n  print(gs().map(fn(x: string) -> string { return x }))\n}" 'Some("a")'
+allow "OptionFloat.filter" "fn gf() -> float? { return Some(1.5) }\nfn main() {\n  print(gf().filter(fn(x: float) -> bool { return x > 0.0 }))\n}" 'Some(1.5)'
+allow "option.map named fn" "fn inc(x: int) -> int { return x + 1 }\n$OPT_SRC\nfn main() {\n  print(g().map(inc))\n}" 'Some(2)'
+allow "chained off unwrap_or" "$OPT_SRC\nfn main() {\n  print(g().map(fn(x: int) -> int { return x }).unwrap_or(0))\n}" '1'
+
+echo "-- and the old DIAGNOSIS must never come back for these names"
+# The message the removed rule produced was "Option does not have 'map()'". If any arm
+# above ever regresses to it, allow() already fails; this arm states the promise directly
+# for the one spelling a future family-membership rule is most likely to over-reach on.
+d="$TMP/nodiag"; mkdir -p "$d"
+printf '%b\n' "$OPT_SRC\nfn main() {\n  print(g().map(fn(x: int) -> int { return x + 1 }))\n}" > "$d/n.wyn"
+nout=$("$WYNABS" check "$d/n.wyn" 2>&1)
+if echo "$nout" | grep -q "does not have 'map()'"; then
+  bad "no 'Option does not have map()' diagnosis"
+else ok "no 'Option does not have map()' diagnosis"; fi
 
 echo "-- allowed: everything the live representation really provides (read off the archive)"
 allow "option.is_some / is_none" "$OPT_SRC\nfn main() {\n  print(g().is_some())\n  print(g().is_none())\n}" 'true

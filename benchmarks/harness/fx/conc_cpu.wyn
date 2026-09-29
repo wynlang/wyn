@@ -1,0 +1,20 @@
+fn fib(n: int) -> int {
+    if n <= 1 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+fn main() -> int {
+    // one fib(35) alone, as the baseline the "true 4x" claim is measured against
+    t0 = DateTime.micros()
+    var one = fib(35)
+    t1 = DateTime.micros()
+    print("1x fib(35) inline us=${t1 - t0} r=${one}")
+    for n in [4, 6, 8, 12, 24] {
+        t2 = DateTime.micros()
+        var ts = []
+        for i in 0..n { ts.push(spawn fib(35)) }
+        r = await_all(ts)
+        t3 = DateTime.micros()
+        print("${n}x fib(35) spawn+await_all us=${t3 - t2} n=${r.len()}")
+    }
+    return 0
+}

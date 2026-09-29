@@ -1,0 +1,8 @@
+fn tiny(x: int) -> int { return x }
+fn main() -> int {
+    t0 = DateTime.micros()
+    for i in 0..1000000 { spawn tiny(i) }
+    t1 = DateTime.micros()
+    print("fire-and-forget 1M us=${t1 - t0}")
+    return 0
+}

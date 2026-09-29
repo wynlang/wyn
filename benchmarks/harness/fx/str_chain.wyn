@@ -1,0 +1,12 @@
+fn main() -> int {
+    s = "  hello world  "
+    var n = 0
+    t0 = DateTime.micros()
+    for i in 0..100000 {
+        var r = s.upper().trim()
+        n = n + r.len()
+    }
+    t1 = DateTime.micros()
+    print("100K chain us=${t1 - t0} n=${n}")
+    return 0
+}

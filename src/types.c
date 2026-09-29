@@ -6,70 +6,70 @@
 // Method signature table - maps (receiver_type, method_name) -> return_type
 static const MethodSignature method_signatures[] = {
     // String methods
-    {"string", "upper", "string", 0},
-    {"string", "lower", "string", 0},
-    {"string", "trim", "string", 0},
-    {"string", "to_string", "string", 0}, // identity - supported by codegen (generic to_string path)
-    {"string", "trim_left", "string", 0},
-    {"string", "trim_right", "string", 0},
-    {"string", "split", "array", 1},     // Returns array of strings
-    {"string", "charAt", "string", 1},   // Returns single char as string
-    {"string", "capitalize", "string", 0},
-    {"string", "title", "string", 0},
-    {"string", "reverse", "string", 0},
-    {"string", "to_bytes", "array", 0},  // Returns Vec<int>
-    {"string", "bytes", "array", 0},
-    {"string", "chars", "array", 0},     // Returns Vec<string>
-    {"string", "len", "int", 0},
-    {"string", "is_empty", "bool", 0},
-    {"string", "contains", "bool", 1},
-    {"string", "starts_with", "bool", 1},
-    {"string", "ends_with", "bool", 1},
-    {"string", "index_of", "int", 1},    // Returns -1 if not found
-    {"string", "replace", "string", 2},
-    {"string", "slice", "string", 2},
-    {"string", "substring", "string", 2},
-    {"string", "repeat", "string", 1},
-    {"string", "pad_left", "string", 2},
-    {"string", "pad_right", "string", 2},
-    {"string", "lines", "array", 0},     // Returns Vec<string>
-    {"string", "words", "array", 0},     // Returns Vec<string>
-    {"string", "concat", "string", 1},
-    {"string", "replace_all", "string", 2},  // replace_all(old, new)
-    {"string", "last_index_of", "int", 1},   // Returns -1 if not found
-    {"string", "is_alpha", "bool", 0},       // Check if all alphabetic
-    {"string", "is_digit", "bool", 0},       // Check if all numeric
-    {"string", "is_alnum", "bool", 0},       // Check if alphanumeric
-    {"string", "is_whitespace", "bool", 0},  // Check if all whitespace
-    {"string", "char_at", "string", 1},      // Get char at index
-    {"string", "equals", "bool", 1},         // String equality
-    {"string", "count", "int", 1},           // Count occurrences
+    {"string", "upper", "string", ""},
+    {"string", "lower", "string", ""},
+    {"string", "trim", "string", ""},
+    {"string", "to_string", "string", ""}, // identity - supported by codegen (generic to_string path)
+    {"string", "trim_left", "string", ""},
+    {"string", "trim_right", "string", ""},
+    {"string", "split", "array", "string"},     // Returns array of strings
+    {"string", "charAt", "string", "int"},   // Returns single char as string
+    {"string", "capitalize", "string", ""},
+    {"string", "title", "string", ""},
+    {"string", "reverse", "string", ""},
+    {"string", "to_bytes", "array", ""},  // Returns Vec<int>
+    {"string", "bytes", "array", ""},
+    {"string", "chars", "array", ""},     // Returns Vec<string>
+    {"string", "len", "int", ""},
+    {"string", "is_empty", "bool", ""},
+    {"string", "contains", "bool", "string"},
+    {"string", "starts_with", "bool", "string"},
+    {"string", "ends_with", "bool", "string"},
+    {"string", "index_of", "int", "string"},    // Returns -1 if not found
+    {"string", "replace", "string", "string, string"},
+    {"string", "slice", "string", "int, int"},
+    {"string", "substring", "string", "int, int"},
+    {"string", "repeat", "string", "int"},
+    {"string", "pad_left", "string", "int, string"},
+    {"string", "pad_right", "string", "int, string"},
+    {"string", "lines", "array", ""},     // Returns Vec<string>
+    {"string", "words", "array", ""},     // Returns Vec<string>
+    {"string", "concat", "string", "string"},
+    {"string", "replace_all", "string", "string, string"},  // replace_all(old, new)
+    {"string", "last_index_of", "int", "string"},   // Returns -1 if not found
+    {"string", "is_alpha", "bool", ""},       // Check if all alphabetic
+    {"string", "is_digit", "bool", ""},       // Check if all numeric
+    {"string", "is_alnum", "bool", ""},       // Check if alphanumeric
+    {"string", "is_whitespace", "bool", ""},  // Check if all whitespace
+    {"string", "char_at", "string", "int"},      // Get char at index
+    {"string", "equals", "bool", "string"},         // String equality
+    {"string", "count", "int", "string"},           // Count occurrences
     // is_numeric means "looks like a DECIMAL number, int or float" - so
     // "1.5".is_numeric() is true and that is correct, 1.5 IS a number. It is
     // NOT the predicate that tells you `.to_int()` is safe; that one is
     // is_int(), which is literally to_int_checked().is_ok(). Gating a to_int on
     // is_numeric() was the V-18 trap: the true answer still panicked.
-    {"string", "is_numeric", "bool", 0},     // Check if numeric (int or float)
-    {"string", "is_int", "bool", 0},         // to_int_checked().is_ok() - the predicate that gates to_int
-    {"string", "to_int", "int", 0},          // Parse string to int (PANICS on garbage)
+    {"string", "is_numeric", "bool", ""},     // Check if numeric (int or float)
+    {"string", "is_int", "bool", ""},         // to_int_checked().is_ok() - the predicate that gates to_int
+    {"string", "to_int", "int", ""},          // Parse string to int (PANICS on garbage)
     // The catchable parses. V-18: before these there was no
     // string->number that could not abort the process, so no CLI could read
     // untrusted input. Uppercase return types are resolved as builtin types by
     // name in checker.c's table mapper, so no per-name special case is needed.
-    {"string", "to_int_checked", "ResultInt", 0},      // -> Result<int, string>
-    {"string", "to_float_checked", "ResultFloat", 0},  // -> Result<float, string>
-    {"string", "ascii", "int", 0},           // ASCII value of first char
-    {"string", "to_float", "float", 0},      // Parse string to float
-    {"string", "parse_int", "int", 0},       // Parse string to int (alias)
-    {"string", "parse_float", "float", 0},   // Parse string to float (alias)
-    {"string", "parse_json", "json", 0},     // Parse JSON string, returns json object
+    {"string", "to_int_checked", "ResultInt", ""},      // -> Result<int, string>
+    {"string", "to_float_checked", "ResultFloat", ""},  // -> Result<float, string>
+    {"string", "ascii", "int", ""},           // ASCII value of first char
+    {"string", "to_float", "float", ""},      // Parse string to float
+    {"string", "parse_int", "int", ""},       // Parse string to int (alias)
+    {"string", "parse_float", "float", ""},   // Parse string to float (alias)
+    {"string", "parse_json", "json", ""},     // Parse JSON string, returns json object
     
     // JSON methods
-    {"json", "get_string", "string", 1},     // Get string value by key
-    {"json", "get_int", "int", 1},           // Get int value by key
-    {"json", "get_float", "float", 1},       // Get float value by key
-    {"json", "get_bool", "bool", 1},         // Get bool value by key
-    {"json", "free", "void", 0},             // Free JSON object
+    {"json", "get_string", "string", "string"},     // Get string value by key
+    {"json", "get_int", "int", "string"},           // Get int value by key
+    {"json", "get_float", "float", "string"},       // Get float value by key
+    {"json", "get_bool", "bool", "string"},         // Get bool value by key
+    {"json", "free", "void", ""},             // Free JSON object
     // The WRITERS were missing from this table and from dispatch_method below,
     // and a json method absent from BOTH emits nothing at all - so
     // `j.set_int("i", 1)` lowered to an empty statement and `j.stringify()` came
@@ -77,98 +77,98 @@ static const MethodSignature method_signatures[] = {
     // the same gap produced `long long v = ;` -> "expected expression". The
     // readers were present, which is why half the surface worked. See the
     // matching entries in dispatch_method for the C functions.
-    {"json", "set_string", "void", 2},       // Set string value by key
-    {"json", "set_int", "void", 2},          // Set int value by key
-    {"json", "set_float", "void", 2},        // Set float value by key
-    {"json", "set_bool", "void", 2},         // Set bool value by key
-    {"json", "set_null", "void", 1},         // Set an explicit JSON null
-    {"json", "set", "void", 2},              // Alias of set_string
-    {"json", "stringify", "string", 0},      // Serialize to JSON text
-    {"json", "to_pretty_string", "string", 0},
+    {"json", "set_string", "void", "string, string"},       // Set string value by key
+    {"json", "set_int", "void", "string, int"},          // Set int value by key
+    {"json", "set_float", "void", "string, float"},        // Set float value by key
+    {"json", "set_bool", "void", "string, bool"},         // Set bool value by key
+    {"json", "set_null", "void", "string"},         // Set an explicit JSON null
+    {"json", "set", "void", "string, string"},              // Alias of set_string
+    {"json", "stringify", "string", ""},      // Serialize to JSON text
+    {"json", "to_pretty_string", "string", ""},
     // Reachable now that Json has ONE representation. These were namespace-only
     // because Json_has/Json_keys/Json_array_* took a handle while a json RECEIVER
     // was a WynJson*, so wiring them up would have traded a missing call for a type
     // confusion. Both halves are handles now.
-    {"json", "get", "string", 1},            // Any scalar value as text
-    {"json", "get_array", "json", 1},        // Child array node handle
-    {"json", "get_object", "json", 1},       // Child object node handle
+    {"json", "get", "string", "string"},            // Any scalar value as text
+    {"json", "get_array", "json", "string"},        // Child array node handle
+    {"json", "get_object", "json", "string"},       // Child object node handle
     // `int`, not `bool`: the namespace spelling Json.has is registered int-typed and
     // existing tests compare it to 0 (`Json.has(d, "k") == 0`). The two spellings must
     // agree, and changing the shipped 1/0 output is a separate decision.
-    {"json", "has", "int", 1},
-    {"json", "keys", "array", 0},
-    {"json", "array_len", "int", 0},
-    {"json", "array_get", "json", 1},
-    {"json", "node_str", "string", 0},
-    {"json", "is_valid", "bool", 0},
+    {"json", "has", "int", "string"},
+    {"json", "keys", "array", ""},
+    {"json", "array_len", "int", ""},
+    {"json", "array_get", "json", "int"},
+    {"json", "node_str", "string", ""},
+    {"json", "is_valid", "bool", ""},
 
     // HTTP methods (URL is a string)
-    {"string", "http_get", "string", 0},     // GET request, returns response body
-    {"string", "http_post", "string", 1},    // POST request with body
+    {"string", "http_get", "string", ""},     // GET request, returns response body
+    {"string", "http_post", "string", "string"},    // POST request with body
     
     // String formatting
-    {"string", "format", "string", -1},      // Variable args: format(arg1, arg2, ...)
+    {"string", "format", "string", "..."},      // Variable args: format(arg1, arg2, ...)
     
     // File system methods (path is a string)
-    {"string", "exists", "bool", 0},         // Check if path exists
-    {"string", "is_file", "bool", 0},        // Check if path is a file
-    {"string", "is_dir", "bool", 0},         // Check if path is a directory
+    {"string", "exists", "bool", ""},         // Check if path exists
+    {"string", "is_file", "bool", ""},        // Check if path is a file
+    {"string", "is_dir", "bool", ""},         // Check if path is a directory
     
     // Int methods
-    {"int", "to_string", "string", 0},
-    {"int", "to_int", "int", 0},    // identity - bool results are typed int (map.contains), keep .to_int() forgiving
-    {"int", "to_float", "float", 0},
-    {"int", "abs", "int", 0},
-    {"int", "pow", "int", 1},
-    {"int", "min", "int", 1},
-    {"int", "max", "int", 1},
-    {"int", "clamp", "int", 2},
-    {"int", "is_even", "bool", 0},
-    {"int", "is_odd", "bool", 0},
-    {"int", "is_positive", "bool", 0},
-    {"int", "is_negative", "bool", 0},
-    {"int", "is_zero", "bool", 0},
-    {"int", "sign", "int", 0},  // Returns -1, 0, or 1
-    {"int", "to_binary", "string", 0},
-    {"int", "to_hex", "string", 0},
+    {"int", "to_string", "string", ""},
+    {"int", "to_int", "int", ""},    // identity - bool results are typed int (map.contains), keep .to_int() forgiving
+    {"int", "to_float", "float", ""},
+    {"int", "abs", "int", ""},
+    {"int", "pow", "int", "int"},
+    {"int", "min", "int", "int"},
+    {"int", "max", "int", "int"},
+    {"int", "clamp", "int", "int, int"},
+    {"int", "is_even", "bool", ""},
+    {"int", "is_odd", "bool", ""},
+    {"int", "is_positive", "bool", ""},
+    {"int", "is_negative", "bool", ""},
+    {"int", "is_zero", "bool", ""},
+    {"int", "sign", "int", ""},  // Returns -1, 0, or 1
+    {"int", "to_binary", "string", ""},
+    {"int", "to_hex", "string", ""},
     
     // Float methods
-    {"float", "to_string", "string", 0},
-    {"float", "to_int", "int", 0},
-    {"float", "round", "float", 0},
-    {"float", "floor", "float", 0},
-    {"float", "ceil", "float", 0},
-    {"float", "round_to", "float", 1},
-    {"float", "abs", "float", 0},
-    {"float", "pow", "float", 1},
-    {"float", "sqrt", "float", 0},
-    {"float", "min", "float", 1},
-    {"float", "max", "float", 1},
-    {"float", "clamp", "float", 2},
-    {"float", "is_nan", "bool", 0},
-    {"float", "is_infinite", "bool", 0},
-    {"float", "is_finite", "bool", 0},
-    {"float", "is_positive", "bool", 0},
-    {"float", "is_negative", "bool", 0},
-    {"float", "sin", "float", 0},
-    {"float", "cos", "float", 0},
-    {"float", "tan", "float", 0},
-    {"float", "asin", "float", 0},
-    {"float", "acos", "float", 0},
-    {"float", "atan", "float", 0},
-    {"float", "log", "float", 0},
-    {"float", "log10", "float", 0},
-    {"float", "log2", "float", 0},
-    {"float", "exp", "float", 0},
-    {"float", "sign", "float", 0},  // Returns -1.0, 0.0, or 1.0
+    {"float", "to_string", "string", ""},
+    {"float", "to_int", "int", ""},
+    {"float", "round", "float", ""},
+    {"float", "floor", "float", ""},
+    {"float", "ceil", "float", ""},
+    {"float", "round_to", "float", "int"},
+    {"float", "abs", "float", ""},
+    {"float", "pow", "float", "float"},
+    {"float", "sqrt", "float", ""},
+    {"float", "min", "float", "float"},
+    {"float", "max", "float", "float"},
+    {"float", "clamp", "float", "float, float"},
+    {"float", "is_nan", "bool", ""},
+    {"float", "is_infinite", "bool", ""},
+    {"float", "is_finite", "bool", ""},
+    {"float", "is_positive", "bool", ""},
+    {"float", "is_negative", "bool", ""},
+    {"float", "sin", "float", ""},
+    {"float", "cos", "float", ""},
+    {"float", "tan", "float", ""},
+    {"float", "asin", "float", ""},
+    {"float", "acos", "float", ""},
+    {"float", "atan", "float", ""},
+    {"float", "log", "float", ""},
+    {"float", "log10", "float", ""},
+    {"float", "log2", "float", ""},
+    {"float", "exp", "float", ""},
+    {"float", "sign", "float", ""},  // Returns -1.0, 0.0, or 1.0
     
     // Bool methods
-    {"bool", "to_string", "string", 0},
-    {"bool", "to_int", "int", 0},
-    {"bool", "not", "bool", 0},
-    {"bool", "and", "bool", 1},
-    {"bool", "or", "bool", 1},
-    {"bool", "xor", "bool", 1},
+    {"bool", "to_string", "string", ""},
+    {"bool", "to_int", "int", ""},
+    {"bool", "not", "bool", ""},
+    {"bool", "and", "bool", "bool"},
+    {"bool", "or", "bool", "bool"},
+    {"bool", "xor", "bool", "bool"},
     
     // Char methods
     // The `char` RECEIVER rows lived here and were unreachable by construction: checker.c
@@ -183,125 +183,200 @@ static const MethodSignature method_signatures[] = {
     // `c.to_string()` and `c.to_int()` keep working via the int rows.
     
     // Array/Vec methods (receiver type will be "array" for now)
-    {"array", "len", "int", 0},
-    {"array", "is_empty", "bool", 0},
-    {"array", "push", "void", 1},
-    {"array", "pop", "int", 0},         // Returns last element
-    {"array", "get", "int", 1},        // Returns element (type depends on array)
-    {"array", "contains", "bool", 1},
-    {"array", "index_of", "int", 1},
-    {"array", "reverse", "void", 0},   // Mutates in place
-    {"array", "sort", "void", 0},      // Mutates in place
-    {"array", "sorted", "array", 0},   // Non-mutating sorted copy (Python sorted)
-    {"array", "sort_by", "array", 1},  // sort_by(key_fn) - sorted by key, monomorphized
-    {"array", "max_by", "int", 1},     // max_by(key_fn) -> element (type depends on array)
-    {"array", "min_by", "int", 1},     // min_by(key_fn) -> element (type depends on array)
-    {"array", "group_by", "map", 1},   // group_by(key_fn) -> map of key -> [elements]
-    {"array", "first", "int", 0},      // Returns first element
-    {"array", "last", "int", 0},       // Returns last element
-    {"array", "count", "int", 1},      // Count occurrences of value
-    {"array", "is_empty", "bool", 0},  // Check if empty
-    {"array", "take", "array", 1},     // Returns new array with first n elements
-    {"array", "skip", "array", 1},     // Returns new array skipping first n elements
-    {"array", "slice", "array", 2},    // Returns new array from start to end
-    {"array", "join", "string", 1},    // Join elements with separator
-    {"array", "concat", "array", 1},   // Returns new array concatenated with other
-    {"array", "map", "array", 1},       // Higher-order: map(fn) -> array
-    {"array", "filter", "array", 1},    // Higher-order: filter(fn) -> array
-    {"array", "reduce", "int", 2},      // Higher-order: reduce(fn, initial) -> T
-    {"array", "find", "optional", 1},   // find(fn) -> Option<T>
-    {"array", "find_index", "int", 1},  // find_index(fn) -> int (-1 if not found)
-    {"array", "any", "bool", 1},        // any(fn) -> bool
-    {"array", "all", "bool", 1},        // all(fn) -> bool
-    {"array", "partition", "array", 1}, // partition(fn) -> [array, array]
-    {"array", "zip", "array", 1},       // zip(other) -> array of pairs
-    {"array", "flatten", "array", 0},   // flatten() -> array
-    {"array", "unique", "array", 0},    // unique() -> array
-    {"array", "sum", "int", 0},         // sum() -> int (codegen: array_sum)
-    {"array", "min", "int", 0},         // min() -> int (codegen: array_min)
-    {"array", "max", "int", 0},         // max() -> int (codegen: array_max)
-    {"array", "average", "float", 0},   // average() -> float (codegen: array_average)
-    {"array", "clear", "void", 0},      // clear() -> void
-    {"array", "each", "void", 1},       // each(fn) (codegen: array_each)
-    {"array", "every", "bool", 1},      // every(fn) (codegen: array_every)
-    {"array", "flat_map", "array", 1},  // flat_map(fn) (codegen: array_flat_map)
-    {"array", "insert", "array", 2},    // insert(i, v) (codegen: array_insert)
-    {"array", "remove_at", "array", 1}, // remove_at(i) (codegen: array_remove_at)
+    {"array", "len", "int", ""},
+    {"array", "is_empty", "bool", ""},
+    {"array", "push", "void", "int"},
+    {"array", "pop", "int", ""},         // Returns last element
+    {"array", "get", "int", "int"},        // Returns element (type depends on array)
+    {"array", "contains", "bool", "int"},
+    {"array", "index_of", "int", "int"},
+    {"array", "reverse", "void", ""},   // Mutates in place
+    {"array", "sort", "void", ""},      // Mutates in place
+    {"array", "sorted", "array", ""},   // Non-mutating sorted copy (Python sorted)
+    {"array", "sort_by", "array", "fn(int)->int"},  // sort_by(key_fn) - sorted by key, monomorphized
+    {"array", "max_by", "int", "fn(int)->int"},     // max_by(key_fn) -> element (type depends on array)
+    {"array", "min_by", "int", "fn(int)->int"},     // min_by(key_fn) -> element (type depends on array)
+    {"array", "group_by", "map", "fn(int)->int"},   // group_by(key_fn) -> map of key -> [elements]
+    {"array", "first", "int", ""},      // Returns first element
+    {"array", "last", "int", ""},       // Returns last element
+    {"array", "count", "int", "int"},      // Count occurrences of value
+    {"array", "is_empty", "bool", ""},  // Check if empty
+    {"array", "take", "array", "int"},     // Returns new array with first n elements
+    {"array", "skip", "array", "int"},     // Returns new array skipping first n elements
+    {"array", "slice", "array", "int, int"},    // Returns new array from start to end
+    {"array", "join", "string", "string"},    // Join elements with separator
+    {"array", "concat", "array", "array"},   // Returns new array concatenated with other
+    {"array", "map", "array", "fn(int)->int"},       // Higher-order: map(fn) -> array
+    {"array", "filter", "array", "fn(int)->bool"},    // Higher-order: filter(fn) -> array
+    {"array", "reduce", "int", "fn(int,int)->int, int"},      // Higher-order: reduce(fn, initial) -> T
+    {"array", "any", "bool", "fn(int)->bool"},        // any(fn) -> bool
+    {"array", "all", "bool", "fn(int)->bool"},        // all(fn) -> bool
+    // find / find_index / partition / zip were advertised here and none of the four can
+    // be called, in debug or under --release - the call-generating gate reaches them now
+    // that the table carries argument types, and it says:
+    //   a.find(f)         "array has no method 'find'"  (did you mean .min()?)
+    //   a.find_index(f)   "Unknown method 'find_index' for type 'array'"
+    //   a.partition(f)    "Unknown method 'partition' for type 'array'"
+    //   a.zip(other)      "Unknown method 'zip' for type 'array'"
+    // find_index, partition and zip have no lowering in codegen at all. `find` is the
+    // interesting one: array_find_fn IS in both runtime headers and dispatch_method maps
+    // to it, but the row's return type is spelled "optional", which the checker's
+    // table-to-Type mapper has no arm for, so the call falls through to the
+    // unknown-method rule. Repointing it is not a fix either: array_find_fn returns a
+    // bare `long long`, so typing the call as OptionInt would hand `.is_some()` a
+    // non-Option value - the same trap that retired the Option combinator rows (V-37).
+    // Removed rather than repointed, on that precedent. `a.filter(f)` returns the
+    // matching elements today and covers the common need.
+    {"array", "flatten", "array", ""},   // flatten() -> array
+    {"array", "unique", "array", ""},    // unique() -> array
+    {"array", "sum", "int", ""},         // sum() -> int (codegen: array_sum)
+    {"array", "min", "int", ""},         // min() -> int (codegen: array_min)
+    {"array", "max", "int", ""},         // max() -> int (codegen: array_max)
+    {"array", "average", "float", ""},   // average() -> float (codegen: array_average)
+    {"array", "clear", "void", ""},      // clear() -> void
+    {"array", "each", "void", "fn(int)->int"},       // each(fn) (codegen: array_each)
+    {"array", "every", "bool", "fn(int)->bool"},      // every(fn) (codegen: array_every)
+    {"array", "flat_map", "array", "fn(int)->[int]"},  // flat_map(fn) (codegen: array_flat_map)
+    // `void`, not `array`. Both mutate IN PLACE - `void array_insert(WynArray*, int, int)`
+    // and `void array_remove_at(WynArray*, int)` - so the row promising an array made the
+    // gate bind the result (`v = a.insert(1, 9)`) and codegen died with an internal error.
+    // As statements, which is how they are actually used, both have always worked.
+    {"array", "insert", "void", "int, int"},    // insert(i, v) (codegen: array_insert)
+    {"array", "remove_at", "void", "int"}, // remove_at(i) (codegen: array_remove_at)
 
     // HashMap methods
-    {"map", "insert", "void", 2},
-    {"map", "set", "void", 2},
-    {"map", "get", "string", 1},
-    {"map", "get_int", "int", 1},
-    {"map", "get_string", "string", 1},
-    {"map", "insert", "void", 2},
-    {"map", "insert_int", "void", 2},
-    {"map", "insert_string", "void", 2},
-    {"map", "set_string", "void", 2},
-    {"map", "keys", "array", 0},
-    {"map", "len", "int", 0},
-    {"map", "contains", "int", 1},
-    {"map", "set_int", "void", 2},
-    {"map", "stringify", "string", 0},
-    {"map", "remove", "void", 1},
+    {"map", "insert", "void", "string, int"},
+    {"map", "set", "void", "string, int"},
+    {"map", "get", "string", "string"},
+    {"map", "get_int", "int", "string"},
+    {"map", "get_string", "string", "string"},
+    {"map", "insert", "void", "string, int"},
+    {"map", "insert_int", "void", "string, int"},
+    {"map", "insert_string", "void", "string, string"},
+    {"map", "set_string", "void", "string, string"},
+    {"map", "keys", "array", ""},
+    {"map", "len", "int", ""},
+    {"map", "contains", "int", "string"},
+    {"map", "set_int", "void", "string, int"},
+    {"map", "stringify", "string", ""},
+    {"map", "remove", "void", "string"},
     // (a second {"map","contains","bool",1} row lived here and was DEAD - lookup is
     //  first-match-wins and the int row above shadows it. The int typing is load-bearing:
     //  callers pass m.contains(k) to assert_eq_int. Converging it to bool is a breaking
     //  change and is tracked separately, not smuggled in here.)
-    {"map", "len", "int", 0},
-    {"map", "is_empty", "bool", 0},
-    {"map", "values", "array", 0},
-    {"map", "clear", "void", 0},
-    {"map", "get_or_default", "int", 2},  // Returns value or default
-    {"map", "update", "void", 2},         // Update value with function (defer - needs lambdas)
-    {"map", "merge", "void", 1},          // Merge with another map
-    {"map", "for_each", "void", 1},       // for_each(fn) - iterate with function
-    {"map", "filter_keys", "map", 1},     // filter_keys(fn) -> map
-    {"map", "map_values", "map", 1},      // map_values(fn) -> map
-    
+    {"map", "len", "int", ""},
+    {"map", "is_empty", "bool", ""},
+    {"map", "values", "array", ""},
+    {"map", "clear", "void", ""},
+    // get_or_default / update / merge / for_each / filter_keys / map_values were
+    // advertised here and NONE of the six has a lowering anywhere in codegen - grep for
+    // the spelling and the only hit is the row itself. Every one answers
+    // "Unknown method '<name>' for type 'map'". `update` had even shipped with its own
+    // confession in the comment ("defer - needs lambdas"), which is a row saying out loud
+    // that it is not implemented. Removed, on the same precedent as `map.entries`: an
+    // advertising row with nothing behind it is the defect, and the removal is what makes
+    // the unknown-method message (with its available-methods hint) the whole answer.
+    // Iterate a map with `for k in m.keys()` today.
+
     // HashSet methods
-    {"set", "insert", "void", 1},
-    {"set", "contains", "bool", 1},
-    {"set", "remove", "void", 1},
-    {"set", "len", "int", 0},
-    {"set", "is_empty", "bool", 0},
-    {"set", "clear", "void", 0},
-    {"set", "union", "set", 1},
-    {"set", "intersection", "set", 1},
-    {"set", "difference", "set", 1},
-    {"set", "is_subset", "bool", 1},
-    {"set", "is_superset", "bool", 1},
-    {"set", "is_disjoint", "bool", 1},
-    {"set", "symmetric_difference", "set", 1},  // Elements in either but not both
-    {"set", "from_array", "set", 1},            // Create from array
-    {"set", "filter", "set", 1},                // filter(fn) -> set
-    {"set", "map", "set", 1},                   // map(fn) -> set
-    {"set", "for_each", "void", 1},             // for_each(fn)
+    {"set", "insert", "void", "string"},
+    {"set", "contains", "bool", "string"},
+    // V-38 (#391): `contains_int` is a real int-family method now (src/hashset.c), so it
+    // must declare the same `bool` return its `contains` sibling does - without this row
+    // it fell through to the int default and `print(s.contains_int(9))` printed `1` where
+    // `print(s.contains(9))` prints `true`.
+    //
+    // The 4th column is param_types (#393), a STRING, not an argument count: `"int"` is
+    // "one int argument". A bare `1` does NOT compile here, and a bare `0` DOES - as a
+    // null pointer constant, silently meaning "no param_types" rather than "no arguments".
+    //
+    // The element-taking rows keep `"string"`: this table is keyed on the receiver-type
+    // STRING "set", so it cannot see a set's element type at all. wyn_set_elem_fn()
+    // re-points the emitted call at the element-typed C variant instead.
+    {"set", "contains_int", "bool", "int"},
+    {"set", "remove", "void", "string"},
+    {"set", "len", "int", ""},
+    {"set", "is_empty", "bool", ""},
+    {"set", "clear", "void", ""},
+    {"set", "union", "set", "set"},
+    {"set", "intersection", "set", "set"},
+    {"set", "difference", "set", "set"},
+    {"set", "is_subset", "bool", "set"},
+    {"set", "is_superset", "bool", "set"},
+    {"set", "is_disjoint", "bool", "set"},
+    // symmetric_difference / from_array / filter / map / for_each were advertised here and
+    // none of the five has a lowering: `s.filter(f)` answers "Unknown method 'filter' for
+    // type 'set'" and then dies with "compilation failed (internal codegen error)". The
+    // four set-algebra rows above (union/intersection/difference plus the three
+    // predicates) DO work - set_union and friends are real functions - which is what made
+    // this half look implemented. Removed (#393), same precedent as `set.to_array`. This
+    // lane does NOT restore them: it gives the set an element type, not new methods.
     
     // Option methods
-    {"option", "is_some", "bool", 0},
-    {"option", "is_none", "bool", 0},
-    {"option", "unwrap", "int", 0},    // Type depends on Option<T>
-    {"option", "unwrap_or", "int", 1}, // Type depends on Option<T>
-    // V-37: option.expect / or_else / map / and_then / filter were advertised here and
-    // do not exist. Codegen emits the monomorphic value-struct family (OptionInt_map),
-    // which nothing defines; the wyn_optional_* names these rows lowered to belong to a
-    // retired heap-boxed WynOptional* model and take an incompatible representation. The
-    // rows are removed rather than repointed, because repointing would not compile
-    // either. reject_missing_option_combinator() in checker.c now answers these calls
-    // with a real message, and tests/errors/run_option_combinator_test.sh pins both
-    // halves - so re-adding a row without an implementation fails the build.
-    
+    {"option", "is_some", "bool", ""},
+    {"option", "is_none", "bool", ""},
+    {"option", "unwrap", "int", ""},    // Type depends on Option<T>
+    {"option", "unwrap_or", "int", "int"}, // Type depends on Option<T>
+    {"option", "to_string", "string", ""},  // #386
+
     // Result methods
-    {"result", "is_ok", "bool", 0},
-    {"result", "is_err", "bool", 0},
-    {"result", "unwrap", "int", 0},    // Type depends on Result<T,E>
-    {"result", "unwrap_or", "int", 1}, // Type depends on Result<T,E>
-    // V-37, the Result half: expect / map_err / or_else / map / and_then, same story and
-    // the same retired wyn_result_* representation. See the note above.
-    
+    {"result", "is_ok", "bool", ""},
+    {"result", "is_err", "bool", ""},
+    {"result", "unwrap", "int", ""},    // Type depends on Result<T,E>
+    {"result", "unwrap_or", "int", "int"}, // Type depends on Result<T,E>
+    {"result", "unwrap_err", "string", ""}, // #386 - the Err of every family is a string
+    {"result", "to_string", "string", ""},  // #386
+    // #386: `to_string` (both families) and `unwrap_err` (Result) WORK in the runtime and
+    // were missing from this table, so it under-reported what the language has. The rows
+    // above are that record.
+    //
+    // WHAT THE ROWS ACTUALLY BUY, measured rather than assumed: they put these three
+    // methods under run_registry_reachable_test.sh, which compiles and RUNS a real call
+    // per row in BOTH build modes. Before the rows, nothing in that gate exercised them.
+    // That is the whole effect. Specifically NOT what they do, both mutation-checked by
+    // altering the row and rebuilding:
+    //   - they do not decide the TYPE (changing `unwrap_err`'s return to "int" here reds
+    //     no arm of any gate - see below for where the typing really comes from);
+    //   - they do not feed the typo suggestion for these receivers. An Option/Result typo
+    //     is answered by the NAMESPACE route ("unknown method 'ResultInt.unwrap_er' on
+    //     namespace 'ResultInt'"), which does not read this table - deleting the row
+    //     changes that message not at all.
+    //
+    // READ THIS BEFORE ASSUMING THEY ARE WHAT MAKES THEM TYPE: an earlier attempt
+    // added exactly these rows, had no measurable effect, and was reverted. Measured again
+    // while adding them - with the rows in place and nothing else changed, all of these
+    // still failed:
+    //
+    //     s = g().to_string(); print(s.len())        # Unknown method 'len' for type 'int'
+    //     fn f(o: string?) -> string { return o.to_string() }   # Expected string, got int
+    //
+    // The reason is that every realistic Option/Result receiver is the monomorphic
+    // TYPE_STRUCT family ("OptionString"), and get_receiver_type_string() has no
+    // TYPE_STRUCT case, so it answers NULL and this table is never consulted for them.
+    // The typing therefore lives in the checker's method-call path, resolved explicitly
+    // ahead of the table lookup - the same route #413 used for unwrap_or, and for the
+    // same reason. Fixing get_receiver_type_string() instead would route Option through
+    // this table, where `{"option","unwrap","int",""}` would type
+    // `Option<string>.unwrap()` as int and break working code.
+    //
+    // `unwrap_err` needed only the row: it already types correctly through the
+    // `<Family>_unwrap_err` symbol route, with the family's own err type. The checker was
+    // NOT given a second answer for it - one was written and mutation-tested, and altering
+    // it changed no arm of any gate, so it was removed rather than shipped unverified.
+    //
+    // V-37's rows for the ten combinators (option map/and_then/filter/expect/or_else,
+    // result map/and_then/map_err/expect/or_else) are deliberately NOT restored here. A
+    // row carries ONE concrete return type per receiver, and `map` CHANGES the family -
+    // `int?.map(fn(x: int) -> string {..})` is an Option<string> - so any single answer
+    // written here would be wrong. #392 types them in checker.c from the callback's
+    // return type instead.
+    //
+    // NOTE ON THIS COLUMN: the 4th field is param_types, a STRING (#393), not an argument
+    // count. `""` is zero arguments. A bare `0` still COMPILES - as a null pointer
+    // constant - and silently means "no param_types", which is not the same thing.
+
     // Sentinel - marks end of table
-    {NULL, NULL, NULL, 0}
+    {NULL, NULL, NULL, NULL}
 };
 
 // Lookup method return type given receiver type and method name
@@ -1036,7 +1111,12 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
     }
     
     if (strcmp(receiver_type, "set") == 0) {
-        // HashSet methods
+        // HashSet methods. The four ELEMENT-taking names below (add / insert /
+        // contains / remove, plus the two _int spellings) come back with the
+        // STRING-set C function; the caller re-points them at the element-typed
+        // variant through wyn_set_elem_fn(), because this table is keyed on a
+        // receiver-type STRING and so cannot see the element type. See
+        // wyn_set_elem_method() at the bottom of this file.
         if (strcmp(method_name, "add") == 0 && arg_count == 1) {
             out->c_function = "hashset_add"; return true;
         }
@@ -1598,4 +1678,59 @@ int wyn_suggest_namespace_method_spelled(const char* ns, const char* method,
 
 int wyn_suggest_namespace_method(const char* ns, const char* method, char* out, size_t out_sz) {
     return wyn_suggest_namespace_method_spelled(ns, method, ".", out, out_sz);
+}
+
+// ---------------------------------------------------------------------------
+// V-38 (#391): set element-type dispatch. ONE authority for the four places that
+// lower a set element - the `{:...}` literal, `x in s`, `s.add(x)` and the
+// `HashSet.add(s, x)` namespace form. Those four disagreeing is exactly the defect
+// shape this issue is about: the element type existed nowhere, so every one of them
+// emitted the string-keyed call.
+
+bool wyn_set_elem_method(const char* method_name) {
+    if (!method_name) return false;
+    static const char* const names[] = {
+        "add", "insert", "contains", "remove", "add_int", "contains_int", NULL
+    };
+    for (int i = 0; names[i]; i++)
+        if (strcmp(method_name, names[i]) == 0) return true;
+    return false;
+}
+
+const char* wyn_set_elem_fn(const char* base, const Type* elem) {
+    if (!base) return base;
+    // A NULL element type is an OPEN set (`{:}` / `HashSet.new()` with nothing
+    // added yet). Nothing can be inserted through a call that has no element, so
+    // the string form is the harmless default and matches what the C prototypes
+    // in hashset.h have always been.
+    if (!elem) return base;
+    const char* suffix = NULL;
+    switch (elem->kind) {
+        case TYPE_INT:    suffix = "_int";   break;
+        case TYPE_FLOAT:  suffix = "_float"; break;
+        case TYPE_BOOL:   suffix = "_bool";  break;
+        default: return base;                      // string (and anything the
+                                                   // checker refuses upstream)
+    }
+    // `add_int` / `contains_int` are already the int family under their advertised
+    // spelling; appending a second suffix would name nothing.
+    size_t bl = strlen(base);
+    if (bl > 4 && strcmp(base + bl - 4, "_int") == 0) return base;
+
+    // Static table rather than a formatted buffer: the caller uses the result as a
+    // plain `const char*` with no lifetime contract, and a static snprintf buffer
+    // would be clobbered by the next call in the same emit (`s.union(t)` emits two
+    // set calls in one expression).
+    struct { const char* base; const char* i; const char* f; const char* b; } map[] = {
+        {"hashset_add",      "hashset_add_int",      "hashset_add_float",      "hashset_add_bool"},
+        {"hashset_contains", "hashset_contains_int", "hashset_contains_float", "hashset_contains_bool"},
+        {"hashset_remove",   "hashset_remove_int",   "hashset_remove_float",   "hashset_remove_bool"},
+    };
+    for (size_t i = 0; i < sizeof(map)/sizeof(map[0]); i++) {
+        if (strcmp(base, map[i].base) != 0) continue;
+        if (strcmp(suffix, "_int") == 0)   return map[i].i;
+        if (strcmp(suffix, "_float") == 0) return map[i].f;
+        return map[i].b;
+    }
+    return base;
 }

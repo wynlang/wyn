@@ -22,6 +22,8 @@ void wyn_rc_retain(const void* ptr);
 void wyn_rc_release(const void* ptr);
 void wyn_rc_set_length(const void* ptr, unsigned int len);
 unsigned int wyn_rc_get_length(const void* ptr);
+#define WYN_RC_NOT_CACHEABLE 0xFFFFFFFFu
+unsigned int wyn_rc_length_probe(const void* ptr);
 
 // Abort-on-OOM allocators, verbatim from wyn_runtime.h:42-44. `static inline` in
 // both headers, so there is nothing in the archive to link - they must be
@@ -533,6 +535,11 @@ WynHashSet* set_difference(WynHashSet* set1, WynHashSet* set2);
 bool set_is_subset(WynHashSet* set1, WynHashSet* set2);
 bool set_is_superset(WynHashSet* set1, WynHashSet* set2);
 bool set_is_disjoint(WynHashSet* set1, WynHashSet* set2);
+// V-38 (#391): declared HERE as well as defined in wyn_runtime.h, because
+// `--release` emits this header and would otherwise fail to link every `for x in s`
+// loop (the family of set element functions themselves need no entry: they are real
+// symbols in hashset.c and this header already includes hashset.h).
+WynArray hashset_elements(WynHashSet* set);
 double int_to_float(int n);
 int int_abs(int n);
 int int_pow(int base, int exp);
@@ -945,6 +952,7 @@ bool ResultString_is_ok(ResultString r);
 bool ResultString_is_err(ResultString r);
 const char* ResultString_unwrap(ResultString r);
 const char* ResultString_unwrap_err(ResultString r);
+const char* ResultString_unwrap_or(ResultString r, const char* def);
 OptionInt OptionInt_Some(int value);
 OptionInt OptionInt_None();
 bool OptionInt_is_some(OptionInt o);

@@ -10,6 +10,8 @@ void wyn_rc_retain(const void* ptr);
 void wyn_rc_release(const void* ptr);
 void wyn_rc_set_length(const void* ptr, unsigned int len);
 unsigned int wyn_rc_get_length(const void* ptr);
+#define WYN_RC_NOT_CACHEABLE 0xFFFFFFFFu
+unsigned int wyn_rc_length_probe(const void* ptr);
 
 // Inline spawn for non-yielding functions (spawn_fast.c)
 struct Future;
@@ -367,6 +369,29 @@ char* regex_replace(const char* str, const char* pattern, const char* replacemen
 bool Regex_match(const char* s, const char* p) { return regex_match(s, p); }
 char* Regex_replace(const char* s, const char* p, const char* r) { return regex_replace(s, p, r); }
 int Regex_find(const char* s, const char* p) { int ms, me; wre_find(s, p, &ms, &me); return ms; }
+// `Regex.find` lowers to the LOWERCASE regex_find - check the generated C, not the
+// name in the source - and that function existed only in the POSIX branch: it was
+// added to the "Regex extensions" section far below, inside `#ifndef _WIN32`, and
+// this block never got a copy. Regex_find with a capital R does exist here, which
+// is why the gap survived: the symbol looked present. Nothing emits the capital
+// form, so every Windows build of a program calling Regex.find failed while the
+// other 25 arms of tests/errors/run_regex_contract_test.sh passed.
+//
+// Verified by cross-compiling the generated C with x86_64-w64-mingw32-gcc 12:
+// before this line, "implicit declaration of function 'regex_find'; did you mean
+// 'Regex_find'?" and `nm -u` on the object reports `U regex_find` - a link failure
+// on GCC 12, a hard compile error on GCC 14+.
+//
+// `long long`, matching the POSIX definition and the declaration in
+// wyn_runtime_slim.h. An `int` definition behind a `long long` declaration is the
+// width mismatch that made `"abc".ends_with("z")` return true on x86-64 under
+// --release; `wyn run --release` on Windows would read this through slim.
+long long regex_find(const char* str, const char* pattern) {
+    int ms, me;
+    wre_find(str, pattern, &ms, &me);
+    return ms;  // wre_find leaves -1 for "no match" AND for a bad pattern, same
+                // as the POSIX branch returning -1 from a failed regcomp.
+}
 char* regex_find_all(const char* str, const char* pattern) {
     struct wre_nfa nfa;
     if (!wre_compile(&nfa, pattern)) return wyn_strdup("");
@@ -1426,12 +1451,19 @@ int range_next(WynRange* r) { return r->current++; }
 // runtime grows or edits one in place (wyn_rc_set_capacity has zero callers - the
 // realloc paths allocate a NEW buffer and release the old). A length of 0 doubles
 // as "not yet known", which costs nothing: strlen("") is free.
+// ONE RC header validation, via wyn_rc_length_probe: it reports the cached length
+// and whether this pointer can hold one at all. The previous shape called
+// wyn_rc_get_length then wyn_rc_set_length, validating twice on a miss - and a
+// string literal misses every call, so literals paid for a cache they can never
+// use (1M `.len()` on a 44-char literal: 1.53ms before memoization, 2.69ms after,
+// 1.5ms now). strlen stays HERE so the C compiler can still inline and
+// constant-fold it for a literal receiver; moving it into wyn_rc.c measured 5.6ms.
 int string_length(const char* str) {
     if (!str) return 0;
-    unsigned int cached = wyn_rc_get_length(str);
-    if (cached > 0) return (int)cached;
+    unsigned int cached = wyn_rc_length_probe(str);
+    if (cached > 0 && cached != WYN_RC_NOT_CACHEABLE) return (int)cached;
     size_t n = strlen(str);
-    wyn_rc_set_length(str, (unsigned int)n);  // no-op for literals / non-RC pointers
+    if (cached == 0) wyn_rc_set_length(str, (unsigned int)n);
     return (int)n;
 }
 char* string_substring(const char* str, int start, int end) {
@@ -1870,6 +1902,30 @@ bool set_is_superset(WynHashSet* set1, WynHashSet* set2) {
 }
 bool set_is_disjoint(WynHashSet* set1, WynHashSet* set2) {
     return wyn_hashset_is_disjoint(set1, set2);
+}
+// V-38 (#391): materialise a set's TAGGED elements as a WynArray, so `for x in s`
+// has something to walk. It lives here rather than in hashset.c for the same reason
+// hashmap_keys() does: only this header sees WynArray. The element tag picks the
+// push, so an int set yields int cells rather than the string "1".
+//
+// Bucket order, NOT insertion order (same caveat as hashmap_keys). The `for x in s`
+// lowering calls this ONCE per loop, which is what keeps iteration O(n) despite
+// hashset_elem_at being O(n) per call.
+WynArray hashset_elements(WynHashSet* set) {
+    WynArray arr = array_new();
+    if (!set) return arr;
+    int n = hashset_count(set);
+    for (int i = 0; i < n; i++) {
+        HashSetElem e;
+        if (!hashset_elem_at(set, i, &e)) break;
+        switch (e.type) {
+            case HASHSET_STRING: array_push_str(&arr, e.as_string ? e.as_string : ""); break;
+            case HASHSET_INT:    array_push_int(&arr, e.as_int); break;
+            case HASHSET_FLOAT:  array_push_float(&arr, e.as_float); break;
+            case HASHSET_BOOL:   array_push_bool(&arr, e.as_bool); break;
+        }
+    }
+    return arr;
 }
 
 double int_to_float(int n) { return (double)n; }
@@ -4969,6 +5025,14 @@ bool ResultString_is_ok(ResultString r) { return r.tag == 0; }
 bool ResultString_is_err(ResultString r) { return r.tag == 1; }
 const char* ResultString_unwrap(ResultString r) { if (r.tag == 1) { fprintf(stderr, "Error: unwrap() called on Err: %s\n", r.data.err_value); exit(1); } return r.data.ok_value; }
 const char* ResultString_unwrap_err(ResultString r) { if (r.tag == 0) { fprintf(stderr, "Error: unwrap_err() called on Ok\n"); exit(1); } return r.data.err_value; }
+const char* ResultString_unwrap_or(ResultString r, const char* def) { return r.tag == 0 ? r.data.ok_value : def; }
+// The one hole in the 8-family x 8-method matrix: every other family had
+// unwrap_or, and ResultString did not. The gap was invisible because the checker
+// typed `Result<string, E>.unwrap_or(d)` as int - the method_signatures row says
+// "int" for the whole Result family - so codegen emitted ResultInt_unwrap_or and
+// read the string pointer back as a long long. Fixing the type is what made the
+// missing function appear as a link error rather than a wrong value.
+
 
 typedef struct { int tag; int value; } OptionInt;
 OptionInt OptionInt_Some(int value) { OptionInt o; o.tag = 1; o.value = value; return o; }
@@ -6331,7 +6395,7 @@ static const char b64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstu
 char* Encoding_base64_encode(const char* data) {
     int len = strlen(data);
     int out_len = 4 * ((len + 2) / 3);
-    char* out = wyn_malloc(out_len + 1);
+    char* out = wyn_str_alloc(out_len);  // RC header required - see Uuid_generate
     int j = 0;
     for (int i = 0; i < len; i += 3) {
         int a = data[i], b = (i+1 < len) ? data[i+1] : 0, c = (i+2 < len) ? data[i+2] : 0;
@@ -6355,7 +6419,10 @@ static int b64_decode_char(char c) {
 
 char* Encoding_base64_decode(const char* data) {
     int len = strlen(data);
-    char* out = wyn_malloc(len);
+    // len+1 bytes, not len: decoding never exceeds 3/4 of the input, and
+    // wyn_str_alloc(0) is well defined where wyn_str_alloc(len - 1) would
+    // underflow on the empty string.
+    char* out = wyn_str_alloc(len);  // RC header required - see Uuid_generate
     int j = 0;
     for (int i = 0; i < len; i += 4) {
         int a = b64_decode_char(data[i]), b = b64_decode_char(data[i+1]);
@@ -6372,7 +6439,7 @@ char* Encoding_base64_decode(const char* data) {
 
 char* Encoding_hex_encode(const char* data) {
     int len = strlen(data);
-    char* out = wyn_malloc(len * 2 + 1);
+    char* out = wyn_str_alloc(len * 2);  // RC header required - see Uuid_generate
     for (int i = 0; i < len; i++) snprintf(out + i*2, 3, "%02x", (unsigned char)data[i]);
     out[len*2] = 0;
     return out;
@@ -6452,8 +6519,19 @@ char* Os_home_dir() { char* h = getenv("HOME"); return h ? h : "/tmp"; }
 #endif
 
 // === UUID v4 ===
+// wyn_str_alloc, NOT wyn_malloc: every string handed back to Wyn code must carry
+// an RC header. A raw malloc'd buffer is not just leaked (wyn_rc_release is a
+// silent no-op on it) - it makes the next `.len()` read OUT OF BOUNDS. The RC
+// probe decides "is this pointer mine?" by range-checking [heap_low, heap_high]
+// and then reading the header 16 bytes BEFORE the pointer; a non-RC malloc that
+// happens to land inside that range passes the range test, so the header read
+// runs off the front of the block into whatever precedes it. ASan reports it as
+// a heap-buffer-overflow READ in wyn_rc_is_heap on `Uuid.generate().len()`
+// (tests/stdlib/test_stdlib_expansion.wyn, which the asan-runtime-test target
+// now covers); untracked it is a silent read of adjacent heap that only faults
+// when the bytes before happen to be unmapped.
 char* Uuid_generate() {
-    char* uuid = wyn_malloc(37);
+    char* uuid = wyn_str_alloc(36);
     unsigned char bytes[16];
     FILE* f = fopen("/dev/urandom", "rb");
     if (f) { fread(bytes, 1, 16, f); fclose(f); }
@@ -6463,6 +6541,7 @@ char* Uuid_generate() {
     snprintf(uuid, 37, "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
         bytes[0],bytes[1],bytes[2],bytes[3],bytes[4],bytes[5],bytes[6],bytes[7],
         bytes[8],bytes[9],bytes[10],bytes[11],bytes[12],bytes[13],bytes[14],bytes[15]);
+    wyn_rc_set_length(uuid, 36);
     return uuid;
 }
 char* Uuid_v4() { return Uuid_generate(); }
@@ -6668,8 +6747,9 @@ long long DateTime_add_seconds(long long t, long long n) { return t + n; }
 char* DateTime_to_iso(long long timestamp) {
     time_t t = (time_t)timestamp;
     struct tm* tm = gmtime(&t);
-    char* buf = wyn_malloc(32);
-    strftime(buf, 32, "%Y-%m-%dT%H:%M:%SZ", tm);
+    char* buf = wyn_str_alloc(31);  // RC header required - see Uuid_generate
+    size_t n = strftime(buf, 32, "%Y-%m-%dT%H:%M:%SZ", tm);
+    wyn_rc_set_length(buf, (unsigned int)n);
     return buf;
 }
 
@@ -6729,7 +6809,10 @@ char* Net_resolve(const char* hostname) {
     struct addrinfo hints = {0}, *res;
     hints.ai_family = AF_INET;
     if (getaddrinfo(hostname, NULL, &hints, &res) != 0) return "";
-    char* ip = wyn_malloc(INET_ADDRSTRLEN);
+    // RC header required - see Uuid_generate. (The "" returns above are string
+    // literals: rodata is never inside [heap_low, heap_high], so the probe
+    // rejects them on the range test without reading anything.)
+    char* ip = wyn_str_alloc(INET_ADDRSTRLEN - 1);
     struct sockaddr_in* addr = (struct sockaddr_in*)res->ai_addr;
     inet_ntop(AF_INET, &addr->sin_addr, ip, INET_ADDRSTRLEN);
     freeaddrinfo(res);
@@ -6739,7 +6822,7 @@ char* Net_resolve(const char* hostname) {
 // === Db extensions ===
 char* Db_escape(const char* str) {
     int len = strlen(str);
-    char* out = wyn_malloc(len * 2 + 1);
+    char* out = wyn_str_alloc(len * 2);  // RC header required - see Uuid_generate
     int j = 0;
     for (int i = 0; i < len; i++) {
         if (str[i] == '\'') { out[j++] = '\''; out[j++] = '\''; }

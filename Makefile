@@ -450,7 +450,11 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_unknown_method_test.sh
 	@echo "=== Running Option/Result-predicate-on-a-scalar test (V-28) ==="
 	@WYN=./wyn bash tests/errors/run_scalar_option_method_test.sh
-	@WYN=./wyn bash tests/errors/run_set_element_type_test.sh
+	@WYN=./wyn bash tests/errors/run_typed_set_test.sh
+	@echo "=== Running void-call-type test (a void call is not an int) ==="
+	@WYN=./wyn bash tests/errors/run_void_call_type_test.sh
+	@echo "=== Running container-fresh-type test (two HashMap.new() are independent) ==="
+	@WYN=./wyn bash tests/errors/run_container_fresh_type_test.sh
 	@WYN=./wyn bash tests/errors/run_registry_reachable_test.sh
 	@bash tests/errors/run_slim_header_parity_test.sh
 	@WYN=./wyn bash tests/errors/run_collection_return_type_test.sh
@@ -459,6 +463,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_regex_contract_test.sh
 	@WYN=./wyn bash tests/errors/run_json_handle_test.sh
 	@WYN=./wyn bash tests/errors/run_option_combinator_test.sh
+	@echo "=== Running Option/Result combinator API gate ==="
+	@WYN=./wyn bash tests/errors/run_option_combinator_api_test.sh
 	@echo "=== Running bug-batch-2 test ==="
 	@WYN=./wyn bash tests/errors/run_bug_batch2_test.sh
 	@echo "=== Running user test-runner test ==="
@@ -573,6 +579,14 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_checker_soundness_test.sh
 	@echo "=== Running await_all element-typing gate ==="
 	@WYN=./wyn bash tests/errors/run_await_all_type_test.sh
+	@echo "=== Running Option/Result family completeness gate ==="
+	@WYN=./wyn bash tests/errors/run_option_result_family_test.sh
+	@echo "=== Running parallel{} synthesized-Expr initialisation gate ==="
+	@WYN=./wyn bash tests/errors/run_parallel_synth_expr_init_test.sh
+	@echo "=== Running parallel{} branch-overlap gate ==="
+	@WYN=./wyn bash tests/errors/run_parallel_overlap_test.sh
+	@echo "=== Running spawn-future array typing gate ==="
+	@WYN=./wyn bash tests/errors/run_future_array_typing_test.sh
 	@echo "=== Running crucible-P0 (fatal-by-default) test ==="
 	@WYN=./wyn bash tests/errors/run_crucible_p0_test.sh
 	@echo "=== Running checked string->number parse gate (V-18) ==="
@@ -955,6 +969,15 @@ runtime/libwyn_rt_asan.a: $(RT_SRCS) $(wildcard src/*.h) | $(MBEDTLS_LIB)
 # Compile a representative test set's generated C against the ASan runtime
 # and run each binary. Any ASan report (UAF, overflow, leak-at-exit is NOT
 # checked - detect_leaks=0 keeps signal high) fails the target.
+#
+# The list is expect/ and regression/ plus ONE stdlib file. The stdlib suite was
+# not covered here, and that is where the coverage mattered: uninstrumented,
+# test_stdlib_expansion.wyn passes 275 runs in a row in both build modes and
+# under MallocScribble/MallocGuardEdges; against the ASan runtime it reported a
+# heap-buffer-overflow READ on the first run, every run. Runtime string
+# constructors that returned a raw malloc'd buffer made the RC header probe read
+# off the front of the block. Keep this file in the list - it exercises JSON,
+# base64, crypto, uuid, datetime, regex, net and db string returns in one go.
 ASAN_TESTS = tests/expect/test_string_utf8.wyn \
              tests/expect/test_lambda_typed_variants.wyn \
              tests/expect/test_arrow_lambda.wyn \
@@ -980,7 +1003,8 @@ ASAN_TESTS = tests/expect/test_string_utf8.wyn \
              tests/regression/test_rc_stage2_reconcile.wyn \
              tests/regression/test_json_escaping.wyn \
              tests/regression/test_json_multiple_docs.wyn \
-             tests/regression/test_json_parse_malformed.wyn
+             tests/regression/test_json_parse_malformed.wyn \
+             tests/stdlib/test_stdlib_expansion.wyn
 
 asan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_asan.a $(MBEDTLS_LIB)
 	@echo "=== ASan runtime test (representative set) ==="

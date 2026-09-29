@@ -369,6 +369,170 @@ static int cg_optlike_has_renderer(const char* fam) {
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// THE Option/Result COMBINATOR lowering (#392): map / and_then / filter / expect /
+// or_else / map_err.
+//
+// Emitted INLINE as a GNU statement expression over the monomorphic family struct, and
+// NOT as a call to a runtime function. That is the only shape that can work here: the
+// `wyn_optional_map` / `wyn_result_map` names in runtime/libwyn_rt.a take
+// `WynOptional*` / `WynResult*`, a heap-boxed representation codegen has never emitted,
+// which is exactly why the registry rows that pointed at them could not link and were
+// dropped. Emitting inline also means there is nothing to add to wyn_runtime.h AND to
+// the hand-maintained wyn_runtime_slim.h that `--release` emits, so `build` and
+// `build --release` cannot disagree about which combinators exist.
+//
+// The only names these lowerings call are `<Family>_Some/_None/_Ok/_Err`, which the
+// family-completeness gate already pins in BOTH headers.
+
+// Family name -> 1 (Option), 2 (Result), 0 (not one of the four scalar families).
+// `OptionUser` and a user struct called `ResultSet` both answer 0, so neither is taken
+// from the ordinary struct-method path.
+static int cg_optlike_fam_kind(const char* fam) {
+    if (!fam) return 0;
+    static const char* const sufs[] = { "Int", "String", "Float", "Bool", NULL };
+    for (int i = 0; sufs[i]; i++) {
+        if (strncmp(fam, "Option", 6) == 0 && strcmp(fam + 6, sufs[i]) == 0) return 1;
+        if (strncmp(fam, "Result", 6) == 0 && strcmp(fam + 6, sufs[i]) == 0) return 2;
+    }
+    return 0;
+}
+
+// The monomorphic family name for an expression that already HAS one, or "" - used for
+// the receiver and for an and_then/or_else callback whose return type is itself a
+// family. Not routed through wyn_ctor_family(): that function maps a PAYLOAD to a
+// family, so handing it an `OptionString` would mint `OptionOptionString`.
+static void cg_optlike_fam_of(Expr* e, char* out, size_t outsz) {
+    out[0] = '\0';
+    if (!e) return;
+    if (e->expr_type && e->expr_type->kind == TYPE_STRUCT &&
+        e->expr_type->struct_type.name.length > 0) {
+        token_to_cstr(out, outsz, e->expr_type->struct_type.name);
+        return;
+    }
+    if (e->type == EXPR_IDENT) {
+        char vn[128]; token_to_cstr(vn, sizeof(vn), e->token);
+        extern const char* get_enum_var_type(const char*);
+        const char* t = get_enum_var_type(vn);
+        if (t) snprintf(out, outsz, "%s", t);
+    }
+}
+
+// Emit `<recv>.<combinator>(<arg>)` inline; returns true when it handled the call.
+//
+// The callback is emitted as `(<expr>)(args)` rather than assigned to a declared
+// function pointer first. A lambda lowers to `__lambda_N` and a named function to its
+// own symbol, so calling through the expression uses each one's REAL signature - a
+// hand-written pointer type would be a second opinion about the ABI, which is precisely
+// the bug that made a `fn(float) -> float` field return garbage bits.
+static bool cg_try_optlike_combinator(Expr* expr) {
+    Token m = expr->method_call.method;
+    char mn[64]; token_to_cstr(mn, sizeof(mn), m);
+    static const char* const combinators[] = {
+        "map", "and_then", "filter", "expect", "or_else", "map_err", NULL };
+    bool ours = false;
+    for (int i = 0; combinators[i]; i++)
+        if (strcmp(combinators[i], mn) == 0) { ours = true; break; }
+    if (!ours || expr->method_call.arg_count != 1) return false;
+
+    Expr* obj = expr->method_call.object;
+    Expr* arg = expr->method_call.args[0];
+    if (!obj || !arg) return false;
+
+    char rfam[128]; cg_optlike_fam_of(obj, rfam, sizeof(rfam));
+    int kind = cg_optlike_fam_kind(rfam);
+    if (!kind) return false;
+
+    // `filter` is Option-only and `map_err` Result-only; the checker rejects the wrong
+    // pairing, so reaching here with one would mean emitting a function nobody defines.
+    if (strcmp(mn, "filter") == 0 && kind != 1) return false;
+    if (strcmp(mn, "map_err") == 0 && kind != 2) return false;
+
+    // ".value" for Option; Result keeps its two payloads in a union.
+    const char* okacc = kind == 1 ? ".value" : ".data.ok_value";
+    int fulltag = kind == 1 ? 1 : 0;   // the tag that means "holds a value"
+
+    static int _cb_seq = 0;
+    int id = _cb_seq++;
+
+    // expect(msg): panic with the CALLER's message. The message goes through "%s" and is
+    // never used as a format string itself, so an expect message containing a `%` prints
+    // literally instead of reading the stack.
+    if (strcmp(mn, "expect") == 0) {
+        emit("({ %s __cb%d = ", rfam, id);
+        codegen_expr(obj);
+        emit("; if (__cb%d.tag != %d) { fprintf(stderr, \"%%s\\n\", ", id, fulltag);
+        codegen_expr(arg);
+        emit("); exit(1); } __cb%d%s; })", id, okacc);
+        return true;
+    }
+
+    // filter(p): a predicate cannot change the payload, so the family is unchanged and
+    // the Some arm hands back the receiver itself.
+    if (strcmp(mn, "filter") == 0) {
+        emit("({ %s __cb%d = ", rfam, id);
+        codegen_expr(obj);
+        emit("; (__cb%d.tag == 1 && (", id);
+        codegen_expr(arg);
+        emit(")(__cb%d.value)) ? __cb%d : %s_None(); })", id, id, rfam);
+        return true;
+    }
+
+    // or_else(f): the receiver is passed through unchanged when it holds a value, so both
+    // ternary arms are the same C struct. f takes no argument.
+    if (strcmp(mn, "or_else") == 0) {
+        emit("({ %s __cb%d = ", rfam, id);
+        codegen_expr(obj);
+        emit("; __cb%d.tag == %d ? __cb%d : (", id, fulltag, id);
+        codegen_expr(arg);
+        emit(")(); })");
+        return true;
+    }
+
+    // map_err(f): Err(e) -> Err(f(e)); Ok passes through, so the family is unchanged.
+    if (strcmp(mn, "map_err") == 0) {
+        emit("({ %s __cb%d = ", rfam, id);
+        codegen_expr(obj);
+        emit("; __cb%d.tag == 1 ? %s_Err((", id, rfam);
+        codegen_expr(arg);
+        emit(")(__cb%d.data.err_value)) : __cb%d; })", id, id);
+        return true;
+    }
+
+    // map / and_then. THE RESULT FAMILY IS THE CALLBACK'S, NOT THE RECEIVER'S:
+    // `int?.map(fn(x: int) -> string {..})` is an OptionString. For `map` the callback
+    // returns the PAYLOAD, so the family comes from wyn_ctor_family (which routes Option
+    // through wyn_option_family, THE authority, and registers a family when one is
+    // needed). For `and_then` the callback already returns a family, so that name is
+    // read off it directly.
+    char ffam[128] = "";
+    Type* cb_ret = (arg->expr_type && arg->expr_type->kind == TYPE_FUNCTION)
+                     ? arg->expr_type->fn_type.return_type : NULL;
+    if (!cb_ret) return false;
+    if (strcmp(mn, "map") == 0) {
+        const char* f = wyn_ctor_family(cb_ret, kind == 1 ? "Option" : "Result");
+        if (!f) return false;
+        snprintf(ffam, sizeof(ffam), "%s", f);
+    } else {
+        if (cb_ret->kind != TYPE_STRUCT || cb_ret->struct_type.name.length == 0) return false;
+        token_to_cstr(ffam, sizeof(ffam), cb_ret->struct_type.name);
+    }
+    if (!cg_optlike_fam_kind(ffam)) return false;
+
+    bool is_map = strcmp(mn, "map") == 0;
+    emit("({ %s __cb%d = ", rfam, id);
+    codegen_expr(obj);
+    emit("; __cb%d.tag == %d ? ", id, fulltag);
+    if (is_map) emit("%s_%s((", ffam, kind == 1 ? "Some" : "Ok");
+    else emit("(");
+    codegen_expr(arg);
+    if (is_map) emit(")(__cb%d%s)) : ", id, okacc);
+    else emit(")(__cb%d%s) : ", id, okacc);
+    if (kind == 1) emit("%s_None(); })", ffam);
+    else emit("%s_Err(__cb%d.data.err_value); })", ffam, id);
+    return true;
+}
+
 // Resolve the Option/Result C family for an expression about to be PRINTED, in
 // any syntactic form. Returns a static string ("OptionInt", …), or NULL if the
 // expression is not Option/Result-like or has no renderer.
@@ -501,6 +665,13 @@ void codegen_expr(Expr* expr) {
 
 static void codegen_expr_inner(Expr* expr) {
     if (!expr) return;
+    // A per-call-site spawn wrapper re-emits its call at FILE scope, where the
+    // spawning scope's locals do not exist, so each argument is spliced to the
+    // local the wrapper unpacked it into (see WYN_SPAWN_SITE_ARG_SLOT).
+    if (WYN_SPAWN_SITE_IS_ARG(expr->_codegen_temp_id)) {
+        emit("__spa%d", WYN_SPAWN_SITE_ARG_INDEX(expr->_codegen_temp_id));
+        return;
+    }
     // If this expr was pre-evaluated to a temp, emit the temp name
     if (expr->_codegen_temp_id >= 0 && expr->_codegen_temp_id < 1000) {
         emit("__sa%d", expr->_codegen_temp_id);
@@ -995,7 +1166,13 @@ static void codegen_expr_inner(Expr* expr) {
                 if (ct && ct->kind == TYPE_MAP) {
                     emit("hashmap_has("); codegen_expr(cont); emit(", "); codegen_expr(elem); emit(")");
                 } else if (ct && ct->kind == TYPE_SET) {
-                    emit("hashset_contains("); codegen_expr(cont); emit(", "); codegen_expr(elem); emit(")");
+                    // V-38 (#391): dispatch by the set's element type, falling back to
+                    // the probe's own type for an OPEN set (`{:}` / a bare `HashSet`
+                    // param). `1 in s` used to emit the string-keyed contains.
+                    const Type* _d = ct->set_type.element_type ? ct->set_type.element_type
+                                                               : (elem ? elem->expr_type : NULL);
+                    emit("%s(", wyn_set_elem_fn("hashset_contains", _d));
+                    codegen_expr(cont); emit(", "); codegen_expr(elem); emit(")");
                 } else if (ct && ct->kind == TYPE_STRING) {
                     emit("wyn_string_contains("); codegen_expr(cont); emit(", "); codegen_expr(elem); emit(")");
                 } else {
@@ -1423,6 +1600,31 @@ static void codegen_expr_inner(Expr* expr) {
             break;
         }
         case EXPR_CALL:
+            // V-38 (#391): the THIRD spelling of a set element call, `HashSet::add(s, 1)`.
+            // The parser folds `HashSet::add` into one identifier, so it lowers through
+            // the EXPR_IDENT `::` branch above, which sees no arguments and therefore
+            // could not dispatch on the element type. Before this it emitted plain
+            // `hashset_add(s, 1)` and SEGFAULTED (strcmp on the integer 1) - it also
+            // slipped past #374's rejection rule, which only ever saw the `.` forms.
+            // Handled here, where the arguments are in scope, and through the same
+            // wyn_set_elem_fn() the other two spellings use.
+            if (expr->call.callee->type == EXPR_IDENT && expr->call.arg_count >= 2) {
+                char _cn[160]; token_to_cstr(_cn, sizeof(_cn), expr->call.callee->token);
+                if (strncmp(_cn, "HashSet::", 9) == 0 && wyn_set_elem_method(_cn + 9)) {
+                    char _base[192]; snprintf(_base, sizeof(_base), "hashset_%s", _cn + 9);
+                    Type* _st = expr->call.args[0]->expr_type;
+                    const Type* _d = (_st && _st->kind == TYPE_SET && _st->set_type.element_type)
+                        ? _st->set_type.element_type
+                        : expr->call.args[expr->call.arg_count - 1]->expr_type;
+                    emit("%s(", wyn_set_elem_fn(_base, _d));
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        if (i > 0) emit(", ");
+                        codegen_expr(expr->call.args[i]);
+                    }
+                    emit(")");
+                    break;
+                }
+            }
             // BARE (unqualified) enum constructor: `Circle(5)` -> `Shape_Circle(5)`.
             // The checker types this as the enum (see find_enum_for_bare_variant);
             // here we lower the call to the enum's constructor symbol, mirroring the
@@ -2576,6 +2778,13 @@ static void codegen_expr_inner(Expr* expr) {
         case EXPR_METHOD_CALL: {
             Token method = expr->method_call.method;
 
+            // An Option/Result COMBINATOR (#392). FIRST, because the ordinary
+            // TYPE_STRUCT method dispatch further down would emit `OptionInt_map(..)` -
+            // a symbol nothing defines. The hook answers only for the four scalar
+            // families, so a user struct named `ResultSet` with its own `map` is
+            // untouched and still reaches that dispatch.
+            if (cg_try_optlike_combinator(expr)) break;
+
             // Calling a function-typed STRUCT FIELD: `b.on_click()` - the VB-style
             // event-handler shape. `obj.name(...)` parses as a METHOD call, so this
             // must be checked BEFORE method dispatch: otherwise the field name is
@@ -2831,7 +3040,10 @@ static void codegen_expr_inner(Expr* expr) {
                 method.length == 4 && memcmp(method.start, "push", 4) == 0 &&
                 expr->method_call.arg_count == 1) {
                 char _on[256]; token_to_cstr(_on, sizeof(_on), expr->method_call.object->token);
-                if (is_spawn_array(_on)) {
+                // THE authority (codegen.c): every accessor must agree with the
+                // representation the declaration chose. These gates used to ask one
+                // table each - three different subsets across five sites.
+                if (wyn_array_is_packed(_on)) {
                     emit("int_array_push(&(");
                     codegen_expr(expr->method_call.object);
                     emit("), (long long)(");
@@ -3043,7 +3255,23 @@ static void codegen_expr_inner(Expr* expr) {
                     char _nssym[320];
                     if (!is_module_extern_fn(_mname, _mfn) &&
                         wyn_namespace_c_symbol(module_name, _mfn, _nssym, sizeof(_nssym))) {
-                        emit("%s(", _nssym);
+                        // V-38 (#391): the NAMESPACE spelling of a set element call -
+                        // `HashSet.add(s, 1)`. It lowers through this authority rather
+                        // than through dispatch_method, so the element dispatch has to
+                        // be applied here too; the method form's half is at the
+                        // dispatch_method call site. The element is the LAST argument in
+                        // both, and both consult wyn_set_elem_fn, so they cannot pick
+                        // different runtime calls for the same set.
+                        const char* _ns_fn = _nssym;
+                        if (strcmp(module_name, "HashSet") == 0 && wyn_set_elem_method(_mfn) &&
+                            expr->method_call.arg_count >= 2) {
+                            Type* _st = expr->method_call.args[0]->expr_type;
+                            const Type* _d = (_st && _st->kind == TYPE_SET && _st->set_type.element_type)
+                                ? _st->set_type.element_type
+                                : expr->method_call.args[expr->method_call.arg_count - 1]->expr_type;
+                            _ns_fn = wyn_set_elem_fn(_nssym, _d);
+                        }
+                        emit("%s(", _ns_fn);
                     } else {
                         // A USER module (or an `extern fn` it declares). An extern fn
                         // names a symbol that already exists in a C library, so it must
@@ -3075,8 +3303,8 @@ static void codegen_expr_inner(Expr* expr) {
             // WynIntArray dispatch - typed [int] arrays
             if (expr->method_call.object->type == EXPR_IDENT) {
                 char _ian[128]; token_to_cstr(_ian, sizeof(_ian), expr->method_call.object->token);
-                extern int is_int_array_var(const char*);
-                if (is_int_array_var(_ian)) {
+                extern int wyn_array_is_packed(const char*);
+                if (wyn_array_is_packed(_ian)) {
                     Token m = expr->method_call.method;
                     if (m.length == 4 && memcmp(m.start, "push", 4) == 0) {
                         emit("int_array_push(&("); codegen_expr(expr->method_call.object); emit("), ");
@@ -3178,7 +3406,7 @@ static void codegen_expr_inner(Expr* expr) {
                     // Check if this is a spawn array (WynIntArray)
                     if (expr->method_call.object->type == EXPR_IDENT) {
                         char _on[256]; token_to_cstr(_on, sizeof(_on), expr->method_call.object->token);
-                        if (is_spawn_array(_on)) {
+                        if (wyn_array_is_packed(_on)) {
                             emit("int_array_push(&(");
                             codegen_expr(expr->method_call.object);
                             emit("), (long long)(");
@@ -4345,6 +4573,22 @@ static void codegen_expr_inner(Expr* expr) {
                     // When to_string is dispatched as int_to_string but the object is a method call,
                     // use _Generic to_string macro so the C compiler picks the right variant
                     const char* fn_name = dispatch.c_function;
+                    // V-38 (#391): re-point a set's element-taking method at the
+                    // element-typed runtime call. dispatch_method() is keyed on the
+                    // receiver-type STRING ("set") and so cannot see the element type;
+                    // this is the one place that adds it, for both `s.add(x)` and
+                    // `HashSet.add(s, x)` (the namespace form types as TYPE_SET too).
+                    // Element type when known, else the ARGUMENT's type - which is what
+                    // keeps an OPEN set (`{:}`, a bare `HashSet` param) emitting
+                    // well-typed C instead of passing an int through a `const char*`.
+                    if (strcmp(receiver_type, "set") == 0 && wyn_set_elem_method(method_name) &&
+                        expr->method_call.arg_count >= 1) {
+                        Type* _st = expr->method_call.object->expr_type;
+                        const Type* _d = (_st && _st->kind == TYPE_SET && _st->set_type.element_type)
+                            ? _st->set_type.element_type
+                            : expr->method_call.args[expr->method_call.arg_count - 1]->expr_type;
+                        fn_name = wyn_set_elem_fn(fn_name, _d);
+                    }
                     if (strcmp(fn_name, "int_to_string") == 0 &&
                         expr->method_call.object->type == EXPR_METHOD_CALL) {
                         fn_name = "to_string";
@@ -4525,7 +4769,7 @@ static void codegen_expr_inner(Expr* expr) {
                         // Check if this is a spawn array (WynIntArray)
                         if (expr->method_call.object->type == EXPR_IDENT) {
                             char _on[256]; token_to_cstr(_on, sizeof(_on), expr->method_call.object->token);
-                            if (is_spawn_array(_on)) {
+                            if (wyn_array_is_packed(_on)) {
                                 emit("int_array_push(&("); codegen_expr(expr->method_call.object); emit("), (long long)("); codegen_expr(expr->method_call.args[0]); emit("))"); break;
                             }
                         }
@@ -4776,10 +5020,17 @@ static void codegen_expr_inner(Expr* expr) {
                 static int set_counter = 0;
                 int set_id = set_counter++;
                 emit("({ WynHashSet* __set_%d = hashset_new(); ", set_id);
-                
-                // Add elements
+
+                // Add elements. V-38 (#391): by ELEMENT TYPE. This emitted
+                // `hashset_add` unconditionally, so `{:1}` passed the int 1 into a
+                // `const char*` parameter and strcmp dereferenced it. The element type
+                // now comes from the checker's TYPE_SET; per-element expr_type is the
+                // fallback for a literal whose type the checker did not reach.
+                const Type* _set_elem = (expr->expr_type && expr->expr_type->kind == TYPE_SET)
+                                        ? expr->expr_type->set_type.element_type : NULL;
                 for (int i = 0; i < expr->array.count; i++) {
-                    emit("hashset_add(__set_%d, ", set_id);
+                    const Type* _d = _set_elem ? _set_elem : expr->array.elements[i]->expr_type;
+                    emit("%s(__set_%d, ", wyn_set_elem_fn("hashset_add", _d), set_id);
                     codegen_expr(expr->array.elements[i]);
                     emit("); ");
                 }
@@ -4850,8 +5101,8 @@ static void codegen_expr_inner(Expr* expr) {
                 // Check if this is a spawn array (WynIntArray)
                 if (expr->index.array->type == EXPR_IDENT) {
                     char _on[256]; token_to_cstr(_on, sizeof(_on), expr->index.array->token);
-                    extern int is_int_array_var(const char*);
-                    if (is_spawn_array(_on) || is_int_array_var(_on)) {
+                    extern int wyn_array_is_packed(const char*);
+                    if (wyn_array_is_packed(_on)) {
                         emit("int_array_get(");
                         codegen_expr(expr->index.array);
                         emit(", ");
@@ -6503,9 +6754,26 @@ static void codegen_expr_inner(Expr* expr) {
             break;
         }
         case EXPR_SPAWN: {
-            // Spawn expression: spawn fn(args) returns a future
+            // A call the per-NAME wrappers cannot dispatch (a namespaced builtin in
+            // either spelling) gets a per-CALL-SITE wrapper, IF the collecting scan
+            // registered one. Lookup, never intern: interning here would reference a
+            // wrapper the scan never emitted. A site is only registered where the
+            // branch's value is discarded, which is why nothing types a result here.
+            SpawnSite* _site = expr->spawn.call ? spawn_site_lookup(expr->spawn.call) : NULL;
+            if (_site) {
+                emit("({ ");
+                spawn_site_emit_args(_site);
+                emit("wyn_spawn_async_traced((TaskFuncWithReturn)__spawn_site_%d, __ss%d, __FILE__, __LINE__); })",
+                     _site->id, _site->id);
+                break;
+            }
+            // Spawn expression: spawn fn(args) returns a future.
+            // The per-name path is only usable when the callee spells a valid C
+            // identifier: `Time::sleep` does not, and it emitted a reference to
+            // `__spawn_wrapper_Time::sleep_1`, which does not compile.
             if (expr->spawn.call && expr->spawn.call->type == EXPR_CALL &&
-                expr->spawn.call->call.callee->type == EXPR_IDENT) {
+                expr->spawn.call->call.callee->type == EXPR_IDENT &&
+                spawn_callee_is_c_identifier(expr->spawn.call->call.callee->token)) {
                 Expr* call = expr->spawn.call;
                 Expr* callee = call->call.callee;
                 char func_name[256]; token_to_cstr(func_name, sizeof(func_name), callee->token);
@@ -6601,6 +6869,20 @@ static void codegen_expr_inner(Expr* expr) {
                     else
                         emit("wyn_spawn_async_traced((TaskFuncWithReturn)__spawn_wrapper_%s_%d, __sa_%d, __FILE__, __LINE__); })", func_name, arg_count, sid);
                 }
+            } else if (expr->spawn.call) {
+                // No wrapper is possible for this call shape, but the previous
+                // `NULL` DROPPED THE CALL: `var f = spawn Time.sleep(200); await f`
+                // returned 0 after 0ms and never slept. Run it synchronously and
+                // hand back a real, already-completed Future, so the side effect
+                // happens and `await` has something to read. The value is not
+                // carried (a builtin's C return type is unknown here - Time.sleep
+                // types as int and is declared `void`), so await still yields 0;
+                // that is unchanged, and the lost call is not.
+                static int sync_fut_id = 0;
+                int sfid = sync_fut_id++;
+                emit("({ Future* __sfut%d = future_new(); (void)(", sfid);
+                codegen_expr(expr->spawn.call);
+                emit("); future_set(__sfut%d, NULL); __sfut%d; })", sfid, sfid);
             } else {
                 emit("NULL /* spawn fallback */");
             }

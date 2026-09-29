@@ -14,7 +14,15 @@ typedef struct {
     const char* receiver_type;  // "string", "int", "float", etc.
     const char* method_name;    // "upper", "lower", "abs", etc.
     const char* return_type;    // "string", "int", "float", etc.
-    int param_count;            // Number of parameters (excluding self)
+    // The argument TYPES, in Wyn spelling, comma-separated at depth 0: "" for none,
+    // "int, string", "fn(int)->bool", "fn(int,int)->int, int", "..." for variadic.
+    //
+    // This column replaced a bare argument COUNT. The count is what made
+    // tests/errors/run_registry_reachable_test.sh unable to synthesise a call for any
+    // row that takes arguments - half the table - so `.any`/`.all` and `every`/`times`
+    // all shipped uncallable behind that blind spot. The arity is now the number of
+    // entries here, so a row cannot advertise one count and a different argument list.
+    const char* param_types;
 } MethodSignature;
 
 // Lookup method return type given receiver type and method name
@@ -32,6 +40,16 @@ typedef struct {
 } MethodDispatch;
 
 bool dispatch_method(const char* receiver_type, const char* method_name, int arg_count, MethodDispatch* out);
+
+// V-38 (#391) set element-type dispatch. ONE authority, so the four places that
+// lower a set element (the `{:...}` literal, `x in s`, `s.add(x)` and the
+// `HashSet.add(s, x)` namespace form) cannot disagree about which runtime call an
+// int set gets. `wyn_set_elem_method` says whether a method takes an ELEMENT (as
+// opposed to another set, or no argument at all); `wyn_set_elem_fn` maps the
+// string-set C name to the variant for `elem` (NULL elem = an open set, which
+// stays on the string path).
+bool wyn_set_elem_method(const char* method_name);
+const char* wyn_set_elem_fn(const char* base, const Type* elem);
 
 // T1.5.2: LambdaExpr definition (moved from ast.h to break circular dependency)
 typedef struct LambdaExpr {
@@ -100,6 +118,17 @@ typedef struct {
     Type* element_type;  // The type of array elements (T in [T])
 } ArrayType;
 
+// V-38 (#391): the element type of a set. TYPE_SET carried NO element type, so a
+// set was effectively untyped - `type_to_string` printed an unearned element name,
+// codegen picked the string-keyed runtime call for every element kind, and an
+// element-type mismatch could not be reported because there was nothing to compare
+// against. NULL means OPEN: `{:}` / `HashSet.new()` do not know their element type
+// yet and the first `.add()`/`.insert()` fixes it (the same rule an empty `{}` map
+// uses for its value type).
+typedef struct {
+    Type* element_type;  // The type of set elements (T in {T})
+} SetType;
+
 typedef struct {
     Type* inner_type;  // The type that is optional (T in T?)
 } OptionalType;
@@ -126,6 +155,7 @@ struct Type {
         StructType struct_type;
         FunctionType fn_type;
         MapType map_type;
+        SetType set_type;            // V-38: set type with element tracking
         ArrayType array_type;        // Array type with element tracking
         OptionalType optional_type;  // T2.5.1: Optional Type Implementation
         UnionType union_type;        // T2.5.2: Union Type Support
@@ -172,6 +202,7 @@ typedef struct {
 void wyn_type_inference_init(void);
 Type* wyn_infer_variable_type(Expr* init_expr, SymbolTable* scope);
 Type* wyn_infer_function_return_type(Stmt* function_body, SymbolTable* scope);
+bool wyn_body_has_value_return(Stmt* body);
 Type* wyn_analyze_return_statements(Stmt* stmt, SymbolTable* scope);
 Type* wyn_infer_binary_result_type(Expr* binary_expr);
 Type* wyn_infer_call_return_type(Expr* call_expr, SymbolTable* scope);

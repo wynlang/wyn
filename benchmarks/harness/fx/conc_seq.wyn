@@ -1,0 +1,12 @@
+fn tiny(x: int) -> int { return x }
+fn main() -> int {
+    t0 = DateTime.micros()
+    for i in 0..10000 { var f = spawn tiny(i); await f }
+    t1 = DateTime.micros()
+    print("spawn+await 10K seq us=${t1 - t0}")
+    t2 = DateTime.micros()
+    for i in 0..100000 { var f = spawn tiny(i); await f }
+    t3 = DateTime.micros()
+    print("spawn+await 100K seq us=${t3 - t2}")
+    return 0
+}

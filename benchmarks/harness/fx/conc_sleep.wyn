@@ -1,0 +1,21 @@
+fn nap(ms: int) -> int { Time.sleep(ms); return ms }
+fn main() -> int {
+    // 8 overlapping sleep(100), awaited one future at a time
+    t0 = DateTime.micros()
+    var fs: [int] = []
+    for i in 0..8 { fs.push(spawn nap(100)) }
+    for f in fs { await f }
+    t1 = DateTime.micros()
+    print("8 sleep(100) awaited us=${t1 - t0}")
+    for spec in [[8, 100], [50, 200], [50, 100], [200, 100]] {
+        n = spec[0]
+        ms = spec[1]
+        t2 = DateTime.micros()
+        var ts = []
+        for i in 0..n { ts.push(spawn nap(ms)) }
+        r = await_all(ts)
+        t3 = DateTime.micros()
+        print("${n} sleep(${ms}) await_all us=${t3 - t2} n_results=${r.len()}")
+    }
+    return 0
+}

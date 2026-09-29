@@ -1,0 +1,9 @@
+fn main() -> int {
+    sb = StringBuilder.new()
+    t0 = DateTime.micros()
+    for i in 0..1000000 { sb.append("x") }
+    t1 = DateTime.micros()
+    s = sb.to_string()
+    print("sb 1M appends us=${t1 - t0} len=${s.len()}")
+    return 0
+}

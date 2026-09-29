@@ -90,6 +90,42 @@ uint32_t wyn_rc_get_length(const void* ptr) {
     return 0;
 }
 
+// One header validation that answers BOTH questions string_length() has: what is
+// the cached length, and is this pointer even capable of holding one.
+//
+// wyn_rc_get_length alone cannot distinguish "RC-managed, length not cached yet"
+// from "not RC-managed at all" - both are 0 - so string_length had to call
+// wyn_rc_set_length afterwards to find out, paying wyn_rc_is_heap() a second time.
+// A string LITERAL lives in rodata, is never inside [heap_low, heap_high] and so
+// misses forever: it paid that second validation on every single call and could
+// never benefit from it. Memoizing on read made builder results ~1550x faster and
+// made `.len()` on a literal 1.75x slower in the same stroke (1M calls on a
+// 44-char literal: 1.53ms -> 2.69ms).
+//
+// *is_rc lets the caller skip the store when there is nowhere to store it, so the
+// literal path is one call again and the memoization is kept.
+//
+// NOTE: strlen deliberately stays in the CALLER (wyn_runtime.h), not here. Moving
+// the whole cycle into this translation unit was measured and was much worse -
+// 5.6ms - because it stops the C compiler inlining strlen and constant-folding it
+// for a literal receiver. Keep the work that benefits from the call site at the
+// call site.
+// Returns the cached length, 0 for "RC-managed but not cached yet", and
+// WYN_RC_NOT_CACHEABLE for "not RC-managed at all, so there is nowhere to cache".
+// A sentinel rather than an out-parameter on purpose: the out-param version was
+// measured and cost ~18% on the cached-hit path, because the store through the
+// pointer survives across the translation-unit boundary.
+//
+// UINT32_MAX is safe as the sentinel: it would otherwise mean a string of exactly
+// 4,294,967,295 bytes, and the cache field is a uint32_t, so such a string could
+// not record its own length here in the first place.
+uint32_t wyn_rc_length_probe(const void* ptr) {
+    if (ptr && wyn_rc_is_heap(ptr)) {
+        return __atomic_load_n(&rc_full_header(ptr)->length, __ATOMIC_RELAXED);
+    }
+    return WYN_RC_NOT_CACHEABLE;
+}
+
 void wyn_rc_retain(const void* ptr) {
     if (!ptr || !wyn_rc_is_heap(ptr)) return;
     WynRcHeaderFull* hdr = rc_full_header(ptr);

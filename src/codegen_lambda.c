@@ -50,25 +50,37 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
             // collected.
             for (int i = 0; i < stmt->block.count; i++) {
                 Stmt* _bs = stmt->block.stmts[i];
-                // A parallel-block `a = f()` is lowered as an IMPLICIT spawn
-                // (see codegen_stmt.c STMT_PARALLEL), so it needs the same
-                // __spawn_wrapper_f_N that an explicit `spawn f()` needs.
-                // Scan it AS a spawn expression to collect that wrapper.
-                if (stmt->type == STMT_PARALLEL && _bs && _bs->type == STMT_VAR &&
-                    _bs->var.init && _bs->var.init->type == EXPR_CALL &&
-                    _bs->var.init->call.callee->type == EXPR_IDENT) {
-                    // MUST use the SAME predicate as the codegen_stmt.c lowering:
-                    // get_function_return_type() != NULL, i.e. a known user fn.
-                    // Without it, `t = Time::now_millis()` (a builtin, lexed as
-                    // ONE EXPR_IDENT token containing "::") emitted
-                    // `void* __spawn_wrapper_Time::now_millis(...)` - invalid C.
-                    extern const char* get_function_return_type(const char*);
-                    char _pfn[256];
-                    token_to_cstr(_pfn, sizeof(_pfn), _bs->var.init->call.callee->token);
-                    if (get_function_return_type(_pfn)) {
-                        Expr _sp;
+                // A parallel-block branch that the lowering dispatches needs its
+                // wrapper collected HERE - a shape accepted by the lowering but
+                // missed here references a wrapper nobody emitted. So ask the SAME
+                // classifier the lowering asks, rather than keeping a second copy of
+                // its shape list and its predicate (they used to be two hand-copied
+                // lists whose agreement was only a comment).
+                if (stmt->type == STMT_PARALLEL && _bs) {
+                    Expr* _pcall = NULL;
+                    ParBranch _k = par_branch_classify(_bs, &_pcall, NULL, NULL);
+                    // A discarded branch may be dispatched by a per-CALL-SITE
+                    // wrapper; register it so one is emitted. Returns NULL for a
+                    // user function, which the per-name collection below handles.
+                    SpawnSite* _psite = (_k == PAR_SPAWN_DISCARD && _pcall)
+                                        ? spawn_site_intern(_pcall) : NULL;
+                    // A site takes precedence at emission, so do NOT also register a
+                    // per-name wrapper: it would never be called, yet still be
+                    // EMITTED - and for a non-user callee its body does not compile.
+                    // `parallel { print("A") }` emitted an unreachable
+                    // __spawn_wrapper_print_1 whose body called `wynfn_print`, the
+                    // collision-guard spelling reserved for USER functions, which is
+                    // undeclared. Same reason `spawn print("hi")` never built.
+                    if (!_psite &&
+                        _k != PAR_SEQ && _pcall && _pcall->type == EXPR_CALL &&
+                        _pcall->call.callee && _pcall->call.callee->type == EXPR_IDENT) {
+                        // Zeroed for the same reason as codegen_stmt.c's synthesized
+                        // spawn Exprs: only three fields are assigned below, and any
+                        // consumer that reads another one (e.g. expr_type) must see 0
+                        // rather than stack residue.
+                        Expr _sp = {0};
                         _sp.type = EXPR_SPAWN;
-                        _sp.spawn.call = _bs->var.init;
+                        _sp.spawn.call = _pcall;
                         _sp._codegen_temp_id = -1;
                         scan_expr_for_lambdas(&_sp);
                     }
@@ -98,10 +110,16 @@ static void scan_stmt_for_lambdas(Stmt* stmt) {
             if (stmt->for_stmt.body) scan_stmt_for_lambdas(stmt->for_stmt.body);
             break;
         case STMT_SPAWN:
+            // A fire-and-forget spawn discards its value, so a call no per-name
+            // wrapper can dispatch (a namespaced builtin in either spelling) gets a
+            // per-CALL-SITE wrapper. Returns NULL for a user function, which the
+            // per-name collection below handles.
+            if (stmt->spawn.call && spawn_site_intern(stmt->spawn.call)) break;
             // Collect spawn wrappers for fire-and-forget spawns
-            if (stmt->spawn.call->type == EXPR_CALL && 
-                stmt->spawn.call->call.callee->type == EXPR_IDENT) {
-                
+            if (stmt->spawn.call->type == EXPR_CALL &&
+                stmt->spawn.call->call.callee->type == EXPR_IDENT &&
+                spawn_callee_is_c_identifier(stmt->spawn.call->call.callee->token)) {
+
                 Expr* callee = stmt->spawn.call->call.callee;
                 char func_name[256];
                 int len = callee->token.length < 255 ? callee->token.length : 255;
@@ -344,9 +362,18 @@ static void scan_expr_for_lambdas(Expr* expr) {
                 scan_expr_for_lambdas(expr->await.expr);
                 break;
             }
-            // Collect spawn wrapper for this spawn expression
+            // `var f = spawn Time.sleep(200)` emitted `Future* f = NULL` and DROPPED
+            // THE CALL - `await f` returned 0 after 0ms and nothing ever slept. Give
+            // it a per-call-site wrapper so the call at least runs, concurrently.
+            // The awaited VALUE is still 0 for such a callee (a builtin's C return
+            // type is not knowable here), exactly as before; the lost call is not.
+            if (expr->spawn.call && spawn_site_intern(expr->spawn.call)) break;
+            // Collect spawn wrapper for this spawn expression. A callee that is not
+            // a valid C identifier (`Time::sleep`) can have no per-name wrapper -
+            // registering one emitted `void* __spawn_wrapper_Time::sleep_1(...)`.
             if (expr->spawn.call && expr->spawn.call->type == EXPR_CALL &&
-                expr->spawn.call->call.callee->type == EXPR_IDENT) {
+                expr->spawn.call->call.callee->type == EXPR_IDENT &&
+                spawn_callee_is_c_identifier(expr->spawn.call->call.callee->token)) {
                 Expr* callee = expr->spawn.call->call.callee;
                 char func_name[256];
                 int len = callee->token.length < 255 ? callee->token.length : 255;

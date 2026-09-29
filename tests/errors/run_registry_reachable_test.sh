@@ -27,10 +27,17 @@
 # KNOWN_BROKEN list is checked for EXACTNESS: an entry that starts working FAILS the gate,
 # so the list cannot rot into a list of things nobody has looked at since.
 #
-# Scope: the arity-0 entries (121 of the 242), which are the ones that can be called
-# without inventing argument types. Arity 1-2 entries are NOT covered - `Option.map` and
-# `Option.filter` advertise combinators whose C symbols do not exist either, and they are
-# out of reach here for exactly the argument-type reason. (2026-09)
+# Scope: EVERY row. It used to be the arity-0 half only, because `method_signatures`
+# recorded an argument COUNT and a count cannot be turned into a call. That blind spot is
+# how `.any`/`.all` and `every`/`times` shipped uncallable - all four take a function, so
+# all four sat in the unreachable half. The table now carries the argument TYPES
+# (`{"string", "pad_left", "string", "int, string"}`), so a real call is synthesised for
+# the arity 1-2 rows too, and the arity is just the number of entries in that column.
+#
+# ALSO: a passing run now requires a clean compile, not merely that the program reached
+# the end. A method the checker does not know about can print `Unknown method 'for_each'
+# for type 'map'` and STILL produce a binary that runs (the call lowers to nothing), so
+# "it printed REACHED" was not evidence the row works. (2026-09)
 set -uo pipefail
 WYN="${WYN:-./wyn}"
 WYNABS=$(cd "$(dirname "$WYN")" && pwd)/$(basename "$WYN")
@@ -82,48 +89,123 @@ fixture(){
   esac
 }
 
-# Read the authority. Emits "receiver method returntype" per arity-0 row, de-duplicated
-# (the table registers some rows twice - `map.contains` and `map.len` among them).
+# Some rows' CONTRACT requires a particular variant of the receiver, not just the right
+# type. `result.unwrap_err` on an `Ok` aborts with "unwrap_err() called on Ok" - which is
+# the method behaving correctly, but this gate reads an abort as "the row is not callable".
+# The answer is the right receiver, NOT an entry in known_broken(): that list is for rows
+# with nothing behind them, and it is meant to stay empty.
+fixture_for(){   # <receiver> <method>
+  case "$1.$2" in
+    result.unwrap_err) echo 'r = reg_res_err()';;
+    # V-38 (#391): a HashSet now carries an ELEMENT TYPE, so the generic `set` fixture
+    # `{:"a"}` is a HashSet<string> and `contains_int(1)` on it is correctly REFUSED
+    # ("'contains_int()' on a HashSet<string> was given int"). The row is right and the
+    # rule is right - the gate needs an int-element receiver, the same reason
+    # result.unwrap_err needs an Err one.
+    set.contains_int)  echo 'r = {:1}';;
+    *)                 fixture "$1";;
+  esac
+}
+
+# Read the authority. Emits TAB-separated "receiver method returntype call" per row,
+# de-duplicated (the table registers some rows twice - `map.contains` and `map.len` among
+# them). `call` is the whole call text, arguments included, so the argument-type column is
+# turned into Wyn source in exactly ONE place.
+#
+# The literals are chosen so a WORKING method cannot be mistaken for a broken one:
+# every int is 1 and every string is "a", which is in range for the "42"/[1,2,3]/{"a": 1}
+# fixtures and is a key those fixtures HAVE - a missing map key aborts, and an abort would
+# be reported as an unreachable method.
 python3 - "$SRC_TYPES" > "$TMP/pairs.txt" <<'PY'
 import re, sys
 src = open(sys.argv[1]).read()
 m = re.search(r'method_signatures\[\]\s*=\s*\{(.*?)\n\};', src, re.S)
 if not m:
     sys.stderr.write("could not find method_signatures[] in types.c\n"); sys.exit(2)
-rows = re.findall(r'\{"([a-z_]+)",\s*"([a-zA-Z_0-9]+)",\s*"([^"]+)",\s*(\d+)\}', m.group(1))
+rows = re.findall(r'^\s*\{"([a-z_]+)",\s*"([a-zA-Z_0-9]+)",\s*"([^"]*)",\s*"([^"]*)"\}',
+                  m.group(1), re.M)
+
+LIT = {'int': '1', 'float': '1.5', 'string': '"a"', 'bool': 'true',
+       'array': '[4, 5]', 'map': '{"b": 2}', 'set': '{:"b"}'}
+
+def split_args(spec):
+    """Comma-separated at depth 0, so fn(int,int)->int stays one argument."""
+    out, buf, d = [], '', 0
+    for c in spec:
+        if c in '([': d += 1
+        elif c in ')]': d -= 1
+        if c == ',' and d == 0:
+            out.append(buf.strip()); buf = ''
+        else:
+            buf += c
+    if buf.strip(): out.append(buf.strip())
+    return out
+
+def literal(t):
+    if t in LIT: return LIT[t]
+    fn = re.match(r'^fn\(([^)]*)\)(?:->(.+))?$', t.replace(' ', ''))
+    if not fn: return None
+    ps = [p for p in fn.group(1).split(',') if p]
+    params = ', '.join('_a%d: %s' % (i, p) for i, p in enumerate(ps))
+    ret = fn.group(2)
+    if not ret: return 'fn(%s) { }' % params
+    body = {'int': '1', 'bool': 'true', 'float': '1.5', 'string': '"a"',
+            '[int]': '[_a0]'}.get(ret)
+    if body is None: return None
+    return 'fn(%s) -> %s { return %s }' % (params, ret, body)
+
 seen = set()
-for recv, meth, ret, arity in rows:
-    if arity == '0' and (recv, meth) not in seen:
-        seen.add((recv, meth))
-        print(recv, meth, ret)
+for recv, meth, ret, spec in rows:
+    if (recv, meth) in seen: continue
+    seen.add((recv, meth))
+    if spec == '...':
+        # Variadic: there is no fixed argument list to render. Reported as an accounted-for
+        # gap rather than dropped, so the gate's own coverage is visible in its output -
+        # a quiet `continue` here is the shape of the hole that left arity 1-2 unchecked.
+        print('%s\t%s\t%s\tVARIADIC:%s' % (recv, meth, ret, spec))
+        continue
+    args = split_args(spec)
+    lits = [literal(a) for a in args]
+    if any(l is None for l in lits):
+        # A spec this generator cannot render is a GAP IN THE GATE, not a passing row.
+        print('%s\t%s\t%s\tUNRENDERABLE:%s' % (recv, meth, ret, spec))
+        continue
+    print('%s\t%s\t%s\t%s(%s)' % (recv, meth, ret, meth, ', '.join(lits)))
 PY
 if [ ! -s "$TMP/pairs.txt" ]; then
   echo "  FAIL  could not read method_signatures[] from $SRC_TYPES"
   echo ""; echo "registry-reachable: 0 pass, 1 fail"; exit 1
 fi
 
-TOTAL=$(wc -l < "$TMP/pairs.txt" | tr -d ' ')
-RECEIVERS=$(cut -d' ' -f1 "$TMP/pairs.txt" | sort -u)
+ROWS=$(wc -l < "$TMP/pairs.txt" | tr -d ' ')
+TOTAL=$(grep -cv $'\t''\(UNRENDERABLE\|VARIADIC\):' "$TMP/pairs.txt" || true)
+RECEIVERS=$(cut -f1 "$TMP/pairs.txt" | sort -u)
 
-# emit_one <file> <receiver> <method> <returntype>
+# emit_one <file> <receiver> <call> <returntype>
 # A void method must not have its result bound, or the gate reports a fixture error as a
 # broken method.
 emit_one(){
   { echo 'fn reg_opt() -> int? { return Some(1) }'
     echo 'fn reg_res() -> Result<int, string> { return Ok(1) }'
+    echo 'fn reg_res_err() -> Result<int, string> { return Err("e") }'
     echo 'fn main() {'
-    echo "  $(fixture "$2")"
-    if [ "$4" = "void" ]; then echo "  r.$3()"; else echo "  v = r.$3()"; fi
+    echo "  $(fixture_for "$2" "${3%%(*}")"
+    if [ "$4" = "void" ]; then echo "  r.$3"; else echo "  v = r.$3"; fi
     echo '  print("REACHED")'
     echo '}'; } > "$1"
 }
 
-builds_and_runs(){   # <file> -> 0 if it printed REACHED, in the mode MODE names
-  if [ "$MODE" = "release" ]; then
-    "$WYNABS" run --release "$1" 2>&1 | grep -q "REACHED"
-  else
-    "$WYNABS" run "$1" 2>&1 | grep -q "REACHED"
-  fi
+# A clean compile AND a run that reached the end. Reaching the end is not enough on its
+# own: `m.for_each(f)` prints "Unknown method 'for_each' for type 'map'", emits nothing
+# for the call, and the binary still runs to completion - so a dead row looked alive.
+# Warnings (unused variable) are not failures.
+compile_errors=""
+builds_and_runs(){   # <file> -> 0 if it compiled cleanly and printed REACHED
+  local relflag=""; [ "$MODE" = "release" ] && relflag="--release"
+  local out
+  out=$("$WYNABS" run $relflag "$1" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+  compile_errors=$(echo "$out" | grep -E '^Error|Error at line|Unknown method|internal codegen|error:|Parse error' | head -1)
+  [ -z "$compile_errors" ] && echo "$out" | grep -q "REACHED"
 }
 
 # BOTH MODES. `--release` emits wyn_runtime_slim.h instead of wyn_runtime.h, and that
@@ -135,24 +217,26 @@ builds_and_runs(){   # <file> -> 0 if it printed REACHED, in the mode MODE names
 # spellings, which is why none of them were caught there either.
 for MODE in debug release; do
 echo "== mode: $MODE =="
-echo "-- every advertised arity-0 method is callable ($TOTAL rows, batched per receiver)"
-# One program per receiver keeps the green path to ~11 compiles instead of ~121. Each
+echo "-- every advertised method is callable ($TOTAL of $ROWS rows, batched per receiver)"
+# One program per receiver keeps the green path to ~11 compiles instead of ~220. Each
 # method gets its OWN fresh receiver inside that program, so a mutating method cannot
 # change the answer for a later one. A failing batch falls back to per-method compiles,
 # so the report still names the exact method.
 for recv in $RECEIVERS; do
-  methods=$(awk -v r="$recv" '$1==r {print $2" "$3}' "$TMP/pairs.txt")
+  methods=$(awk -F'\t' -v r="$recv" '$1==r {print $2"\t"$3"\t"$4}' "$TMP/pairs.txt")
   batch="$TMP/batch_${MODE}_$recv.wyn"
   n=0
   { echo 'fn reg_opt() -> int? { return Some(1) }'
     echo 'fn reg_res() -> Result<int, string> { return Ok(1) }'
+    echo 'fn reg_res_err() -> Result<int, string> { return Err("e") }'
     echo 'fn main() {'
-    while read -r meth ret; do
+    while IFS=$'\t' read -r meth ret call; do
       [ -z "$meth" ] && continue
       known_broken "$recv.$meth" && continue
+      case "$call" in UNRENDERABLE:*|VARIADIC:*) continue;; esac
       n=$((n+1))
-      echo "  $(fixture "$recv")" | sed "s/^  r =/  r$n =/; s/^  var r:/  var r$n:/"
-      if [ "$ret" = "void" ]; then echo "  r$n.$meth()"; else echo "  v$n = r$n.$meth()"; fi
+      echo "  $(fixture_for "$recv" "$meth")" | sed "s/^  r =/  r$n =/; s/^  var r:/  var r$n:/"
+      if [ "$ret" = "void" ]; then echo "  r$n.$call"; else echo "  v$n = r$n.$call"; fi
     done <<< "$methods"
     echo '  print("REACHED")'
     echo '}'; } > "$batch"
@@ -165,16 +249,15 @@ for recv in $RECEIVERS; do
     ok "[$MODE] $recv: $n advertised methods all callable"
   else
     # Attribute the failure to individual methods.
-    while read -r meth ret; do
+    while IFS=$'\t' read -r meth ret call; do
       [ -z "$meth" ] && continue
       known_broken "$recv.$meth" && continue
+      case "$call" in UNRENDERABLE:*|VARIADIC:*) continue;; esac
       one="$TMP/one_${MODE}_$recv.$meth.wyn"
-      emit_one "$one" "$recv" "$meth" "$ret"
+      emit_one "$one" "$recv" "$call" "$ret"
       if ! builds_and_runs "$one"; then
-        relflag=""; [ "$MODE" = "release" ] && relflag="--release"
-        why=$("$WYNABS" run $relflag "$one" 2>&1 | grep -iE "^Error|Error at line|Unknown method|internal codegen" \
-              | head -1 | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-90)
-        bad "[$MODE] $recv.$meth is advertised by types.c but not callable :: ${why:-unknown}"
+        why=$(echo "$compile_errors" | cut -c1-90)
+        bad "[$MODE] $recv.$meth is advertised by types.c but not callable :: ${why:-reached-no-output}"
       fi
     done <<< "$methods"
     # A batch can fail while every method passes alone (an interaction, not a dead row).
@@ -185,12 +268,24 @@ for recv in $RECEIVERS; do
   fi
 done
 
+echo "-- every row's argument types can be rendered into a call"
+# A row whose argument-type column this gate cannot turn into Wyn source is a hole in the
+# gate, and a hole is how the arity 1-2 half went unchecked for months. Fail loudly
+# instead of skipping quietly.
+while IFS=$'\t' read -r recv meth ret call; do
+  case "$call" in
+    UNRENDERABLE:*) bad "[$MODE] $recv.$meth: this gate cannot generate a call for its argument types (${call#UNRENDERABLE:}) - teach literal() in this file, or fix the row";;
+    VARIADIC:*)     echo "  note  [$MODE] $recv.$meth takes variable arguments, so no call is generated here (covered by the string-format tests)";;
+  esac
+done < "$TMP/pairs.txt"
+
 echo "-- the known-broken list is EXACT (a fixed entry must be removed from it)"
 # Without this half the list becomes a place where defects go to be forgotten.
-while read -r recv meth ret; do
+while IFS=$'\t' read -r recv meth ret call; do
   known_broken "$recv.$meth" || continue
+  case "$call" in UNRENDERABLE:*|VARIADIC:*) continue;; esac
   one="$TMP/kb_${MODE}_$recv.$meth.wyn"
-  emit_one "$one" "$recv" "$meth" "$ret"
+  emit_one "$one" "$recv" "$call" "$ret"
   if builds_and_runs "$one"; then
     bad "[$MODE] $recv.$meth now WORKS - delete it from known_broken() in this file"
   else
@@ -198,13 +293,16 @@ while read -r recv meth ret; do
   fi
 done < "$TMP/pairs.txt"
 
-echo "-- arity-1 methods, hand-written because their argument types cannot be generated"
-# The sweep above can only reach arity-0 rows. `.any(f)` and `.all(f)` are the reason
-# that limit matters: both work in debug, BOTH failed under --release (wyn_arr_any /
-# wyn_arr_all were missing from the slim header), and they are exactly what the 2026-08
-# any/all work added - whose gate never ran --release. A fix with no gate is how that
-# recurs, so the predicate-taking methods this PR touched are pinned here explicitly
-# until the sweep grows an argument-type column and absorbs them.
+echo "-- the higher-order methods give the right ANSWER, not just a clean compile"
+# These are NOT a second copy of the sweep above. The sweep proves a row can be CALLED,
+# with a generated predicate whose answer it deliberately ignores; these arms assert the
+# VALUE, which is the half a generated call cannot check - `.any` returning false for
+# `x > 2` on [1, 2, 3] compiles perfectly.
+#
+# `int.times` is here for a different reason: it has NO row in method_signatures at all
+# (it lives only in dispatch_method), so the sweep cannot see it. It and `every` are the
+# two that survived the .any/.all fix - both compiled in debug and failed under --release
+# on a missing slim-header declaration.
 #
 # <label> <program-body> <expected-output>
 a1(){

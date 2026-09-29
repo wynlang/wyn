@@ -132,3 +132,24 @@ vendor/mbedtls/lib/
 .commit_msg.tmp
 .pr_body.tmp
 .issues.json
+
+# Benchmark harness output and build products. The harness reports numbers; it
+# deliberately does not store them in the repo (that duplication is what let
+# benchmarks/README.md drift 5x away from the published page). Also covers the
+# extensionless binaries `wyn build` leaves next to benchmarks/*.wyn, which the
+# *.out rule above does not match - two of them were committed by accident.
+benchmarks/harness/results/
+benchmarks/*
+!benchmarks/*.wyn
+!benchmarks/*.go
+!benchmarks/*.c
+!benchmarks/*.sh
+!benchmarks/*.md
+!benchmarks/*.py
+!benchmarks/*/
+# ...but NOT the C that `wyn build --debug` generates next to a fixture. The
+# `!benchmarks/*.c` exception above exists for hand-written comparison sources, and
+# `coroutine_bench.wyn.c` matches `*.c` too - so six generated files sat permanently
+# untracked in `git status` after one benchmark run. This re-ignores them; it must
+# stay BELOW the exception to win.
+benchmarks/*.wyn.c
