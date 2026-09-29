@@ -1,0 +1,50 @@
+// `parallel { }` wall clock, against an honest sequential baseline.
+//
+// READ THIS BEFORE EDITING: the branches deliberately take DISTINCT arguments.
+// `fib_off(35, 1)` and `fib_off(35, 2)` do identical work - the offset is added
+// at every leaf, so the node count is the same - but they are not the same
+// expression, so the C compiler cannot fold them together.
+//
+// Write the branches as `fib(35)` twice and the sequential baseline stops
+// measuring what it claims to: clang -O2 proves the calls equal and evaluates
+// ONE of them. Verified on this generated C at -O2 (arm64): four source-level
+// `fib(35)` calls emit ONE `bl _fib`; four `fib_off(35, k)` calls emit FOUR.
+// A baseline that is silently 4x too fast makes a working `parallel { }` look
+// like it does nothing. See benchmarks/README.md.
+fn fib_off(n: int, off: int) -> int {
+    if n <= 1 { return n + off }
+    return fib_off(n - 1, off) + fib_off(n - 2, off)
+}
+fn main() -> int {
+    // Sequential baseline, distinct args: this is the number parallel is against.
+    t0 = DateTime.micros()
+    var s1 = fib_off(35, 1)
+    var s2 = fib_off(35, 2)
+    t1 = DateTime.micros()
+    print("sequential 2x fib(35) us=${t1 - t0} sum=${s1 + s2}")
+
+    var a = 0
+    var b = 0
+    t2 = DateTime.micros()
+    parallel {
+        a = fib_off(35, 3)
+        b = fib_off(35, 4)
+    }
+    t3 = DateTime.micros()
+    print("parallel 2x fib(35) us=${t3 - t2} sum=${a + b}")
+
+    var c = 0
+    var d = 0
+    var e = 0
+    var g = 0
+    t4 = DateTime.micros()
+    parallel {
+        c = fib_off(35, 5)
+        d = fib_off(35, 6)
+        e = fib_off(35, 7)
+        g = fib_off(35, 8)
+    }
+    t5 = DateTime.micros()
+    print("parallel 4x fib(35) us=${t5 - t4} sum=${c + d + e + g}")
+    return 0
+}
