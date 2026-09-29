@@ -9734,6 +9734,37 @@ void check_program(Program* prog) {
             
             // Determine return type from function signature or infer from body
             fn_type->fn_type.return_type = builtin_int; // default
+            // A function with NO annotation and no `return <value>` is emitted with a
+            // C `void` signature, and this pass used to leave it on the `int` default
+            // above - so every call to it typed as int and the assignment/argument
+            // checks compared int against int:
+            //
+            //     fn side() { print("hi") }
+            //     var a = 0
+            //     a = side()        // wyn check: no errors (just "unused variable")
+            //     -> error: assigning to 'long long' from incompatible type 'void'
+            //
+            // `wyn check` is the fast type-check oracle, so a file it passes must not
+            // fail to BUILD for a type reason. The later body pass DOES compute this
+            // (wyn_infer_function_return_type, which synthesises fn->return_type so
+            // codegen emits the right C signature), but it runs per-body in source
+            // order - a caller defined ABOVE the callee is checked first and would
+            // still see the int default, so the answer has to be settled here, where
+            // every signature is registered before any body is looked at.
+            //
+            // main is excluded because its C signature is always `long long` even
+            // un-annotated, and an extension method because its receiver-typed
+            // registration is the impl path's, not this one. Both exclusions mirror
+            // register_void_fn() in codegen_program.c, which is the other half of this
+            // decision.
+            {
+                bool _is_main_fn = (fn->name.length == 4 &&
+                                    memcmp(fn->name.start, "main", 4) == 0);
+                if (!fn->return_type && !_is_main_fn && !fn->is_extension &&
+                    !wyn_body_has_value_return(fn->body)) {
+                    fn_type->fn_type.return_type = builtin_void;
+                }
+            }
             if (fn->return_type) {
                 if (fn->return_type->type == EXPR_CALL) {
                     // Generic type like HashMap<K,V>
@@ -9848,6 +9879,14 @@ void check_program(Program* prog) {
                         fn_type->fn_type.return_type = builtin_bool;
                     } else if (type_name.length == 5 && memcmp(type_name.start, "array", 5) == 0) {
                         fn_type->fn_type.return_type = builtin_array;
+                    } else if (type_name.length == 4 && memcmp(type_name.start, "void", 4) == 0) {
+                        // `-> void` written out. Codegen already emits a C `void`
+                        // signature for it (the name falls through its own chain to
+                        // the "assume a struct" arm and lands on the literal "void"),
+                        // while this chain fell through to the struct lookup, found no
+                        // symbol named `void`, and left the `int` default - the same
+                        // check-passes/build-fails split as the un-annotated case above.
+                        fn_type->fn_type.return_type = builtin_void;
                     } else {
                         // Check if it's a user-defined type (struct or enum)
                         Symbol* type_symbol = find_symbol(global_scope, type_name);
@@ -9857,7 +9896,7 @@ void check_program(Program* prog) {
                     }
                 }
             }
-            
+
             // Register function name (or Type_method for extension methods)
             Token function_name = fn->name;
             if (fn->is_extension) {
