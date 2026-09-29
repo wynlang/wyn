@@ -48,7 +48,21 @@ bad(){ echo "  FAIL  $1"; FAIL=$((FAIL+1)); }
 NAP=120          # ms per task: overlap ~120ms, sequential ~480ms for four
 NTASK=4
 WANT_SUM=$(( NAP + (NAP+1) + (NAP+2) + (NAP+3) ))
-RATIO_NUM=20     # bound = 2.0x of the one-task baseline, in tenths (4 tasks)
+# Bound = 2.5x of the one-task baseline, in tenths. FOUR tasks, so SEQUENTIAL is 4.0x
+# and real overlap measures ~1.0x - 2.5x sits between them with room on both sides.
+#
+# It was 2.0x, and that failed twice on macos-15-intel at 2.02x and 2.08x (250ms vs
+# 120ms, 267ms vs 132ms) on a 3-vCPU runner under load. Those were not a regression:
+# measured on an idle box, the default coroutine executor is FLAT in the number of
+# awaited sleeps - 2 tasks 105ms, 4 tasks 103ms, 8 tasks 107ms, 16 tasks 118ms against
+# a 100ms one-task baseline - so nothing here is core-limited. (The legacy thread pool
+# behind WYN_ASYNC_POOL=1 *is*: 16 tasks take 222ms there, two rounds.) What the CI
+# failures measured was the scheduler itself being starved of CPU, which inflates the
+# elapsed reading without telling us anything about the lowering.
+#
+# 2.5x still catches the defect this gate exists for. The failure mode is a loop of
+# spawns that does not overlap AT ALL, which lands at 4.0x.
+RATIO_NUM=25
 
 # $1 = cell name, $2 = declaration line, $3 = consumer block
 emit_cell() {
@@ -59,11 +73,16 @@ emit_cell() {
 fn nap(ms: int) -> int { Time.sleep(ms); return ms }
 
 fn main() -> int {
-    // Baseline: ONE task, printed so it cannot be dead-store eliminated.
-    var b0 = DateTime.micros()
-    var base = nap($NAP)
-    var b1 = DateTime.micros()
-    print("BASE \${(b1 - b0) / 1000} \${base}")
+    // Baseline: ONE task, printed so it cannot be dead-store eliminated. THREE
+    // samples, and the shell takes the minimum: this reading is the denominator of
+    // every ratio below, and contention can only inflate it. A single sample that
+    // came in high once failed a CORRECT measurement on a hosted runner.
+    for r in 0..3 {
+        var b0 = DateTime.micros()
+        var base = nap($NAP)
+        var b1 = DateTime.micros()
+        print("BASE \${(b1 - b0) / 1000} \${base}")
+    }
 
     // N is a VARIABLE. That is the whole point of the shape: with a constant you
     // could write the literal list the docs already cover.
@@ -128,7 +147,7 @@ run_cell() {  # $1 = cell, $2 = flags, $3 = mode label, $4 = human description
     local sum len base elapsed
     sum=$(awk '$1=="SUM"{print $2; exit}'     "$dir/out")
     len=$(awk '$1=="SUM"{print $3; exit}'     "$dir/out")
-    base=$(awk '$1=="BASE"{print $2; exit}'   "$dir/out")
+    base=$(awk '$1=="BASE"{ if (m=="" || $2+0 < m+0) m=$2 } END{print m}' "$dir/out")
     elapsed=$(awk '$1=="ELAPSED"{print $2; exit}' "$dir/out")
 
     if [ "${sum:-x}" = "$WANT_SUM" ]; then
@@ -154,7 +173,7 @@ run_cell() {  # $1 = cell, $2 = flags, $3 = mode label, $4 = human description
     elif [ $((elapsed * 10)) -le $((base * RATIO_NUM)) ]; then
         ok "[$mode] $desc: the $NTASK tasks overlap (${elapsed}ms vs ${base}ms for one)"
     else
-        bad "[$mode] $desc: the $NTASK tasks did NOT overlap: ${elapsed}ms vs ${base}ms for one (bound 2.0x; 4x means sequential)"
+        bad "[$mode] $desc: the $NTASK tasks did NOT overlap: ${elapsed}ms vs ${base}ms for one (bound 2.5x; 4x means sequential)"
     fi
 }
 
