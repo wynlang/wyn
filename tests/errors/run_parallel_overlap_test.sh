@@ -292,12 +292,26 @@ run_mode() {  # $1 = "" | "--release" ; $2 = label
     # the sleeps never land inside the window. That is the same ceiling-only hole
     # check_waited() already has a floor for, and 0ms passing a gate is exactly the shape
     # that let `parallel { }` look correct for several releases.
+    # The floor is ABSOLUTE, against NAP, and deliberately NOT a ratio of BASE.
+    #
+    # It was 0.8 * BASE for one CI run and that was wrong: a hosted runner produced
+    # "151ms is under 0.8x of 190ms", where 151ms is the CORRECT answer for a 150ms sleep
+    # and 190ms was an inflated baseline. Tying this floor to BASE makes a correct reading
+    # fail because of noise in a DIFFERENT reading.
+    #
+    # The two bounds answer different questions and only one of them needs the baseline:
+    #   ceiling  "did it overlap, or run sequentially?"  -> 1.0x vs 2.0x, inherently a
+    #                                                       RATIO, so it needs BASE
+    #   floor    "did it run at all?"                    -> ~150ms vs ~0ms, an absolute
+    #                                                       fact about a known sleep
+    # NAP/2 sits an order of magnitude above the 0ms it exists to catch and cannot be
+    # moved by baseline contention at all.
+    FLOOR=$((NAP / 2))
     check(){  # $1=key  $2=label
         local ms; ms=$(read_ms "$1")
         if [ -z "$ms" ]; then bad "[$label] $2 (no reading)"; return; fi
-        # BASE*8 <= ms*10 <= BASE*RATIO_NUM   i.e.  0.8 * BASE <= ms <= 1.6 * BASE
-        if [ $((ms * 10)) -lt $((BASE * 8)) ]; then
-            bad "[$label] $2 did not RUN: ${ms}ms is under 0.8x of ${BASE}ms for one branch (0ms means the call was dropped or never joined)"
+        if [ "$ms" -lt "$FLOOR" ]; then
+            bad "[$label] $2 did not RUN: ${ms}ms is under ${FLOOR}ms, half of one ${NAP}ms branch (0ms means the call was dropped or never joined)"
         elif [ $((ms * 10)) -le $((BASE * RATIO_NUM)) ]; then
             ok "[$label] $2 overlaps (${ms}ms vs ${BASE}ms for one branch)"
         else
@@ -309,22 +323,29 @@ run_mode() {  # $1 = "" | "--release" ; $2 = label
     check_immediate(){  # $1=key  $2=label
         local ms; ms=$(read_ms "$1")
         if [ -z "$ms" ]; then bad "[$label] $2 (no reading)"; return; fi
-        if [ $((ms * 4)) -le "$BASE" ]; then
-            ok "[$label] $2 returns immediately (${ms}ms vs ${BASE}ms for the call)"
+        # Absolute against NAP, for the mirror of the reason check()'s floor is: this is a
+        # CEILING on a value that should be ~0, so an inflated BASE would make it EASIER to
+        # satisfy - noise in the baseline would quietly weaken the arm rather than fail it.
+        if [ "$ms" -le $((NAP / 4)) ]; then
+            ok "[$label] $2 returns immediately (${ms}ms vs ${NAP}ms for the call)"
         else
-            bad "[$label] $2 ran INLINE: returned after ${ms}ms, the call itself is ${BASE}ms"
+            bad "[$label] $2 ran INLINE: returned after ${ms}ms, which is over a quarter of the ${NAP}ms call"
         fi
     }
     # The await must really have waited. The FLOOR is the load-bearing half: the old
     # `Future* f = NULL` lowering dropped the call and returned 0 instantly, which a
     # ceiling-only bound reads as a pass.
+    # Same split as check(): the floor is absolute against NAP (did the await wait AT ALL?)
+    # and only the ceiling is a ratio of BASE. A 0.8 * BASE floor here produced
+    # "160ms, expected 0.8-1.6x of 216ms" on a hosted runner - 160ms being the right answer
+    # for a 150ms sleep, against a baseline that contention had inflated.
     check_waited(){  # $1=key  $2=label
         local ms; ms=$(read_ms "$1")
         if [ -z "$ms" ]; then bad "[$label] $2 (no reading)"; return; fi
-        if [ $((ms * 10)) -ge $((BASE * 8)) ] && [ $((ms * 10)) -le $((BASE * RATIO_NUM)) ]; then
+        if [ "$ms" -ge "$FLOOR" ] && [ $((ms * 10)) -le $((BASE * RATIO_NUM)) ]; then
             ok "[$label] $2 waited for the task (${ms}ms vs ${BASE}ms)"
         else
-            bad "[$label] $2 did not wait for the task: ${ms}ms, expected 0.8-1.6x of ${BASE}ms"
+            bad "[$label] $2 did not wait for the task: ${ms}ms, expected ${FLOOR}ms..1.6x of ${BASE}ms"
         fi
     }
 
