@@ -369,6 +369,170 @@ static int cg_optlike_has_renderer(const char* fam) {
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// THE Option/Result COMBINATOR lowering (#392): map / and_then / filter / expect /
+// or_else / map_err.
+//
+// Emitted INLINE as a GNU statement expression over the monomorphic family struct, and
+// NOT as a call to a runtime function. That is the only shape that can work here: the
+// `wyn_optional_map` / `wyn_result_map` names in runtime/libwyn_rt.a take
+// `WynOptional*` / `WynResult*`, a heap-boxed representation codegen has never emitted,
+// which is exactly why the registry rows that pointed at them could not link and were
+// dropped. Emitting inline also means there is nothing to add to wyn_runtime.h AND to
+// the hand-maintained wyn_runtime_slim.h that `--release` emits, so `build` and
+// `build --release` cannot disagree about which combinators exist.
+//
+// The only names these lowerings call are `<Family>_Some/_None/_Ok/_Err`, which the
+// family-completeness gate already pins in BOTH headers.
+
+// Family name -> 1 (Option), 2 (Result), 0 (not one of the four scalar families).
+// `OptionUser` and a user struct called `ResultSet` both answer 0, so neither is taken
+// from the ordinary struct-method path.
+static int cg_optlike_fam_kind(const char* fam) {
+    if (!fam) return 0;
+    static const char* const sufs[] = { "Int", "String", "Float", "Bool", NULL };
+    for (int i = 0; sufs[i]; i++) {
+        if (strncmp(fam, "Option", 6) == 0 && strcmp(fam + 6, sufs[i]) == 0) return 1;
+        if (strncmp(fam, "Result", 6) == 0 && strcmp(fam + 6, sufs[i]) == 0) return 2;
+    }
+    return 0;
+}
+
+// The monomorphic family name for an expression that already HAS one, or "" - used for
+// the receiver and for an and_then/or_else callback whose return type is itself a
+// family. Not routed through wyn_ctor_family(): that function maps a PAYLOAD to a
+// family, so handing it an `OptionString` would mint `OptionOptionString`.
+static void cg_optlike_fam_of(Expr* e, char* out, size_t outsz) {
+    out[0] = '\0';
+    if (!e) return;
+    if (e->expr_type && e->expr_type->kind == TYPE_STRUCT &&
+        e->expr_type->struct_type.name.length > 0) {
+        token_to_cstr(out, outsz, e->expr_type->struct_type.name);
+        return;
+    }
+    if (e->type == EXPR_IDENT) {
+        char vn[128]; token_to_cstr(vn, sizeof(vn), e->token);
+        extern const char* get_enum_var_type(const char*);
+        const char* t = get_enum_var_type(vn);
+        if (t) snprintf(out, outsz, "%s", t);
+    }
+}
+
+// Emit `<recv>.<combinator>(<arg>)` inline; returns true when it handled the call.
+//
+// The callback is emitted as `(<expr>)(args)` rather than assigned to a declared
+// function pointer first. A lambda lowers to `__lambda_N` and a named function to its
+// own symbol, so calling through the expression uses each one's REAL signature - a
+// hand-written pointer type would be a second opinion about the ABI, which is precisely
+// the bug that made a `fn(float) -> float` field return garbage bits.
+static bool cg_try_optlike_combinator(Expr* expr) {
+    Token m = expr->method_call.method;
+    char mn[64]; token_to_cstr(mn, sizeof(mn), m);
+    static const char* const combinators[] = {
+        "map", "and_then", "filter", "expect", "or_else", "map_err", NULL };
+    bool ours = false;
+    for (int i = 0; combinators[i]; i++)
+        if (strcmp(combinators[i], mn) == 0) { ours = true; break; }
+    if (!ours || expr->method_call.arg_count != 1) return false;
+
+    Expr* obj = expr->method_call.object;
+    Expr* arg = expr->method_call.args[0];
+    if (!obj || !arg) return false;
+
+    char rfam[128]; cg_optlike_fam_of(obj, rfam, sizeof(rfam));
+    int kind = cg_optlike_fam_kind(rfam);
+    if (!kind) return false;
+
+    // `filter` is Option-only and `map_err` Result-only; the checker rejects the wrong
+    // pairing, so reaching here with one would mean emitting a function nobody defines.
+    if (strcmp(mn, "filter") == 0 && kind != 1) return false;
+    if (strcmp(mn, "map_err") == 0 && kind != 2) return false;
+
+    // ".value" for Option; Result keeps its two payloads in a union.
+    const char* okacc = kind == 1 ? ".value" : ".data.ok_value";
+    int fulltag = kind == 1 ? 1 : 0;   // the tag that means "holds a value"
+
+    static int _cb_seq = 0;
+    int id = _cb_seq++;
+
+    // expect(msg): panic with the CALLER's message. The message goes through "%s" and is
+    // never used as a format string itself, so an expect message containing a `%` prints
+    // literally instead of reading the stack.
+    if (strcmp(mn, "expect") == 0) {
+        emit("({ %s __cb%d = ", rfam, id);
+        codegen_expr(obj);
+        emit("; if (__cb%d.tag != %d) { fprintf(stderr, \"%%s\\n\", ", id, fulltag);
+        codegen_expr(arg);
+        emit("); exit(1); } __cb%d%s; })", id, okacc);
+        return true;
+    }
+
+    // filter(p): a predicate cannot change the payload, so the family is unchanged and
+    // the Some arm hands back the receiver itself.
+    if (strcmp(mn, "filter") == 0) {
+        emit("({ %s __cb%d = ", rfam, id);
+        codegen_expr(obj);
+        emit("; (__cb%d.tag == 1 && (", id);
+        codegen_expr(arg);
+        emit(")(__cb%d.value)) ? __cb%d : %s_None(); })", id, id, rfam);
+        return true;
+    }
+
+    // or_else(f): the receiver is passed through unchanged when it holds a value, so both
+    // ternary arms are the same C struct. f takes no argument.
+    if (strcmp(mn, "or_else") == 0) {
+        emit("({ %s __cb%d = ", rfam, id);
+        codegen_expr(obj);
+        emit("; __cb%d.tag == %d ? __cb%d : (", id, fulltag, id);
+        codegen_expr(arg);
+        emit(")(); })");
+        return true;
+    }
+
+    // map_err(f): Err(e) -> Err(f(e)); Ok passes through, so the family is unchanged.
+    if (strcmp(mn, "map_err") == 0) {
+        emit("({ %s __cb%d = ", rfam, id);
+        codegen_expr(obj);
+        emit("; __cb%d.tag == 1 ? %s_Err((", id, rfam);
+        codegen_expr(arg);
+        emit(")(__cb%d.data.err_value)) : __cb%d; })", id, id);
+        return true;
+    }
+
+    // map / and_then. THE RESULT FAMILY IS THE CALLBACK'S, NOT THE RECEIVER'S:
+    // `int?.map(fn(x: int) -> string {..})` is an OptionString. For `map` the callback
+    // returns the PAYLOAD, so the family comes from wyn_ctor_family (which routes Option
+    // through wyn_option_family, THE authority, and registers a family when one is
+    // needed). For `and_then` the callback already returns a family, so that name is
+    // read off it directly.
+    char ffam[128] = "";
+    Type* cb_ret = (arg->expr_type && arg->expr_type->kind == TYPE_FUNCTION)
+                     ? arg->expr_type->fn_type.return_type : NULL;
+    if (!cb_ret) return false;
+    if (strcmp(mn, "map") == 0) {
+        const char* f = wyn_ctor_family(cb_ret, kind == 1 ? "Option" : "Result");
+        if (!f) return false;
+        snprintf(ffam, sizeof(ffam), "%s", f);
+    } else {
+        if (cb_ret->kind != TYPE_STRUCT || cb_ret->struct_type.name.length == 0) return false;
+        token_to_cstr(ffam, sizeof(ffam), cb_ret->struct_type.name);
+    }
+    if (!cg_optlike_fam_kind(ffam)) return false;
+
+    bool is_map = strcmp(mn, "map") == 0;
+    emit("({ %s __cb%d = ", rfam, id);
+    codegen_expr(obj);
+    emit("; __cb%d.tag == %d ? ", id, fulltag);
+    if (is_map) emit("%s_%s((", ffam, kind == 1 ? "Some" : "Ok");
+    else emit("(");
+    codegen_expr(arg);
+    if (is_map) emit(")(__cb%d%s)) : ", id, okacc);
+    else emit(")(__cb%d%s) : ", id, okacc);
+    if (kind == 1) emit("%s_None(); })", ffam);
+    else emit("%s_Err(__cb%d.data.err_value); })", ffam, id);
+    return true;
+}
+
 // Resolve the Option/Result C family for an expression about to be PRINTED, in
 // any syntactic form. Returns a static string ("OptionInt", …), or NULL if the
 // expression is not Option/Result-like or has no renderer.
@@ -2575,6 +2739,13 @@ static void codegen_expr_inner(Expr* expr) {
             break;
         case EXPR_METHOD_CALL: {
             Token method = expr->method_call.method;
+
+            // An Option/Result COMBINATOR (#392). FIRST, because the ordinary
+            // TYPE_STRUCT method dispatch further down would emit `OptionInt_map(..)` -
+            // a symbol nothing defines. The hook answers only for the four scalar
+            // families, so a user struct named `ResultSet` with its own `map` is
+            // untouched and still reaches that dispatch.
+            if (cg_try_optlike_combinator(expr)) break;
 
             // Calling a function-typed STRUCT FIELD: `b.on_click()` - the VB-style
             // event-handler shape. `obj.name(...)` parses as a METHOD call, so this

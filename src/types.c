@@ -303,23 +303,21 @@ static const MethodSignature method_signatures[] = {
     {"option", "is_none", "bool", ""},
     {"option", "unwrap", "int", ""},    // Type depends on Option<T>
     {"option", "unwrap_or", "int", "int"}, // Type depends on Option<T>
-    // V-37: option.expect / or_else / map / and_then / filter were advertised here and
-    // do not exist. Codegen emits the monomorphic value-struct family (OptionInt_map),
-    // which nothing defines; the wyn_optional_* names these rows lowered to belong to a
-    // retired heap-boxed WynOptional* model and take an incompatible representation. The
-    // rows are removed rather than repointed, because repointing would not compile
-    // either. reject_missing_option_combinator() in checker.c now answers these calls
-    // with a real message, and tests/errors/run_option_combinator_test.sh pins both
-    // halves - so re-adding a row without an implementation fails the build.
-    
+
     // Result methods
     {"result", "is_ok", "bool", ""},
     {"result", "is_err", "bool", ""},
     {"result", "unwrap", "int", ""},    // Type depends on Result<T,E>
     {"result", "unwrap_or", "int", "int"}, // Type depends on Result<T,E>
-    // V-37, the Result half: expect / map_err / or_else / map / and_then, same story and
-    // the same retired wyn_result_* representation. See the note above.
-    
+    // V-37's rows for the ten combinators (option map/and_then/filter/expect/or_else,
+    // result map/and_then/map_err/expect/or_else) were removed from this table because
+    // they lowered to the retired heap-boxed `wyn_optional_*` / `wyn_result_*` model and
+    // could not link. #392 implements them, and deliberately does NOT restore the rows:
+    // a row here carries ONE concrete return type per receiver, and `map` CHANGES the
+    // family - `int?.map(fn(x: int) -> string {..})` is an Option<string> - so any single
+    // answer written here would be wrong. They are typed in checker.c from the callback's
+    // return type instead.
+
     // Sentinel - marks end of table
     {NULL, NULL, NULL, NULL}
 };
