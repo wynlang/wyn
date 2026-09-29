@@ -1,13 +1,13 @@
 # Changelog
 
-## v1.22.0-rc1 (2026-09-26) - "A Verdict You Can Trust" (release candidate)
-
-**A release candidate, not a final release.** It is published as a prerelease so it can be
-exercised against real code before v1.22.0. `wyn upgrade` resolves GitHub's *latest
-release*, which excludes prereleases, so it will not move anyone onto this build - you
-have to download it deliberately.
+## v1.22.0 (2026-09-29) - "A Verdict You Can Trust"
 
 Two of the fixes here are **remote code execution**. Upgrade for those alone.
+
+One more is **silent data corruption that is in v1.21.0**: two `HashMap.new()` with
+different value types shared one type, and the second map was read through the first one's
+getter. No error, exit 0. If you have written code with more than one map in it, this is the
+other reason to upgrade.
 
 The rest of the release has one theme: when Wyn tells you something, it should be true.
 That covers three kinds of lie - a wrong answer at exit 0, a `wyn check` that passes and
@@ -69,6 +69,93 @@ JSON parsing and JSON building were two disjoint object models, so a document co
 be read, modified and written back. They are now one model, and a **parse failure is
 reportable** instead of indistinguishable from an empty document.
 
+### Two `HashMap.new()` are two maps
+
+```wyn
+a = HashMap.new()
+a.set("k", 1)
+b = HashMap.new()
+b.set("k", "s")
+print("${a.get("k")}")      // 1
+print("${b.get("k")}")      // 0   <- was; want "s"
+```
+
+A namespace call adopted its registered return-type node directly, and that node is created
+once - so every `HashMap.new()` in a program shared one type, and whichever `.set()` ran
+first fixed the value type for all of them. **This is in v1.21.0 as well**, silently, at
+exit 0. It also made valid code fail to build: two maps constructed in different functions
+collided with "Return type mismatch. Expected string, got int".
+
+### `parallel { }` and `spawn` now run what they accept
+
+A `parallel { }` branch was dispatched only when the compiler could name a wrapper after the
+callee, which excluded **every namespaced builtin**. So a block of `Time.sleep` calls ran one
+after another while looking concurrent. Measured, eight branches of a 200ms sleep in one
+block, against a single 200ms sleep as the baseline:
+
+| | one branch | eight branches |
+|---|---|---|
+| **v1.22.0** | 204ms | **210ms** |
+| v1.21.0 | 205ms | 1,649ms |
+
+Three more shapes were broken and are fixed:
+
+- `var f = spawn Time.sleep(200)` emitted `Future* f = NULL` - **the call was dropped
+  entirely**, and `await f` returned `0` immediately.
+- `spawn Time::sleep(200)` did not build: the emitted wrapper name contained `::`.
+- `spawn print("hi")` did not build.
+
+`.` and `::` are different shapes reaching different dispatch sites, which is why fixing one
+never fixed the other. Separately, `parallel { }` now runs every branch shape it accepts
+rather than two of them - assigning to a variable declared *outside* the block used to run
+sequentially.
+
+Still sequential, deliberately, and refused by name rather than silently: a method call on a
+value, a non-scalar argument, a non-word result, more than eight arguments. `await` on a
+spawned builtin yields `0` - the call now actually happens.
+
+### Collecting `spawn` futures in a loop compiles
+
+There was **no spelling that worked for both consumers**. `wyn check` passed all four
+combinations; two then emitted invalid C in both build modes:
+
+| declaration | `for t in ts { await t }` | `await_all(ts)` |
+|---|---|---|
+| `var ts: [int] = []` | built | **failed** |
+| `var ts = []` | **failed** | built |
+
+Building a task list in a loop is the only way to write N concurrent tasks for a
+non-constant N, so that pattern did not work at all. Three separate tables each owned part
+of "does this array use the packed representation?"; one authority now answers and records
+the answer. It also fixed a packed array holding a **raw pointer** - the tables were keyed
+on the variable *name* with no per-function reset, so `var xs = ["p", "q"]` in one function
+inherited the packed int representation from a same-named future list in another and printed
+`first=4378051595`.
+
+### The Option/Result combinator API exists
+
+`map`, `and_then`, `filter`, `expect`, `or_else` on `Option`; `map`, `and_then`, `map_err`,
+`expect`, `or_else` on `Result`. All ten were advertised in the method registry for several
+releases while lowering to a retired representation that nothing defined, so they could not
+link; v1.21.0 removed the rows and refused the calls. They are implemented now.
+
+`map` changes the family: `int?.map(fn(x: int) -> string {...})` is an `Option<string>`.
+
+**Scalar payloads only** (int / string / float / bool). A struct or data-enum payload gets a
+named refusal that says what to do instead. `Option.to_string()`, `Result.to_string()` and
+`Result.unwrap_err()` also typed as `int` rather than as their real types.
+
+### HashSet carries an element type
+
+`{:1}` and `{:"1"}` are distinct now, because runtime entries are tagged and the tag is in
+**both** the hash and the equality test. `HashSet::add(s, 1)` used to **segfault**, and
+`for x in s` was an internal codegen error after passing `wyn check`. `a.union(b)` also
+returned something the checker typed as `int`, so the result could not be used at all.
+
+Mixing element types is refused with a real message ("HashSet literal has mixed element
+types: 'int' and 'string'"). **HashMap's non-string keys are deliberately not in this
+release.**
+
 ### Behaviour changes
 
 Read this list before upgrading a test suite - several change program **output**.
@@ -82,17 +169,22 @@ Read this list before upgrading a test suite - several change program **output**
    because the captured environment was never carried across the boundary.
 3. **A map literal with mixed value types is a check error** -
    `{"host": "localhost", "port": 8080}`. One map holds one value type.
-4. **A non-string HashSet element is a check error.** `{:1, 2}` previously **segfaulted
-   on construction**, even if the set was never used. HashSet elements and HashMap keys
-   are strings; convert with `.to_string()`.
+4. **A HashSet element can be an int, float or bool, and the set remembers which.**
+   `{:1, 2}` previously **segfaulted on construction**, even if the set was never used.
+   `{:1}` and `{:"1"}` are now different sets. A *mixed* literal is a check error
+   ("HashSet literal has mixed element types: 'int' and 'string'"), and so is giving a
+   `HashSet<int>` a string. **HashMap keys are still strings**; convert with
+   `.to_string()`.
 5. **`Json.<method>(text)` is a check error.** Passing the JSON *text* where a parsed
    handle belongs used to return the empty-document answer for every call - `is_valid`
    false, `get_int` 0, `keys` `[]` - so a program that forgot `Json.parse` looked like
    one that parsed an empty document. Parse once, pass the handle.
-6. **Ten Option/Result combinators are rejected at check time** - `map`, `and_then`,
-   `filter`, `map_err`, `expect`, `or_else`. They were advertised and never existed;
-   they used to pass `wyn check` and fail in the C compiler. Option and Result support
-   `is_some`/`is_none`/`is_ok`/`is_err`/`unwrap`/`unwrap_err`/`unwrap_or`/`to_string`.
+6. **Ten Option/Result combinators are implemented** - `map`, `and_then`, `filter`,
+   `expect`, `or_else` on `Option`; `map`, `and_then`, `map_err`, `expect`, `or_else` on
+   `Result`. They were advertised and never existed: they used to pass `wyn check` and
+   fail in the C compiler. **Scalar payloads only** (int / string / float / bool) - a
+   struct or data-enum payload is refused with a message naming what to do instead,
+   rather than reaching the C compiler.
 7. **Option/Result predicates on a number or bool are rejected** - `5.is_err()`.
 8. **An unknown namespace method or an unknown CLI flag is an error.** `wyn build
    x.wyn --wasm` used to print a success tick over a *native* binary.
@@ -101,6 +193,28 @@ Read this list before upgrading a test suite - several change program **output**
 
 ### Also fixed
 
+- **The compiler itself segfaulted on two `parallel` blocks in one file** - in the `-O2`
+  build only, which is the build that ships. A debug compiler was fine, so this was
+  invisible to anyone developing on one.
+- **`wyn check` accepted a void call assigned to an int**, then `wyn build` rejected the
+  same file - `a = side()` for any un-annotated `fn side() { ... }`. Two passes disagreed:
+  the checker registered every signature with a flat `int` default before any body was
+  looked at. `-> void` spelled out had the same split for a different reason.
+- **`Result<string, E>.unwrap_or` returned an int**, selecting the wrong family function.
+- **`.len()` on a string literal** regressed in the release candidate; that path is
+  restored, and measured against v1.21.0 it is unchanged.
+- **Seven runtime string constructors returned un-headered buffers** - `Uuid.generate`,
+  `DateTime.to_iso`, `Net.resolve`, `Db.escape` and the three `Encoding` functions. Such a
+  string is leaked, because release is a no-op on it, and it makes the next `.len()` read
+  **out of bounds**: the refcount probe range-checks the pointer and then reads a header 16
+  bytes *before* it. ASan on the runtime reported it 30 runs out of 30. 27 further
+  raw-allocation sites remain and are tracked as their own audit.
+- **`Regex.find` could not build on Windows at all.** It lowers to lowercase `regex_find`,
+  defined only in the POSIX branch; the Windows branch defined `Regex_find` with a capital
+  R, so the symbol looked present to anyone grepping and nothing emitted that spelling.
+- **`array.insert` and `array.remove_at` advertised the wrong return type.** Both mutate in
+  place and return void, so binding the result died with an internal codegen error. As
+  statements - which is how they are used - both always worked.
 - **`wyn run --release` could not compile 205 stdlib calls**, then blamed the user for
   the spelling. Ten further method spellings also failed under `--release` alone:
   `map.clear()`, `"p".exists()`, `"p".is_dir()`, `"p".is_file()`, `n.to_int()`,
@@ -168,13 +282,28 @@ Not user-facing, but they are why the list above is as long as it is:
 - **Every method the registry advertises must be callable** - in debug *and*
   `--release`. This found `map.is_empty`, the six release-only failures, and eleven
   registry rows that advertise methods the compiler then refuses.
-- **Both runtime headers must declare every lowering a Wyn call can reach.** The gate
-  above compiles a real call per method, which is the strongest evidence available - but
-  it can only generate calls for methods taking no arguments, because the registry
-  records an argument *count* and not argument *types*. `a.any(f)`, `a.all(f)`,
-  `a.every(f)` and `3.times(f)` all sat in that blind spot, and the last two survived
-  the change that fixed the first two. This one is a text check instead: it reads the
-  headers and the dispatch tables and needs no call at all, so it covers every arity.
+- **That gate now covers every row, not just the arity-0 half.** It compiles a real call
+  per method, which is the strongest evidence available, but it could only *build* a call
+  for methods taking no arguments - the registry recorded an argument **count**, and a
+  count cannot be turned into a call. That blind spot was half the table, and it is exactly
+  where `a.any(f)`, `a.all(f)`, `a.every(f)` and `3.times(f)` were when all four shipped
+  uncallable. The count is **replaced** by the argument **types**, so there is one column
+  that cannot disagree with itself, and coverage goes from 109 to **201 of 202 rows in both
+  build modes** (the exception is variadic `string.format`, which now prints an explicit
+  note rather than being skipped in silence).
+- **A pass now requires a clean compile**, not merely that the program reached the end.
+  `m.for_each(f)` printed "Unknown method", emitted nothing for the call, and still produced
+  a running binary - so the old criterion called a dead row alive. Tightening it found 17
+  broken rows: two lying about their return type, and fifteen advertising a method with no
+  lowering anywhere, which are removed.
+- **Both runtime headers must declare every lowering a Wyn call can reach.** A text check
+  that reads the headers and the dispatch tables and needs no call at all, so it covers
+  arities the call-generating gate cannot reach.
+- **The `parallel { }` timing gate has a floor, not just a ceiling**, because a branch that
+  is never dispatched can read `0ms` and a ceiling-only bound calls that overlap. The floor
+  is absolute against the sleep length rather than a ratio of the measured baseline: both
+  readings are samples that contention can only inflate, and tying one to the other turns a
+  correct measurement into a failure when the *baseline* is the noisy one.
 - **The Windows regex engine is now executed by CI.** Wyn ships two engines - a bundled
   NFA under `_WIN32`, POSIX `regcomp` elsewhere - sharing only the `\d \w \s` expansion,
   and no gate had ever run the Windows one, on a runner that was already building Windows.
@@ -185,16 +314,34 @@ Not user-facing, but they are why the list above is as long as it is:
   build to confirm none of the above changed a working program's behaviour beyond the
   list in "Behaviour changes".
 
-### Known limitations in this RC
+### Known limitations
+
+Each one re-run against this release rather than carried over. Three entries from the
+release candidate are gone because they are fixed: the Option/Result combinator API exists,
+`a.union(b)` is usable, and HashSet elements no longer have to be strings.
 
 - **`map.get()` returns the value directly, so a missing key returns `0`** (or `""`) -
   indistinguishable from a stored zero. Use `m.contains(k)` to test presence. The
   inline `m.get(k).unwrap_or(d)` works; storing the result first does not.
-- HashSet elements and HashMap keys must be strings.
-- No Option/Result combinator API (see behaviour change 6).
-- `a.union(b)` on sets returns a value the checker types as `int`, so the result cannot
-  be used.
-- The `::` spelling on a collection variable (`s::add("x")`) does not compile.
+- **HashMap keys must be strings.** Element types for HashSet landed in this release; the
+  key half is roughly twice the work and is not started.
+- **The namespace spelling `HashMap.set(m, k, v)` ignores the value type** and segfaults on
+  a non-string value, because it always emits the string-valued function. Use `m.set(k, v)`,
+  which picks the right one.
+- **An argument of the wrong TYPE is not checked** against the method's real lowering:
+  `"42".pad_left("a", "a")` compiles, runs, exits 0, and prints a 44MB garbage string. The
+  new argument-types column is what a check-time rule would read; no such rule exists yet.
+- **A `Result<T, E>` parameter annotation is ignored** - the parameter types as `int`, so
+  the first `.is_ok()` on it is rejected. The `T?` form in the same position works.
+- **An unknown method on a map prints an error, drops the call, and still exits 0.** On a
+  set the same condition exits non-zero but leaks "internal codegen error".
+- `print(set)` prints a pointer; `print(map)` formats properly.
+- **`Regex.find` on a malformed pattern** returns `-1` on POSIX and `0` on Windows.
+- The `::` spelling on a collection variable (`s::add("x")`) is refused - deliberately,
+  since it would lower to a C symbol that does not exist - and the error now says to use
+  `s.add("x")` instead.
+- **`wyn build --release` is about 10% slower** than v1.21.0 on hello world (1,392ms →
+  1,533ms, interleaved medians). Tracked, not diagnosed.
 
 Open issues are tracked at https://github.com/wynlang/wyn/issues.
 
