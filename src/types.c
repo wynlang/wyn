@@ -303,20 +303,63 @@ static const MethodSignature method_signatures[] = {
     {"option", "is_none", "bool", ""},
     {"option", "unwrap", "int", ""},    // Type depends on Option<T>
     {"option", "unwrap_or", "int", "int"}, // Type depends on Option<T>
+    {"option", "to_string", "string", ""},  // #386
 
     // Result methods
     {"result", "is_ok", "bool", ""},
     {"result", "is_err", "bool", ""},
     {"result", "unwrap", "int", ""},    // Type depends on Result<T,E>
     {"result", "unwrap_or", "int", "int"}, // Type depends on Result<T,E>
+    {"result", "unwrap_err", "string", ""}, // #386 - the Err of every family is a string
+    {"result", "to_string", "string", ""},  // #386
+    // #386: `to_string` (both families) and `unwrap_err` (Result) WORK in the runtime and
+    // were missing from this table, so it under-reported what the language has. The rows
+    // above are that record.
+    //
+    // WHAT THE ROWS ACTUALLY BUY, measured rather than assumed: they put these three
+    // methods under run_registry_reachable_test.sh, which compiles and RUNS a real call
+    // per row in BOTH build modes. Before the rows, nothing in that gate exercised them.
+    // That is the whole effect. Specifically NOT what they do, both mutation-checked by
+    // altering the row and rebuilding:
+    //   - they do not decide the TYPE (changing `unwrap_err`'s return to "int" here reds
+    //     no arm of any gate - see below for where the typing really comes from);
+    //   - they do not feed the typo suggestion for these receivers. An Option/Result typo
+    //     is answered by the NAMESPACE route ("unknown method 'ResultInt.unwrap_er' on
+    //     namespace 'ResultInt'"), which does not read this table - deleting the row
+    //     changes that message not at all.
+    //
+    // READ THIS BEFORE ASSUMING THEY ARE WHAT MAKES THEM TYPE: an earlier attempt
+    // added exactly these rows, had no measurable effect, and was reverted. Measured again
+    // while adding them - with the rows in place and nothing else changed, all of these
+    // still failed:
+    //
+    //     s = g().to_string(); print(s.len())        # Unknown method 'len' for type 'int'
+    //     fn f(o: string?) -> string { return o.to_string() }   # Expected string, got int
+    //
+    // The reason is that every realistic Option/Result receiver is the monomorphic
+    // TYPE_STRUCT family ("OptionString"), and get_receiver_type_string() has no
+    // TYPE_STRUCT case, so it answers NULL and this table is never consulted for them.
+    // The typing therefore lives in the checker's method-call path, resolved explicitly
+    // ahead of the table lookup - the same route #413 used for unwrap_or, and for the
+    // same reason. Fixing get_receiver_type_string() instead would route Option through
+    // this table, where `{"option","unwrap","int",""}` would type
+    // `Option<string>.unwrap()` as int and break working code.
+    //
+    // `unwrap_err` needed only the row: it already types correctly through the
+    // `<Family>_unwrap_err` symbol route, with the family's own err type. The checker was
+    // NOT given a second answer for it - one was written and mutation-tested, and altering
+    // it changed no arm of any gate, so it was removed rather than shipped unverified.
+    //
     // V-37's rows for the ten combinators (option map/and_then/filter/expect/or_else,
-    // result map/and_then/map_err/expect/or_else) were removed from this table because
-    // they lowered to the retired heap-boxed `wyn_optional_*` / `wyn_result_*` model and
-    // could not link. #392 implements them, and deliberately does NOT restore the rows:
-    // a row here carries ONE concrete return type per receiver, and `map` CHANGES the
-    // family - `int?.map(fn(x: int) -> string {..})` is an Option<string> - so any single
-    // answer written here would be wrong. They are typed in checker.c from the callback's
+    // result map/and_then/map_err/expect/or_else) are deliberately NOT restored here. A
+    // row carries ONE concrete return type per receiver, and `map` CHANGES the family -
+    // `int?.map(fn(x: int) -> string {..})` is an Option<string> - so any single answer
+    // written here would be wrong. #392 types them in checker.c from the callback's
     // return type instead.
+    //
+    // NOTE ON THIS COLUMN: the 4th field is param_types, a STRING (#393), not an argument
+    // count. `""` is zero arguments. A bare `0` still COMPILES - as a null pointer
+    // constant - and silently means "no param_types", which is not the same thing.
 
     // Sentinel - marks end of table
     {NULL, NULL, NULL, NULL}
