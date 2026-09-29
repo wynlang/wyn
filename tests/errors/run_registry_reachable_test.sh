@@ -97,6 +97,12 @@ fixture(){
 fixture_for(){   # <receiver> <method>
   case "$1.$2" in
     result.unwrap_err) echo 'r = reg_res_err()';;
+    # V-38 (#391): a HashSet now carries an ELEMENT TYPE, so the generic `set` fixture
+    # `{:"a"}` is a HashSet<string> and `contains_int(1)` on it is correctly REFUSED
+    # ("'contains_int()' on a HashSet<string> was given int"). The row is right and the
+    # rule is right - the gate needs an int-element receiver, the same reason
+    # result.unwrap_err needs an Err one.
+    set.contains_int)  echo 'r = {:1}';;
     *)                 fixture "$1";;
   esac
 }
