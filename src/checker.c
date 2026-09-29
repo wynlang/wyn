@@ -4828,15 +4828,50 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             // Without this, a `HashMap::new()` map defaulted its value type to
             // string, so `m.set("a", 42)` then `m.get("a")` decoded 42 through
             // hashmap_get_string and returned garbage (FLOWY silent-wrong bug).
-            // A conflicting later store (int then string) is rejected below by
-            // the store-type check.
-            if (object_type && object_type->kind == TYPE_MAP &&
-                !object_type->map_type.value_type &&
-                expr->method_call.arg_count == 2 &&
-                ((strcmp(method_name, "set") == 0) || (strcmp(method_name, "insert") == 0))) {
-                Type* vt = expr->method_call.args[1]->expr_type;
-                if (!vt) vt = check_expr(expr->method_call.args[1], scope);
-                if (vt) object_type->map_type.value_type = vt;
+            // Only the FIRST store teaches; a conflicting later one (int then
+            // string) is silently ignored. This comment used to claim such a store
+            // "is rejected below by the store-type check" - there is no such check
+            // in the tree, and `m.set("a", 1)` then `m.set("b", "two")` passes
+            // `wyn check` clean today. Logged rather than fixed here: adding a
+            // rejection rule is a separate concern from making the two spellings
+            // agree, and both spellings are equally exposed to it.
+            //
+            // #429: TWO SPELLINGS of the same store reach here and both must teach
+            // the map, or the two disagree about what it holds. The receiver form
+            // `m.set(k, v)` carries the map as the OBJECT and the value as args[1];
+            // the namespace form `HashMap.set(m, k, v)` carries the map as args[0]
+            // and the value as args[2]. Only the first was handled, so a map written
+            // exclusively through `HashMap.set` kept a NULL value type - and every
+            // read of it fell back to a default that did not match what was stored.
+            // `insert` is the same store under a second name and is accepted here for
+            // both spellings, as it already was for the receiver form.
+            {
+                Type* store_map = NULL; Expr* store_val = NULL;
+                if (object_type && object_type->kind == TYPE_MAP &&
+                    expr->method_call.arg_count == 2 &&
+                    ((strcmp(method_name, "set") == 0) || (strcmp(method_name, "insert") == 0))) {
+                    store_map = object_type;
+                    store_val = expr->method_call.args[1];
+                } else if (expr->method_call.object->type == EXPR_IDENT &&
+                           expr->method_call.arg_count == 3 &&
+                           ((strcmp(method_name, "set") == 0) ||
+                            (strcmp(method_name, "insert") == 0))) {
+                    char _sns[64];
+                    token_to_cstr(_sns, sizeof(_sns), expr->method_call.object->token);
+                    if (strcmp(_sns, "HashMap") == 0) {
+                        Type* mt = expr->method_call.args[0]->expr_type;
+                        if (!mt) mt = check_expr(expr->method_call.args[0], scope);
+                        if (mt && mt->kind == TYPE_MAP) {
+                            store_map = mt;
+                            store_val = expr->method_call.args[2];
+                        }
+                    }
+                }
+                if (store_map && store_val && !store_map->map_type.value_type) {
+                    Type* vt = store_val->expr_type;
+                    if (!vt) vt = check_expr(store_val, scope);
+                    if (vt) store_map->map_type.value_type = vt;
+                }
             }
 
             // S2 context-propagation: when .map()/.filter() is called on a
@@ -4995,6 +5030,27 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         private_fn_error(method.line, method_name, obj_name);
                         expr->expr_type = builtin_int;
                         return builtin_int;
+                    }
+                    // #429: `HashMap.get(m, k)` returns the MAP's value type, exactly
+                    // as `m.get(k)` does (see the TYPE_MAP arm further down). Without
+                    // this the registered `HashMap_get` symbol answered `string` for
+                    // every map, so an int-valued map read as a string: codegen emitted
+                    // hashmap_get_string, the tagged int decoded as a `char*`, and the
+                    // program printed EMPTY at exit 0. The store half of the same
+                    // defect SEGFAULTED. One value-type answer, whichever spelling asks.
+                    //
+                    // Narrow on purpose: only when args[0] really is a map that has a
+                    // resolved value type. An open `HashMap.new()` keeps the historical
+                    // `string` answer from the registered symbol below - the same
+                    // fallback the method spelling makes.
+                    if (strcmp(obj_name, "HashMap") == 0 && strcmp(method_name, "get") == 0 &&
+                        expr->method_call.arg_count == 2) {
+                        Type* map_t = expr->method_call.args[0]->expr_type;
+                        if (!map_t) map_t = check_expr(expr->method_call.args[0], scope);
+                        if (map_t && map_t->kind == TYPE_MAP && map_t->map_type.value_type) {
+                            expr->expr_type = map_t->map_type.value_type;
+                            return expr->expr_type;
+                        }
                     }
                     char ns_method[256];
                     snprintf(ns_method, sizeof(ns_method), "%s_%s", obj_name, method_name);
