@@ -1118,7 +1118,24 @@ void codegen_stmt(Stmt* stmt) {
                         // Check if object is a string - these methods return string, not array
                         bool _obj_is_string = stmt->var.init->method_call.object->expr_type &&
                             stmt->var.init->method_call.object->expr_type->kind == TYPE_STRING;
-                        if (!_obj_is_string && (strcmp(_mn2, "sort") == 0 || strcmp(_mn2, "reverse") == 0 ||
+                        // This list is METHOD NAMES ONLY - it never asked what the
+                        // receiver was, beyond "not a string". `map` and `filter` are
+                        // also Option/Result combinators (#392), so `o = g().map(f)`
+                        // was declared `WynArray` and initialised from an OptionInt
+                        // ("initializing 'WynArray' with an expression of incompatible
+                        // type 'OptionInt'"). The checker's own answer wins where it has
+                        // one: it types a combinator result as the family struct.
+                        bool _res_is_optlike = false;
+                        if (stmt->var.init->expr_type &&
+                            stmt->var.init->expr_type->kind == TYPE_STRUCT &&
+                            stmt->var.init->expr_type->struct_type.name.length > 6) {
+                            char _rsn[128];
+                            token_to_cstr(_rsn, sizeof(_rsn), stmt->var.init->expr_type->struct_type.name);
+                            _res_is_optlike = strncmp(_rsn, "Option", 6) == 0 ||
+                                              strncmp(_rsn, "Result", 6) == 0;
+                        }
+                        if (!_obj_is_string && !_res_is_optlike &&
+                            (strcmp(_mn2, "sort") == 0 || strcmp(_mn2, "reverse") == 0 ||
                             strcmp(_mn2, "filter") == 0 || strcmp(_mn2, "map") == 0 ||
                             strcmp(_mn2, "unique") == 0 || strcmp(_mn2, "slice") == 0 ||
                             strcmp(_mn2, "flat_map") == 0 || strcmp(_mn2, "collect") == 0)) {
