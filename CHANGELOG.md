@@ -201,8 +201,15 @@ Read this list before upgrading a test suite - several change program **output**
   the checker registered every signature with a flat `int` default before any body was
   looked at. `-> void` spelled out had the same split for a different reason.
 - **`Result<string, E>.unwrap_or` returned an int**, selecting the wrong family function.
-- **`.len()` on a string literal** regressed in the release candidate; that path is
-  restored, and measured against v1.21.0 it is unchanged.
+- **`.len()` is O(1) on a reference-counted string, and the literal path no longer pays for
+  it.** `string_length` memoises into the RC header, so a `StringBuilder` result stops
+  re-`strlen`ing on every call. 100,000 calls on a 200,000-character builder result:
+  **487ms → 0.18ms**. The win is length-independent, which is the actual property — the same
+  100,000 calls take 0.17-0.20ms whether the string is 10 characters or 200,000.
+  The release candidate made that trade at the *literal's* expense (a literal is not
+  RC-managed, so it missed the cache on every call and cached nothing); that is fixed too,
+  and 1M calls on a 44-character literal are back to v1.21.0's cost (1.54ms → 1.62ms, which
+  is measurement spread).
 - **Seven runtime string constructors returned un-headered buffers** - `Uuid.generate`,
   `DateTime.to_iso`, `Net.resolve`, `Db.escape` and the three `Encoding` functions. Such a
   string is leaked, because release is a no-op on it, and it makes the next `.len()` read
