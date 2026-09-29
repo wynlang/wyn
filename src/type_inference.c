@@ -172,8 +172,67 @@ Type* wyn_analyze_return_statements(Stmt* stmt, SymbolTable* scope) {
         default:
             break;
     }
-    
+
     return NULL;
+}
+
+// Does this body hand a VALUE back to its caller anywhere?
+//
+// The checker registers every function's signature in one pass BEFORE it checks a
+// single body, and at that point it cannot run wyn_infer_function_return_type()
+// above - that one calls check_expr(), which needs a local scope and the callee
+// signatures it is in the middle of building. What the signature pass needs is only
+// the yes/no question "will this function be emitted with a C `void` signature?",
+// and that is answerable from the AST alone.
+//
+// Why it matters: an un-annotated `fn side() { print("hi") }` had its signature
+// registered with the pass's `int` DEFAULT, so `a = side()` typed as int-to-int and
+// `wyn check` passed - then codegen emitted `void side(void)` (it reads fn->return_type,
+// which stays NULL for a void body) and the C compiler rejected `a = side();` with
+// "assigning to 'long long' from incompatible type 'void'". check passing a file that
+// cannot BUILD for a type reason is the whole defect.
+//
+// Deliberately MORE thorough than wyn_analyze_return_statements' BLOCK/IF-only walk.
+// The two answers are not symmetric: saying "returns a value" when the signature would
+// really be void just leaves the historical `int` in place and changes nothing, while
+// saying "void" for a function that DOES return a value would reject working code. So
+// every statement kind that can hold statements is walked, and a `yield` counts as a
+// value too (a generator is emitted as WynIter*, not void).
+bool wyn_body_has_value_return(Stmt* stmt) {
+    if (!stmt) return false;
+    switch (stmt->type) {
+        case STMT_RETURN: return stmt->ret.value != NULL;
+        case STMT_YIELD:  return true;
+        case STMT_BLOCK: case STMT_UNSAFE: case STMT_PARALLEL:
+            for (int i = 0; i < stmt->block.count; i++)
+                if (wyn_body_has_value_return(stmt->block.stmts[i])) return true;
+            return false;
+        case STMT_IF:
+            return wyn_body_has_value_return(stmt->if_stmt.then_branch) ||
+                   wyn_body_has_value_return(stmt->if_stmt.else_branch);
+        case STMT_WHILE:
+            return wyn_body_has_value_return(stmt->while_stmt.body);
+        case STMT_FOR:
+            return wyn_body_has_value_return(stmt->for_stmt.init) ||
+                   wyn_body_has_value_return(stmt->for_stmt.body);
+        case STMT_MATCH:
+            for (int i = 0; i < stmt->match_stmt.case_count; i++)
+                if (wyn_body_has_value_return(stmt->match_stmt.cases[i].body)) return true;
+            return false;
+        case STMT_TRY:
+            if (wyn_body_has_value_return(stmt->try_stmt.try_block)) return true;
+            for (int i = 0; i < stmt->try_stmt.catch_count; i++)
+                if (wyn_body_has_value_return(stmt->try_stmt.catch_blocks[i])) return true;
+            return wyn_body_has_value_return(stmt->try_stmt.finally_block);
+        case STMT_SELECT:
+            for (int i = 0; i < stmt->select_stmt.arm_count; i++)
+                if (wyn_body_has_value_return(stmt->select_stmt.bodies[i])) return true;
+            return false;
+        case STMT_TEST:
+            return wyn_body_has_value_return(stmt->test_stmt.body);
+        default:
+            return false;
+    }
 }
 
 // Infer binary operation result type

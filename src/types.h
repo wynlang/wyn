@@ -172,6 +172,7 @@ typedef struct {
 void wyn_type_inference_init(void);
 Type* wyn_infer_variable_type(Expr* init_expr, SymbolTable* scope);
 Type* wyn_infer_function_return_type(Stmt* function_body, SymbolTable* scope);
+bool wyn_body_has_value_return(Stmt* body);
 Type* wyn_analyze_return_statements(Stmt* stmt, SymbolTable* scope);
 Type* wyn_infer_binary_result_type(Expr* binary_expr);
 Type* wyn_infer_call_return_type(Expr* call_expr, SymbolTable* scope);

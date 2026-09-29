@@ -451,6 +451,8 @@ test: wyn $(MBEDTLS_LIB)
 	@echo "=== Running Option/Result-predicate-on-a-scalar test (V-28) ==="
 	@WYN=./wyn bash tests/errors/run_scalar_option_method_test.sh
 	@WYN=./wyn bash tests/errors/run_set_element_type_test.sh
+	@echo "=== Running void-call-type test (a void call is not an int) ==="
+	@WYN=./wyn bash tests/errors/run_void_call_type_test.sh
 	@WYN=./wyn bash tests/errors/run_registry_reachable_test.sh
 	@bash tests/errors/run_slim_header_parity_test.sh
 	@WYN=./wyn bash tests/errors/run_collection_return_type_test.sh
