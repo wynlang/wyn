@@ -41,6 +41,16 @@ typedef struct {
 
 bool dispatch_method(const char* receiver_type, const char* method_name, int arg_count, MethodDispatch* out);
 
+// V-38 (#391) set element-type dispatch. ONE authority, so the four places that
+// lower a set element (the `{:...}` literal, `x in s`, `s.add(x)` and the
+// `HashSet.add(s, x)` namespace form) cannot disagree about which runtime call an
+// int set gets. `wyn_set_elem_method` says whether a method takes an ELEMENT (as
+// opposed to another set, or no argument at all); `wyn_set_elem_fn` maps the
+// string-set C name to the variant for `elem` (NULL elem = an open set, which
+// stays on the string path).
+bool wyn_set_elem_method(const char* method_name);
+const char* wyn_set_elem_fn(const char* base, const Type* elem);
+
 // T1.5.2: LambdaExpr definition (moved from ast.h to break circular dependency)
 typedef struct LambdaExpr {
     Token* params;
@@ -108,6 +118,17 @@ typedef struct {
     Type* element_type;  // The type of array elements (T in [T])
 } ArrayType;
 
+// V-38 (#391): the element type of a set. TYPE_SET carried NO element type, so a
+// set was effectively untyped - `type_to_string` printed an unearned element name,
+// codegen picked the string-keyed runtime call for every element kind, and an
+// element-type mismatch could not be reported because there was nothing to compare
+// against. NULL means OPEN: `{:}` / `HashSet.new()` do not know their element type
+// yet and the first `.add()`/`.insert()` fixes it (the same rule an empty `{}` map
+// uses for its value type).
+typedef struct {
+    Type* element_type;  // The type of set elements (T in {T})
+} SetType;
+
 typedef struct {
     Type* inner_type;  // The type that is optional (T in T?)
 } OptionalType;
@@ -134,6 +155,7 @@ struct Type {
         StructType struct_type;
         FunctionType fn_type;
         MapType map_type;
+        SetType set_type;            // V-38: set type with element tracking
         ArrayType array_type;        // Array type with element tracking
         OptionalType optional_type;  // T2.5.1: Optional Type Implementation
         UnionType union_type;        // T2.5.2: Union Type Support

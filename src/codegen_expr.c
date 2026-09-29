@@ -1166,7 +1166,13 @@ static void codegen_expr_inner(Expr* expr) {
                 if (ct && ct->kind == TYPE_MAP) {
                     emit("hashmap_has("); codegen_expr(cont); emit(", "); codegen_expr(elem); emit(")");
                 } else if (ct && ct->kind == TYPE_SET) {
-                    emit("hashset_contains("); codegen_expr(cont); emit(", "); codegen_expr(elem); emit(")");
+                    // V-38 (#391): dispatch by the set's element type, falling back to
+                    // the probe's own type for an OPEN set (`{:}` / a bare `HashSet`
+                    // param). `1 in s` used to emit the string-keyed contains.
+                    const Type* _d = ct->set_type.element_type ? ct->set_type.element_type
+                                                               : (elem ? elem->expr_type : NULL);
+                    emit("%s(", wyn_set_elem_fn("hashset_contains", _d));
+                    codegen_expr(cont); emit(", "); codegen_expr(elem); emit(")");
                 } else if (ct && ct->kind == TYPE_STRING) {
                     emit("wyn_string_contains("); codegen_expr(cont); emit(", "); codegen_expr(elem); emit(")");
                 } else {
@@ -1594,6 +1600,31 @@ static void codegen_expr_inner(Expr* expr) {
             break;
         }
         case EXPR_CALL:
+            // V-38 (#391): the THIRD spelling of a set element call, `HashSet::add(s, 1)`.
+            // The parser folds `HashSet::add` into one identifier, so it lowers through
+            // the EXPR_IDENT `::` branch above, which sees no arguments and therefore
+            // could not dispatch on the element type. Before this it emitted plain
+            // `hashset_add(s, 1)` and SEGFAULTED (strcmp on the integer 1) - it also
+            // slipped past #374's rejection rule, which only ever saw the `.` forms.
+            // Handled here, where the arguments are in scope, and through the same
+            // wyn_set_elem_fn() the other two spellings use.
+            if (expr->call.callee->type == EXPR_IDENT && expr->call.arg_count >= 2) {
+                char _cn[160]; token_to_cstr(_cn, sizeof(_cn), expr->call.callee->token);
+                if (strncmp(_cn, "HashSet::", 9) == 0 && wyn_set_elem_method(_cn + 9)) {
+                    char _base[192]; snprintf(_base, sizeof(_base), "hashset_%s", _cn + 9);
+                    Type* _st = expr->call.args[0]->expr_type;
+                    const Type* _d = (_st && _st->kind == TYPE_SET && _st->set_type.element_type)
+                        ? _st->set_type.element_type
+                        : expr->call.args[expr->call.arg_count - 1]->expr_type;
+                    emit("%s(", wyn_set_elem_fn(_base, _d));
+                    for (int i = 0; i < expr->call.arg_count; i++) {
+                        if (i > 0) emit(", ");
+                        codegen_expr(expr->call.args[i]);
+                    }
+                    emit(")");
+                    break;
+                }
+            }
             // BARE (unqualified) enum constructor: `Circle(5)` -> `Shape_Circle(5)`.
             // The checker types this as the enum (see find_enum_for_bare_variant);
             // here we lower the call to the enum's constructor symbol, mirroring the
@@ -3221,7 +3252,23 @@ static void codegen_expr_inner(Expr* expr) {
                     char _nssym[320];
                     if (!is_module_extern_fn(_mname, _mfn) &&
                         wyn_namespace_c_symbol(module_name, _mfn, _nssym, sizeof(_nssym))) {
-                        emit("%s(", _nssym);
+                        // V-38 (#391): the NAMESPACE spelling of a set element call -
+                        // `HashSet.add(s, 1)`. It lowers through this authority rather
+                        // than through dispatch_method, so the element dispatch has to
+                        // be applied here too; the method form's half is at the
+                        // dispatch_method call site. The element is the LAST argument in
+                        // both, and both consult wyn_set_elem_fn, so they cannot pick
+                        // different runtime calls for the same set.
+                        const char* _ns_fn = _nssym;
+                        if (strcmp(module_name, "HashSet") == 0 && wyn_set_elem_method(_mfn) &&
+                            expr->method_call.arg_count >= 2) {
+                            Type* _st = expr->method_call.args[0]->expr_type;
+                            const Type* _d = (_st && _st->kind == TYPE_SET && _st->set_type.element_type)
+                                ? _st->set_type.element_type
+                                : expr->method_call.args[expr->method_call.arg_count - 1]->expr_type;
+                            _ns_fn = wyn_set_elem_fn(_nssym, _d);
+                        }
+                        emit("%s(", _ns_fn);
                     } else {
                         // A USER module (or an `extern fn` it declares). An extern fn
                         // names a symbol that already exists in a C library, so it must
@@ -4523,6 +4570,22 @@ static void codegen_expr_inner(Expr* expr) {
                     // When to_string is dispatched as int_to_string but the object is a method call,
                     // use _Generic to_string macro so the C compiler picks the right variant
                     const char* fn_name = dispatch.c_function;
+                    // V-38 (#391): re-point a set's element-taking method at the
+                    // element-typed runtime call. dispatch_method() is keyed on the
+                    // receiver-type STRING ("set") and so cannot see the element type;
+                    // this is the one place that adds it, for both `s.add(x)` and
+                    // `HashSet.add(s, x)` (the namespace form types as TYPE_SET too).
+                    // Element type when known, else the ARGUMENT's type - which is what
+                    // keeps an OPEN set (`{:}`, a bare `HashSet` param) emitting
+                    // well-typed C instead of passing an int through a `const char*`.
+                    if (strcmp(receiver_type, "set") == 0 && wyn_set_elem_method(method_name) &&
+                        expr->method_call.arg_count >= 1) {
+                        Type* _st = expr->method_call.object->expr_type;
+                        const Type* _d = (_st && _st->kind == TYPE_SET && _st->set_type.element_type)
+                            ? _st->set_type.element_type
+                            : expr->method_call.args[expr->method_call.arg_count - 1]->expr_type;
+                        fn_name = wyn_set_elem_fn(fn_name, _d);
+                    }
                     if (strcmp(fn_name, "int_to_string") == 0 &&
                         expr->method_call.object->type == EXPR_METHOD_CALL) {
                         fn_name = "to_string";
@@ -4954,10 +5017,17 @@ static void codegen_expr_inner(Expr* expr) {
                 static int set_counter = 0;
                 int set_id = set_counter++;
                 emit("({ WynHashSet* __set_%d = hashset_new(); ", set_id);
-                
-                // Add elements
+
+                // Add elements. V-38 (#391): by ELEMENT TYPE. This emitted
+                // `hashset_add` unconditionally, so `{:1}` passed the int 1 into a
+                // `const char*` parameter and strcmp dereferenced it. The element type
+                // now comes from the checker's TYPE_SET; per-element expr_type is the
+                // fallback for a literal whose type the checker did not reach.
+                const Type* _set_elem = (expr->expr_type && expr->expr_type->kind == TYPE_SET)
+                                        ? expr->expr_type->set_type.element_type : NULL;
                 for (int i = 0; i < expr->array.count; i++) {
-                    emit("hashset_add(__set_%d, ", set_id);
+                    const Type* _d = _set_elem ? _set_elem : expr->array.elements[i]->expr_type;
+                    emit("%s(__set_%d, ", wyn_set_elem_fn("hashset_add", _d), set_id);
                     codegen_expr(expr->array.elements[i]);
                     emit("); ");
                 }

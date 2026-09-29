@@ -281,6 +281,19 @@ static const MethodSignature method_signatures[] = {
     // HashSet methods
     {"set", "insert", "void", "string"},
     {"set", "contains", "bool", "string"},
+    // V-38 (#391): `contains_int` is a real int-family method now (src/hashset.c), so it
+    // must declare the same `bool` return its `contains` sibling does - without this row
+    // it fell through to the int default and `print(s.contains_int(9))` printed `1` where
+    // `print(s.contains(9))` prints `true`.
+    //
+    // The 4th column is param_types (#393), a STRING, not an argument count: `"int"` is
+    // "one int argument". A bare `1` does NOT compile here, and a bare `0` DOES - as a
+    // null pointer constant, silently meaning "no param_types" rather than "no arguments".
+    //
+    // The element-taking rows keep `"string"`: this table is keyed on the receiver-type
+    // STRING "set", so it cannot see a set's element type at all. wyn_set_elem_fn()
+    // re-points the emitted call at the element-typed C variant instead.
+    {"set", "contains_int", "bool", "int"},
     {"set", "remove", "void", "string"},
     {"set", "len", "int", ""},
     {"set", "is_empty", "bool", ""},
@@ -296,7 +309,8 @@ static const MethodSignature method_signatures[] = {
     // type 'set'" and then dies with "compilation failed (internal codegen error)". The
     // four set-algebra rows above (union/intersection/difference plus the three
     // predicates) DO work - set_union and friends are real functions - which is what made
-    // this half look implemented. Removed, same precedent as `set.to_array`.
+    // this half look implemented. Removed (#393), same precedent as `set.to_array`. This
+    // lane does NOT restore them: it gives the set an element type, not new methods.
     
     // Option methods
     {"option", "is_some", "bool", ""},
@@ -1097,7 +1111,12 @@ bool dispatch_method(const char* receiver_type, const char* method_name, int arg
     }
     
     if (strcmp(receiver_type, "set") == 0) {
-        // HashSet methods
+        // HashSet methods. The four ELEMENT-taking names below (add / insert /
+        // contains / remove, plus the two _int spellings) come back with the
+        // STRING-set C function; the caller re-points them at the element-typed
+        // variant through wyn_set_elem_fn(), because this table is keyed on a
+        // receiver-type STRING and so cannot see the element type. See
+        // wyn_set_elem_method() at the bottom of this file.
         if (strcmp(method_name, "add") == 0 && arg_count == 1) {
             out->c_function = "hashset_add"; return true;
         }
@@ -1659,4 +1678,59 @@ int wyn_suggest_namespace_method_spelled(const char* ns, const char* method,
 
 int wyn_suggest_namespace_method(const char* ns, const char* method, char* out, size_t out_sz) {
     return wyn_suggest_namespace_method_spelled(ns, method, ".", out, out_sz);
+}
+
+// ---------------------------------------------------------------------------
+// V-38 (#391): set element-type dispatch. ONE authority for the four places that
+// lower a set element - the `{:...}` literal, `x in s`, `s.add(x)` and the
+// `HashSet.add(s, x)` namespace form. Those four disagreeing is exactly the defect
+// shape this issue is about: the element type existed nowhere, so every one of them
+// emitted the string-keyed call.
+
+bool wyn_set_elem_method(const char* method_name) {
+    if (!method_name) return false;
+    static const char* const names[] = {
+        "add", "insert", "contains", "remove", "add_int", "contains_int", NULL
+    };
+    for (int i = 0; names[i]; i++)
+        if (strcmp(method_name, names[i]) == 0) return true;
+    return false;
+}
+
+const char* wyn_set_elem_fn(const char* base, const Type* elem) {
+    if (!base) return base;
+    // A NULL element type is an OPEN set (`{:}` / `HashSet.new()` with nothing
+    // added yet). Nothing can be inserted through a call that has no element, so
+    // the string form is the harmless default and matches what the C prototypes
+    // in hashset.h have always been.
+    if (!elem) return base;
+    const char* suffix = NULL;
+    switch (elem->kind) {
+        case TYPE_INT:    suffix = "_int";   break;
+        case TYPE_FLOAT:  suffix = "_float"; break;
+        case TYPE_BOOL:   suffix = "_bool";  break;
+        default: return base;                      // string (and anything the
+                                                   // checker refuses upstream)
+    }
+    // `add_int` / `contains_int` are already the int family under their advertised
+    // spelling; appending a second suffix would name nothing.
+    size_t bl = strlen(base);
+    if (bl > 4 && strcmp(base + bl - 4, "_int") == 0) return base;
+
+    // Static table rather than a formatted buffer: the caller uses the result as a
+    // plain `const char*` with no lifetime contract, and a static snprintf buffer
+    // would be clobbered by the next call in the same emit (`s.union(t)` emits two
+    // set calls in one expression).
+    struct { const char* base; const char* i; const char* f; const char* b; } map[] = {
+        {"hashset_add",      "hashset_add_int",      "hashset_add_float",      "hashset_add_bool"},
+        {"hashset_contains", "hashset_contains_int", "hashset_contains_float", "hashset_contains_bool"},
+        {"hashset_remove",   "hashset_remove_int",   "hashset_remove_float",   "hashset_remove_bool"},
+    };
+    for (size_t i = 0; i < sizeof(map)/sizeof(map[0]); i++) {
+        if (strcmp(base, map[i].base) != 0) continue;
+        if (strcmp(suffix, "_int") == 0)   return map[i].i;
+        if (strcmp(suffix, "_float") == 0) return map[i].f;
+        return map[i].b;
+    }
+    return base;
 }

@@ -450,7 +450,7 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_unknown_method_test.sh
 	@echo "=== Running Option/Result-predicate-on-a-scalar test (V-28) ==="
 	@WYN=./wyn bash tests/errors/run_scalar_option_method_test.sh
-	@WYN=./wyn bash tests/errors/run_set_element_type_test.sh
+	@WYN=./wyn bash tests/errors/run_typed_set_test.sh
 	@echo "=== Running void-call-type test (a void call is not an int) ==="
 	@WYN=./wyn bash tests/errors/run_void_call_type_test.sh
 	@echo "=== Running container-fresh-type test (two HashMap.new() are independent) ==="
