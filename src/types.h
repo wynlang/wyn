@@ -14,7 +14,15 @@ typedef struct {
     const char* receiver_type;  // "string", "int", "float", etc.
     const char* method_name;    // "upper", "lower", "abs", etc.
     const char* return_type;    // "string", "int", "float", etc.
-    int param_count;            // Number of parameters (excluding self)
+    // The argument TYPES, in Wyn spelling, comma-separated at depth 0: "" for none,
+    // "int, string", "fn(int)->bool", "fn(int,int)->int, int", "..." for variadic.
+    //
+    // This column replaced a bare argument COUNT. The count is what made
+    // tests/errors/run_registry_reachable_test.sh unable to synthesise a call for any
+    // row that takes arguments - half the table - so `.any`/`.all` and `every`/`times`
+    // all shipped uncallable behind that blind spot. The arity is now the number of
+    // entries here, so a row cannot advertise one count and a different argument list.
+    const char* param_types;
 } MethodSignature;
 
 // Lookup method return type given receiver type and method name
