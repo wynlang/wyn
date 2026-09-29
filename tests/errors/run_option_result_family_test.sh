@@ -137,4 +137,58 @@ else
     bad "a default that does not match the payload is still rejected (rc=$rc) [$(echo "$out" | head -1)]"
 fi
 
+# --- #386: to_string / unwrap_err must be TYPED, not just present -------------
+# The static matrix above already proves these eight functions EXIST. That is not the
+# same as the checker knowing what they return, and it did not: `to_string()` came back
+# typed `int`, so
+#
+#     s = g().to_string(); print(s.len())     # Unknown method 'len' for type 'int'
+#
+# even though printing it inline worked. `unwrap_err` typed correctly already, via the
+# `<Family>_<method>` symbol route; it is asserted here so the two cannot diverge.
+#
+# WHY THESE ARMS AND NOT JUST REGISTRY ROWS. An earlier attempt at #386 added the
+# `{"option","to_string","string",0}` rows to method_signatures and was reverted for
+# having no effect. Re-measured: with the rows in place and nothing else changed, all
+# three arms below still failed. Every realistic receiver is the monomorphic TYPE_STRUCT
+# family, for which get_receiver_type_string() answers NULL, so that table is never
+# consulted. Each arm therefore USES the result as a string - `.len()`, `.upper()`, a
+# `-> string` return position - because only that can tell the type apart from int.
+# typed <label> <program> <expected>
+typed() {
+    local label="$1" mode got
+    printf '%s\n' "$2" > "$TMP/ts.wyn"
+    for mode in "" "--release"; do
+        rm -f "$TMP/ts" "$TMP/ts.wyn.c"
+        if ! (cd "$TMP" && perl -e 'alarm(180); exec @ARGV' -- "$WYN" build $mode "$TMP/ts.wyn") \
+             > "$TMP/b.log" 2>&1; then
+            bad "$label (${mode:-dev}) builds"
+            grep -m1 -oE "(error|Error)[:@] .*" "$TMP/b.log" | cut -c1-100 | sed 's/^/          /'
+            continue
+        fi
+        got=$(perl -e 'alarm(60); exec @ARGV' -- "$TMP/ts" 2>&1)
+        if [ "$got" = "$3" ]; then ok "$label (${mode:-dev})"
+        else bad "$label (${mode:-dev}): want [$3] got [$got]"; fi
+    done
+}
+typed "Option.to_string() is a string when stored" \
+'fn g() -> int? { return Some(1) }
+fn main() { s = g().to_string(); print(s.len()) }' '7'
+typed "Result.to_string() is a string when stored" \
+'fn g() -> Result<string, string> { return Ok("y") }
+fn main() { s = g().to_string(); print(s.len()) }' '7'
+typed "Option.to_string() satisfies a '-> string' return" \
+'fn f(o: string?) -> string { return o.to_string() }
+fn main() { print(f(Some("hi")).upper()) }' 'SOME("HI")'
+typed "Result.unwrap_err() is a string" \
+'fn e() -> Result<int, string> { return Err("bad") }
+fn main() { u = e().unwrap_err(); print(u.upper()) }' 'BAD'
+# A Result whose Err is NOT a string keeps its own err type - the four builtin families
+# store a `const char*` err by construction, but a monomorphic Result<T,E> family does
+# not, and answering "string" for it would be a guess. This arm is what fails if the
+# resolution above ever stops asking.
+typed "a non-string Err keeps its own type" \
+'fn e() -> Result<int, int> { return Err(7) }
+fn main() { print(e().unwrap_err() + 1) }' '8'
+
 echo ""; echo "option-result-family: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]

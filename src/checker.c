@@ -5275,6 +5275,55 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 }
             }
 
+            // #386: `to_string()` on an Option/Result WORKS - the runtime has all eight
+            // `<Family>_to_string` functions and printing the call inline has always
+            // printed "Some(1)" - but it came back typed `int`, so the moment the result
+            // was USED as a string it failed:
+            //
+            //     s = g().to_string(); print(s.len())   # Unknown method 'len' for type 'int'
+            //     fn f(o: string?) -> string { return o.to_string() }  # Expected string, got int
+            //
+            // An earlier attempt at #386 added `{"option","to_string","string",0}` to
+            // method_signatures and was reverted for having no effect. MEASURED AGAIN
+            // before writing this: with those rows in place and nothing else changed, every
+            // one of those spellings still failed. The rows cannot help, because every
+            // realistic receiver here is the monomorphic TYPE_STRUCT family
+            // ("OptionString") and get_receiver_type_string() has no TYPE_STRUCT case - it
+            // answers NULL, so the table below is never consulted for Option or Result.
+            //
+            // So the answer is given HERE, ahead of that lookup, which is exactly how #413
+            // resolved unwrap_or. Giving get_receiver_type_string() a TYPE_STRUCT case
+            // instead would route Option through the table, where
+            // `{"option","unwrap","int",0}` would type `Option<string>.unwrap()` as int and
+            // break working code.
+            //
+            // `unwrap_err` is the other half of #386 and is deliberately NOT resolved here.
+            // It already answers correctly on every spelling that could be found, via the
+            // `<Family>_unwrap_err` symbol route further down (registered in
+            // checker_builtins.c for the eight builtin families, and by REG_RES_FN with the
+            // family's OWN err type for a monomorphic Result<Struct,E>). Adding a second
+            // answer was tried and mutation-tested: altering it changed no arm of any gate,
+            // because nothing reaches it that the existing route gets wrong. Its
+            // method_signatures row is added in src/types.c - that is what #386 asks for on
+            // unwrap_err, and the gate pins the typing so a future change cannot quietly
+            // take it away.
+            //
+            // Scope is a family whose payload is one of the four scalars. A Result<Struct>
+            // family keeps its existing route.
+            if (object_type && expr->method_call.arg_count == 0 &&
+                method.length == 9 && memcmp(method.start, "to_string", 9) == 0) {
+                Type* _p = NULL;
+                int _k = wyn_optlike_receiver(object_type, &_p, NULL);
+                bool _scalar = _p && (_p->kind == TYPE_INT || _p->kind == TYPE_STRING ||
+                                      _p->kind == TYPE_FLOAT || _p->kind == TYPE_BOOL);
+                if (_k && _scalar) {
+                    // to_string() renders the whole wrapper ("Some(1)", "Err(bad)"), so it
+                    // is a string for every family and every payload.
+                    expr->expr_type = builtin_string;
+                    return builtin_string;
+                }
+            }
+
             // Use method signature table for type inference (Phase 1)
             const char* receiver_type = get_receiver_type_string(object_type);
             if (receiver_type) {

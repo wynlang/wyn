@@ -89,6 +89,18 @@ fixture(){
   esac
 }
 
+# Some rows' CONTRACT requires a particular variant of the receiver, not just the right
+# type. `result.unwrap_err` on an `Ok` aborts with "unwrap_err() called on Ok" - which is
+# the method behaving correctly, but this gate reads an abort as "the row is not callable".
+# The answer is the right receiver, NOT an entry in known_broken(): that list is for rows
+# with nothing behind them, and it is meant to stay empty.
+fixture_for(){   # <receiver> <method>
+  case "$1.$2" in
+    result.unwrap_err) echo 'r = reg_res_err()';;
+    *)                 fixture "$1";;
+  esac
+}
+
 # Read the authority. Emits TAB-separated "receiver method returntype call" per row,
 # de-duplicated (the table registers some rows twice - `map.contains` and `map.len` among
 # them). `call` is the whole call text, arguments included, so the argument-type column is
@@ -169,8 +181,9 @@ RECEIVERS=$(cut -f1 "$TMP/pairs.txt" | sort -u)
 emit_one(){
   { echo 'fn reg_opt() -> int? { return Some(1) }'
     echo 'fn reg_res() -> Result<int, string> { return Ok(1) }'
+    echo 'fn reg_res_err() -> Result<int, string> { return Err("e") }'
     echo 'fn main() {'
-    echo "  $(fixture "$2")"
+    echo "  $(fixture_for "$2" "${3%%(*}")"
     if [ "$4" = "void" ]; then echo "  r.$3"; else echo "  v = r.$3"; fi
     echo '  print("REACHED")'
     echo '}'; } > "$1"
@@ -209,13 +222,14 @@ for recv in $RECEIVERS; do
   n=0
   { echo 'fn reg_opt() -> int? { return Some(1) }'
     echo 'fn reg_res() -> Result<int, string> { return Ok(1) }'
+    echo 'fn reg_res_err() -> Result<int, string> { return Err("e") }'
     echo 'fn main() {'
     while IFS=$'\t' read -r meth ret call; do
       [ -z "$meth" ] && continue
       known_broken "$recv.$meth" && continue
       case "$call" in UNRENDERABLE:*|VARIADIC:*) continue;; esac
       n=$((n+1))
-      echo "  $(fixture "$recv")" | sed "s/^  r =/  r$n =/; s/^  var r:/  var r$n:/"
+      echo "  $(fixture_for "$recv" "$meth")" | sed "s/^  r =/  r$n =/; s/^  var r:/  var r$n:/"
       if [ "$ret" = "void" ]; then echo "  r$n.$call"; else echo "  v$n = r$n.$call"; fi
     done <<< "$methods"
     echo '  print("REACHED")'
