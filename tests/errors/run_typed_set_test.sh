@@ -156,6 +156,14 @@ true
 true'
 expect "clear / is_empty on an int set" 'fn main() {\n  var c = {:1, 2}\n  c.clear()\n  print(c.len())\n  print(c.is_empty())\n}' '0
 true'
+# These two are what make the element type on the RESULT load-bearing rather than
+# incidental. Membership on an algebra result does NOT need it (codegen falls back to
+# the probe's own type), so mutating the propagation out reddened nothing until these
+# were added: ITERATING a result needs the declared element type to pick the getter,
+# and the MISMATCH rule needs it to have anything to compare against.
+expect "iterate a union result" 'fn main() {\n  a = {:1, 2}\n  b = {:2, 3}\n  var t = 0\n  for x in a.union(b) {\n    t = t + x\n  }\n  print(t)\n}' '6'
+expect "iterate a difference result (strings)" 'fn main() {\n  a = {:"ab","cde"}\n  b = {:"ab"}\n  var n = 0\n  for w in a.difference(b) {\n    n = n + w.len()\n  }\n  print(n)\n}' '3'
+reject "union result .add(string)" 'fn main() {\n  a = {:1}\n  b = {:2}\n  var u = a.union(b)\n  u.add("x")\n  print(u.len())\n}' "'add()' on a HashSet<int> was given string"
 
 echo "-- membership operators dispatch by element type"
 expect "int `in` / `not in`" 'fn main() {\n  a = {:10, 20}\n  print(10 in a)\n  print(3 in a)\n  print(3 not in a)\n  print(10 not in a)\n}' 'true
@@ -175,8 +183,12 @@ false
 
 echo "-- the element type on DECLARATIONS"
 expect "HashSet<int> parameter" 'fn total(s: HashSet<int>) -> int {\n  var t = 0\n  for x in s {\n    t = t + x\n  }\n  return t\n}\nfn main() { print(total({:10, 20})) }' '30'
-expect "-> HashSet<int> return" 'fn make() -> HashSet<int> {\n  var r = {:}\n  r.add(5)\n  r.add(6)\n  return r\n}\nfn main() {\n  m = make()\n  print(m.len())\n  print(m.contains(5))\n}' '2
-true'
+# The ITERATION is the load-bearing half: `m.contains(5)` passes even when the declared
+# return type is OPEN (codegen falls back to the probe's type), so a `-> HashSet<int>`
+# arm that only asserts membership does not test the annotation at all.
+expect "-> HashSet<int> return" 'fn make() -> HashSet<int> {\n  var r = {:}\n  r.add(5)\n  r.add(6)\n  return r\n}\nfn main() {\n  m = make()\n  print(m.len())\n  print(m.contains(5))\n  var t = 0\n  for x in m {\n    t = t + x\n  }\n  print(t)\n}' '2
+true
+11'
 expect "HashSet<string> parameter" 'fn has(s: HashSet<string>, k: string) -> bool { return s.contains(k) }\nfn main() {\n  print(has({:"a"}, "a"))\n  print(has({:"a"}, "b"))\n}' 'true
 false'
 check_only "bare HashSet parameter still checks (OPEN)" 'fn has(s: HashSet, k: string) -> bool { return HashSet.contains(s, k) }\nfn main() { print(has({:"a"}, "a")) }'
