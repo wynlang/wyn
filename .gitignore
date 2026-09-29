@@ -147,3 +147,9 @@ benchmarks/*
 !benchmarks/*.md
 !benchmarks/*.py
 !benchmarks/*/
+# ...but NOT the C that `wyn build --debug` generates next to a fixture. The
+# `!benchmarks/*.c` exception above exists for hand-written comparison sources, and
+# `coroutine_bench.wyn.c` matches `*.c` too - so six generated files sat permanently
+# untracked in `git status` after one benchmark run. This re-ignores them; it must
+# stay BELOW the exception to win.
+benchmarks/*.wyn.c
