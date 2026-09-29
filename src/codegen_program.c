@@ -749,7 +749,10 @@ void codegen_program(Program* prog) {
     
     // Reset spawn wrapper collection
     spawn_wrapper_count = 0;
-    
+    // Site ids are indices into this array, so it must reset with it - a second
+    // codegen run in one process would otherwise keep stale Expr* keys.
+    spawn_site_count = 0;
+
     // PASS 0: Pre-scan to register function return types (needed by spawn wrapper generation)
     extern void register_fn_return_type(const char*, const char*);
     for (int i = 0; i < prog->count; i++) {
@@ -1860,6 +1863,10 @@ void codegen_program(Program* prog) {
         }
         emit("\n");
     }
+
+    // Per-call-site spawn wrappers (after forward declarations, so a wrapper body
+    // may reference anything a function body could).
+    spawn_site_emit_wrappers();
 
     // Emit spawn wrapper functions (after forward declarations)
     if (spawn_wrapper_count > 0) {

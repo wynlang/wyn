@@ -2425,10 +2425,284 @@ static const char* spawn_param_c_type(const char* func_name, int idx,
 // Forward decls for helpers defined later in this file but used by the
 // included codegen_*.c translation units above.
 const char* codegen_c_type_from_type(Type* t);
+void codegen_expr(Expr* expr);
+
+// ---------------------------------------------------------------------------
+// PER-CALL-SITE spawn wrappers.
+//
+// The wrappers above are keyed by FUNCTION NAME, which is why only a call whose
+// callee names a user function could ever be dispatched. A namespaced builtin
+// has no usable name to key on:
+//
+//   `Time::sleep(200)`  lexes as ONE identifier containing "::", so the per-name
+//                       scheme spelled the wrapper `__spawn_wrapper_Time::sleep_1`
+//                       - invalid C, so `spawn Time::sleep(200)` did not compile.
+//   `Time.sleep(200)`   is a different AST shape (a method call on the namespace),
+//                       so it has no single callee name at all. It fell back to a
+//                       plain synchronous call in `parallel { }` (8 branches of
+//                       200ms took 8x200ms) and, in spawn-EXPRESSION position, to
+//                       a literal `NULL` future - which dropped the call entirely:
+//                       `var f = spawn Time.sleep(200); await f` slept 0ms.
+//
+// A SITE wrapper is keyed by the call expression itself, so the C function name is
+// always a plain `__spawn_site_<n>` no matter how the callee is spelled:
+//
+//     struct __spawn_site_args_3 { long long a0; };
+//     void* __spawn_site_3(void* arg) {
+//         struct __spawn_site_args_3* args = arg;
+//         long long __spa0 = args->a0;
+//         free(args);
+//         return (void*)(intptr_t)(long long)(Time_sleep(__spa0));
+//     }
+//
+// ARGUMENTS are evaluated exactly once, at the spawn site, in source order, into
+// that malloc'd box - so evaluation order and side effects match the synchronous
+// call - and the wrapper then re-emits the ORIGINAL call expression with each
+// argument spliced to its unpacked local. The splice reuses `_codegen_temp_id`,
+// the mechanism already used for pre-evaluated string temps, with its own id base.
+//
+// Re-emitting through codegen_expr rather than reconstructing `Ns_fn(...)` by hand
+// is deliberate: namespaced-call emission has dozens of per-namespace special
+// cases (Time_, file_, hashmap_, random_, ...) and a second hand-written copy of
+// that mapping is exactly the "one rule with more than one copy" defect shape.
+//
+// WHAT IS DELIBERATELY REFUSED, and why a refused site stays synchronous rather
+// than being dispatched wrongly:
+//   - a real method call on a VALUE (`obj.run(1)`): the receiver would have to be
+//     copied into the box, and a builtin that takes its receiver's address
+//     (`array_push(&arr, ...)`) would then mutate the copy - a silently lost
+//     mutation. Only a namespace receiver, which carries no value, is accepted.
+//   - an argument that is not a scalar (array / map / set / struct / option /
+//     result): same aliasing hazard.
+//   - a result that is not word-sized (string / float / struct): a site wrapper
+//     DISCARDS the call's value (see below), and dropping a +1 string reference
+//     leaks it, where the sequential path releases it.
+//
+// A site wrapper runs the call as a STATEMENT and returns NULL, because a builtin's
+// real C return type is not knowable here - `Time.sleep` types as int for the
+// checker and is declared `void Time_sleep(long long)` in the runtime header, so
+// nothing may be cast out of it. Site dispatch is therefore used ONLY where the
+// branch's value is discarded: a bare call statement or a bare `spawn` inside
+// `parallel { }`, and a fire-and-forget `spawn`. A value-BOUND branch
+// (`var x = Time.now_millis()` inside the block) keeps the sequential path, which
+// still gives x the right value - joining it would need the builtin's C return
+// type, and that is a separate concern.
+// ---------------------------------------------------------------------------
+
+// `_codegen_temp_id` encoding for "emit `__spa<n>` instead of this expression":
+// -1000 - n, i.e. NEGATIVE, deliberately.
+//
+// The field's other two ranges are non-negative (`__sa` 0..999, `__mo` 1000+) and
+// several emitters read `_codegen_temp_id >= 0` as "this argument was already
+// evaluated into a string temp" and change what they emit. A positive base
+// therefore silently changed those decisions: `print("A")` stopped emitting its
+// WynOut block and fell through to the generic call path as `wynfn_print(...)`,
+// an undeclared function. Every existing test is `>= 0`, `< 0` or `>= 1000`, so a
+// value below -1 is indistinguishable from the default -1 to all of them.
+#define WYN_SPAWN_SITE_ARG_SLOT(n) (-1000 - (n))
+#define WYN_SPAWN_SITE_IS_ARG(id)  ((id) <= -1000)
+#define WYN_SPAWN_SITE_ARG_INDEX(id) (-1000 - (id))
+
+// What a `parallel { }` branch lowers to. See par_branch_classify() in
+// codegen_stmt.c - the one classifier both the lowering and the wrapper-
+// collecting scan ask.
+typedef enum {
+    PAR_SEQ = 0,         // emitted as a plain sequential statement
+    PAR_SPAWN_BOUND,     // dispatched; value joined back into a variable
+    PAR_SPAWN_DISCARD    // dispatched; joined for the barrier, value dropped
+} ParBranch;
+
+#define WYN_SPAWN_SITE_MAX_ARGS 8
+
+typedef struct {
+    Expr* call;                                   // identity key: the call node
+    int   id;                                     // → __spawn_site_<id>
+    int   arg_count;
+    char  arg_ctype[WYN_SPAWN_SITE_MAX_ARGS][48];
+} SpawnSite;
+
+static SpawnSite* spawn_sites = NULL;
+static int spawn_site_count = 0;
+static int spawn_site_cap = 0;
+
+// Does this callee spelling make a valid C identifier, so that the per-NAME
+// scheme can build `__spawn_wrapper_<name>` out of it? `Time::sleep` does not -
+// and the per-name path used to emit that reference anyway, so
+// `spawn Time::sleep(200)` did not compile at all.
+static int spawn_callee_is_c_identifier(Token t) {
+    if (t.length <= 0) return 0;
+    for (int i = 0; i < t.length; i++) {
+        char c = t.start[i];
+        int ok = (c == '_') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                 (i > 0 && c >= '0' && c <= '9');
+        if (!ok) return 0;
+    }
+    return 1;
+}
+
+// A scalar can be copied into the args box without aliasing anything the callee
+// might mutate through its address. Everything else is refused (see above).
+static int spawn_site_scalar_ctype(Type* t, char* out, size_t outsz) {
+    if (!t) return 0;
+    switch (t->kind) {
+        case TYPE_INT: case TYPE_BOOL: case TYPE_FLOAT:
+        case TYPE_STRING: case TYPE_CHANNEL:
+            break;
+        default: return 0;
+    }
+    const char* ct = codegen_c_type_from_type(t);
+    if (!ct) return 0;
+    snprintf(out, outsz, "%s", ct);
+    return 1;
+}
+
+// Is the callee spelling one that has no receiver VALUE, so that hoisting the
+// call into a file-scope wrapper captures nothing but its arguments?
+//   - an EXPR_IDENT callee: a plain or `::`-folded name (`Time::sleep`).
+//   - a method call whose object names a builtin namespace (`Time.sleep`). The
+//     namespace test is is_builtin_module(), the same authority the checker's
+//     unknown-namespace-method rule uses, so the two cannot drift.
+static int spawn_site_callee_has_no_receiver(Expr* call) {
+    if (!call) return 0;
+    if (call->type == EXPR_CALL)
+        return call->call.callee && call->call.callee->type == EXPR_IDENT;
+    if (call->type == EXPR_METHOD_CALL) {
+        Expr* obj = call->method_call.object;
+        if (!obj || obj->type != EXPR_IDENT) return 0;
+        char ns[128]; token_to_cstr(ns, sizeof(ns), obj->token);
+        extern bool is_builtin_module(const char* name);
+        extern bool is_module_loaded(const char* name);
+        // A user module or a variable shadowing the name is NOT a namespace: its
+        // receiver is a real value.
+        if (!is_builtin_module(ns) || is_module_loaded(ns)) return 0;
+        extern const char* get_struct_var_type(const char*);
+        if (get_struct_var_type(ns)) return 0;
+        return 1;
+    }
+    return 0;
+}
+
+static void spawn_site_call_parts(Expr* call, Expr*** args, int* argc) {
+    if (call->type == EXPR_METHOD_CALL) {
+        *args = call->method_call.args; *argc = call->method_call.arg_count;
+    } else {
+        *args = call->call.args; *argc = call->call.arg_count;
+    }
+}
+
+// Can this call expression be dispatched through a per-site wrapper? Asked by
+// par_call_is_spawnable(), which every "does this become a spawn?" decision goes
+// through, so the lowering and the wrapper-collecting scan cannot disagree.
+static int spawn_site_feasible(Expr* call) {
+    if (!spawn_site_callee_has_no_receiver(call)) return 0;
+    // A user function is dispatched by the per-NAME wrapper; a site wrapper for it
+    // would be a second, redundant scheme for the same call.
+    if (call->type == EXPR_CALL) {
+        extern const char* get_function_return_type(const char*);
+        char fn[256]; token_to_cstr(fn, sizeof(fn), call->call.callee->token);
+        if (get_function_return_type(fn)) return 0;
+    }
+    Expr** args; int argc;
+    spawn_site_call_parts(call, &args, &argc);
+    if (argc > WYN_SPAWN_SITE_MAX_ARGS) return 0;
+    for (int i = 0; i < argc; i++) {
+        char buf[48];
+        if (!args[i] || !spawn_site_scalar_ctype(args[i]->expr_type, buf, sizeof(buf)))
+            return 0;
+    }
+    // Result must be absent (statement-only call) or word-sized.
+    Type* rt = call->expr_type;
+    if (rt && rt->kind != TYPE_INT && rt->kind != TYPE_BOOL &&
+        rt->kind != TYPE_VOID && rt->kind != TYPE_CHANNEL) return 0;
+    return 1;
+}
+
+// Register (or look up) the site for this call. Returns NULL when infeasible.
+static SpawnSite* spawn_site_intern(Expr* call) {
+    if (!spawn_site_feasible(call)) return NULL;
+    for (int i = 0; i < spawn_site_count; i++)
+        if (spawn_sites[i].call == call) return &spawn_sites[i];
+    WYN_ENSURE_CAP(spawn_sites, spawn_site_count, spawn_site_cap);
+    SpawnSite* s = &spawn_sites[spawn_site_count];
+    memset(s, 0, sizeof(*s));
+    s->call = call;
+    s->id = spawn_site_count;
+    Expr** args; int argc;
+    spawn_site_call_parts(call, &args, &argc);
+    s->arg_count = argc;
+    for (int i = 0; i < argc; i++)
+        spawn_site_scalar_ctype(args[i]->expr_type, s->arg_ctype[i], sizeof(s->arg_ctype[i]));
+    spawn_site_count++;
+    return s;
+}
+
+// Already-registered site for this call, or NULL. Used by the emission sites,
+// which must never register a site the scan did not (the wrapper would be
+// referenced but never emitted).
+static SpawnSite* spawn_site_lookup(Expr* call) {
+    for (int i = 0; i < spawn_site_count; i++)
+        if (spawn_sites[i].call == call) return &spawn_sites[i];
+    return NULL;
+}
+
+// Emit the malloc'd args box for a site and leave the pointer in `__ss<id>`.
+// Argument expressions are evaluated HERE, in the spawning scope, in source
+// order - one evaluation each, exactly as the synchronous call would do.
+// A string argument is RC-retained for the task (the spawning scope may release
+// it before the task runs); the wrapper releases it after the call.
+static void spawn_site_emit_args(SpawnSite* s) {
+    emit("struct __spawn_site_args_%d* __ss%d = malloc(sizeof(struct __spawn_site_args_%d)); ",
+         s->id, s->id, s->id);
+    Expr** args; int argc;
+    spawn_site_call_parts(s->call, &args, &argc);
+    for (int i = 0; i < argc; i++) {
+        emit("__ss%d->a%d = ", s->id, i);
+        codegen_expr(args[i]);
+        emit("; ");
+        if (strcmp(s->arg_ctype[i], "const char*") == 0)
+            emit("wyn_rc_retain(__ss%d->a%d); ", s->id, i);
+    }
+}
+
+// Emit every collected site's args struct and wrapper function, at file scope.
+// Called from the same place the per-name wrappers are emitted, i.e. after the
+// forward declarations and before any function body that references one.
+static void spawn_site_emit_wrappers(void) {
+    if (spawn_site_count == 0) return;
+    emit("\n// Per-call-site spawn wrappers\n");
+    for (int i = 0; i < spawn_site_count; i++) {
+        SpawnSite* s = &spawn_sites[i];
+        emit("struct __spawn_site_args_%d { ", s->id);
+        if (s->arg_count == 0) emit("int _unused; ");
+        for (int a = 0; a < s->arg_count; a++) emit("%s a%d; ", s->arg_ctype[a], a);
+        emit("};\n");
+        emit("void* __spawn_site_%d(void* arg) {\n", s->id);
+        emit("    struct __spawn_site_args_%d* args = arg;\n", s->id);
+        for (int a = 0; a < s->arg_count; a++)
+            emit("    %s __spa%d = args->a%d;\n", s->arg_ctype[a], a, a);
+        // Re-emit the ORIGINAL call with every argument spliced to its unpacked
+        // local, then restore the AST: the same node is emitted again by any
+        // sibling path (and by --debug's second pass) and must be found unmodified.
+        Expr** cargs; int cargc;
+        spawn_site_call_parts(s->call, &cargs, &cargc);
+        int saved[WYN_SPAWN_SITE_MAX_ARGS];
+        for (int a = 0; a < cargc; a++) {
+            saved[a] = cargs[a]->_codegen_temp_id;
+            cargs[a]->_codegen_temp_id = WYN_SPAWN_SITE_ARG_SLOT(a);
+        }
+        emit("    (void)(");
+        codegen_expr(s->call);
+        emit(");\n");
+        for (int a = 0; a < cargc; a++) cargs[a]->_codegen_temp_id = saved[a];
+        for (int a = 0; a < s->arg_count; a++)
+            if (strcmp(s->arg_ctype[a], "const char*") == 0)
+                emit("    wyn_rc_release(__spa%d);\n", a);
+        emit("    free(args);\n    return NULL;\n}\n\n");
+    }
+}
 
 // GPU dispatch spike: eligibility + MSL emission for [float].map (must be
 // included before codegen_expr.c, which calls gpu_try_emit_map_dispatch).
-void codegen_expr(Expr* expr);
 #include "codegen_gpu.c"
 
 // Expression code generation

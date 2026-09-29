@@ -518,20 +518,10 @@ static void emit_line(Stmt* s) {
     }
 }
 
-// Is this call expression one that `spawn` can actually dispatch?
-//
-// It can only wrap a call whose callee is a plain identifier naming a USER
-// function, because dispatch needs a generated __spawn_wrapper_<fn> and those are
-// emitted per function name (codegen_lambda.c). A namespaced builtin such as
-// `Time.sleep(200)` lexes as ONE identifier containing "::", so a wrapper for it
-// would be spelled `__spawn_wrapper_Time::sleep` - invalid C - and a method call
-// has no single name to key on at all. Both currently fall back to a synchronous
-// call; see the tracked defect for that.
-//
-// Every place that decides "does this parallel-block branch become a spawn?" must
-// ask THIS function, and codegen_lambda.c's wrapper-collection scan must accept
-// exactly the same set. When the two disagree the program either silently runs
-// sequentially or fails to link against a wrapper nobody emitted.
+// Is this call one that a per-NAME __spawn_wrapper_<fn> can dispatch, i.e. does
+// its callee name a USER function? Only such a call can have its RESULT joined
+// back into a variable, because the value's C type is read from the callee's
+// declared Wyn return type (par_spawn_value_ctype).
 bool par_call_is_spawnable(Expr* call) {
     extern const char* get_function_return_type(const char*);
     if (!call || call->type != EXPR_CALL) return false;
@@ -539,6 +529,74 @@ bool par_call_is_spawnable(Expr* call) {
     char fn[256];
     token_to_cstr(fn, sizeof(fn), call->call.callee->token);
     return get_function_return_type(fn) != NULL;
+}
+
+// Is this call one that can be dispatched when its VALUE IS DISCARDED? That is
+// the per-name wrapper above, OR a per-call-site wrapper - which needs no callee
+// name and so covers a namespaced builtin in either spelling (`Time.sleep(200)`,
+// `Time::sleep(200)`). See the SpawnSite block in codegen.c for what a site
+// refuses and why.
+bool par_call_is_dispatchable_discarded(Expr* call) {
+    if (!call) return false;
+    if (par_call_is_spawnable(call)) return true;
+    return spawn_site_feasible(call) != 0;
+}
+
+// THE classifier for "what does this parallel{} branch lower to".
+//
+// Both the lowering below and codegen_lambda.c's wrapper-collecting scan call
+// this, so a shape one accepts cannot be a shape the other misses - which would
+// reference a wrapper nobody emitted, or silently run a branch sequentially. The
+// two used to carry hand-copied shape lists and a hand-copied predicate; keeping
+// them byte-identical was a standing comment in both files rather than a property
+// of the code.
+//
+// *out_call  - the call expression to spawn (all kinds but PAR_SEQ)
+// *out_bound - the variable the joined value lands in (PAR_SPAWN_BOUND only)
+// *out_declares - 1 = the lowering must also DECLARE that variable
+ParBranch par_branch_classify(Stmt* s, Expr** out_call, Token* out_bound,
+                              int* out_declares) {
+    if (out_call) *out_call = NULL;
+    if (out_declares) *out_declares = 0;
+    if (!s) return PAR_SEQ;
+
+    // `var x = spawn f()` - the explicit form.
+    if (s->type == STMT_VAR && s->var.init && s->var.init->type == EXPR_SPAWN) {
+        if (out_call) *out_call = s->var.init->spawn.call;
+        if (out_bound) *out_bound = s->var.name;
+        if (out_declares) *out_declares = 1;
+        return PAR_SPAWN_BOUND;
+    }
+    // `var x = f()` - no `spawn` keyword. Dispatched as an implicit spawn so it
+    // joins at `}` like the explicit form.
+    if (s->type == STMT_VAR && s->var.init && par_call_is_spawnable(s->var.init)) {
+        if (out_call) *out_call = s->var.init;
+        if (out_bound) *out_bound = s->var.name;
+        if (out_declares) *out_declares = 1;
+        return PAR_SPAWN_BOUND;
+    }
+    // `x = f()` where x was declared ABOVE the block. Assignment is an EXPRESSION
+    // in this AST, so it arrives as STMT_EXPR/EXPR_ASSIGN. No declaration is
+    // emitted - x already exists and must stay the same variable.
+    if (s->type == STMT_EXPR && s->expr && s->expr->type == EXPR_ASSIGN &&
+        par_call_is_spawnable(s->expr->assign.value)) {
+        if (out_call) *out_call = s->expr->assign.value;
+        if (out_bound) *out_bound = s->expr->assign.name;
+        return PAR_SPAWN_BOUND;
+    }
+    // A bare `spawn f()` MUST be joined at the closing brace too, else it escapes
+    // the structured-concurrency barrier and could outlive the block.
+    if (s->type == STMT_SPAWN && s->spawn.call) {
+        if (out_call) *out_call = s->spawn.call;
+        return PAR_SPAWN_DISCARD;
+    }
+    // A bare call statement whose result is discarded - `f()` on its own line.
+    if (s->type == STMT_EXPR && s->expr &&
+        par_call_is_dispatchable_discarded(s->expr)) {
+        if (out_call) *out_call = s->expr;
+        return PAR_SPAWN_DISCARD;
+    }
+    return PAR_SEQ;
 }
 
 // The C type a parallel-block branch's value variable must have, derived from the
@@ -2757,9 +2815,23 @@ void codegen_stmt(Stmt* stmt) {
         case STMT_SPAWN: {
             // Fire-and-forget spawn: no Future, no return value
             // Uses wyn_spawn_fast for maximum throughput
-            if (stmt->spawn.call->type == EXPR_CALL && 
-                stmt->spawn.call->call.callee->type == EXPR_IDENT) {
-                
+            //
+            // A call no per-name wrapper can dispatch (a namespaced builtin in
+            // either spelling) uses the per-CALL-SITE wrapper the scan registered.
+            // This is a value-discarding position by construction, which is exactly
+            // what a site wrapper supports.
+            SpawnSite* _site = stmt->spawn.call ? spawn_site_lookup(stmt->spawn.call) : NULL;
+            if (_site) {
+                emit("{ ");
+                spawn_site_emit_args(_site);
+                emit("wyn_spawn_fast_traced((TaskFunc)__spawn_site_%d, __ss%d, __FILE__, __LINE__); }\n",
+                     _site->id, _site->id);
+                break;
+            }
+            if (stmt->spawn.call->type == EXPR_CALL &&
+                stmt->spawn.call->call.callee->type == EXPR_IDENT &&
+                spawn_callee_is_c_identifier(stmt->spawn.call->call.callee->token)) {
+
                 Expr* call = stmt->spawn.call;
                 Expr* callee = call->call.callee;
                 char func_name[256]; token_to_cstr(func_name, sizeof(func_name), callee->token);
@@ -2909,9 +2981,8 @@ void codegen_stmt(Stmt* stmt) {
             char joined_futs[64][160];
             const char* joined_ctypes[64];
             int joined_count = 0;
-            // Storage for synthesized implicit-spawn Exprs. These are written back
-            // into s->var.init, which the joining pass below re-reads, so they must
-            // outlive the loop iteration that creates them.
+            // Storage for synthesized implicit-spawn Exprs - one per dispatched
+            // branch that was not already written as `spawn`.
             //
             // ZERO-INITIALISED, and that is load-bearing: a synthesized Expr only ever
             // has `type`, `spawn.call` and `_codegen_temp_id` assigned, so every other
@@ -2925,116 +2996,44 @@ void codegen_stmt(Stmt* stmt) {
 
             for (int i = 0; i < stmt->block.count; i++) {
                 Stmt* s = stmt->block.stmts[i];
-                bool is_spawn_var = (s->type == STMT_VAR && s->var.init &&
-                                     s->var.init->type == EXPR_SPAWN);
-                // `a = f()` inside parallel{} (no `spawn` keyword) used to lower
-                // to a PLAIN SEQUENTIAL CALL - the block named after parallelism
-                // was the only construct that didn't overlap. Treat a direct call
-                // to a known user fn as an implicit spawn so it joins at `}` like
-                // the explicit form. The synthesized EXPR_SPAWN reuses the exact
-                // same lowering, so pack/unpack can't disagree.
-                // NOTE: the guard MUST stay get_function_return_type() != NULL and
-                // MUST match codegen_lambda.c's STMT_PARALLEL scan byte for byte -
-                // namespaced builtins (`Time::now_millis`) lex as ONE identifier and
-                // would emit `void* __spawn_wrapper_Time::now_millis(...)`.
-                if (!is_spawn_var && s->type == STMT_VAR && s->var.init &&
-                    s->var.init->type == EXPR_CALL &&
-                    s->var.init->call.callee->type == EXPR_IDENT &&
-                    implicit_spawn_count < 64) {
-                    char _fn[256]; token_to_cstr(_fn, sizeof(_fn), s->var.init->call.callee->token);
-                    if (get_function_return_type(_fn)) {
-                        Expr* isp = &implicit_spawns[implicit_spawn_count++];
-                        isp->type = EXPR_SPAWN;
-                        isp->spawn.call = s->var.init;
-                        isp->_codegen_temp_id = -1;
-                        s->var.init = isp;
-                        is_spawn_var = true;
-                    }
-                }
-                // An UNBOUND spawn - bare `spawn f()` inside the block (its own
-                // STMT_SPAWN) - must ALSO be joined at the closing brace, else it
-                // escapes the structured-concurrency barrier (it would lower to a
-                // fire-and-forget wyn_spawn_fast_traced and could outlive the block).
-                // Wrap its call in an EXPR_SPAWN and reuse the joinable expression
-                // lowering, capturing the future with no value var (empty name →
-                // joined for the barrier only).
-                // `x = f()` where x was declared ABOVE the block. Assignment is an
-                // EXPRESSION in this AST, so this arrives as STMT_EXPR/EXPR_ASSIGN
-                // and used to fall through to the sequential else-branch below -
-                // which meant the shape the documentation's own parallel{} example
-                // uses (declare outside, assign inside) did not overlap at all.
-                // Measured before this change: two branches of equal-cost work took
-                // 61ms against a 30ms single-branch baseline, i.e. exactly serial.
-                //
-                // Spawns the call and joins into the EXISTING variable, so unlike
-                // the `var x = f()` case no declaration is emitted - x already
-                // exists in the enclosing scope and must stay the same variable.
-                if (s->type == STMT_EXPR && s->expr && s->expr->type == EXPR_ASSIGN &&
-                    par_call_is_spawnable(s->expr->assign.value) &&
-                    joined_count < 64 && implicit_spawn_count < 64) {
-                    Expr* isp = &implicit_spawns[implicit_spawn_count++];
-                    isp->type = EXPR_SPAWN;
-                    isp->spawn.call = s->expr->assign.value;
-                    isp->_codegen_temp_id = -1;
-                    char vn[128]; token_to_cstr(vn, sizeof(vn), s->expr->assign.name);
-                    snprintf(joined_names[joined_count], 128, "%s", vn);
-                    snprintf(joined_futs[joined_count], 160, "__par_fut_%d_%d", par_id, joined_count);
-                    joined_ctypes[joined_count] = par_spawn_value_ctype(s->expr->assign.value, joined_count);
-                    emit("    Future* %s = ", joined_futs[joined_count]);
-                    codegen_expr(isp);
-                    emit(";\n");
-                    joined_count++;
-                    continue;
-                }
-                // A bare call statement whose result is discarded - `f()` on its own
-                // line inside the block. Also STMT_EXPR, also previously sequential.
-                // Joined for the barrier only, exactly like a bare `spawn f()`.
-                if (s->type == STMT_EXPR && s->expr &&
-                    par_call_is_spawnable(s->expr) &&
-                    joined_count < 64 && implicit_spawn_count < 64) {
-                    Expr* isp = &implicit_spawns[implicit_spawn_count++];
-                    isp->type = EXPR_SPAWN;
-                    isp->spawn.call = s->expr;
-                    isp->_codegen_temp_id = -1;
-                    snprintf(joined_names[joined_count], 128, "%s", "");   // no binding
-                    snprintf(joined_futs[joined_count], 160, "__par_fut_%d_%d", par_id, joined_count);
-                    joined_ctypes[joined_count] = "long long";
-                    emit("    Future* %s = ", joined_futs[joined_count]);
-                    codegen_expr(isp);
-                    emit(";\n");
-                    joined_count++;
-                    continue;
-                }
-                if (s->type == STMT_SPAWN && s->spawn.call && joined_count < 64) {
-                    Expr spawn_expr = {0};   // see implicit_spawns above: MUST be zeroed
-                    spawn_expr.type = EXPR_SPAWN;
-                    spawn_expr.spawn.call = s->spawn.call;
-                    spawn_expr._codegen_temp_id = -1;
-                    snprintf(joined_names[joined_count], 128, "%s", "");   // no binding
-                    snprintf(joined_futs[joined_count], 160, "__par_fut_%d_%d", par_id, joined_count);
-                    joined_ctypes[joined_count] = "long long";
-                    emit("    Future* %s = ", joined_futs[joined_count]);
-                    codegen_expr(&spawn_expr);   // emits a joinable wyn_spawn_*(...)
-                    emit(";\n");
-                    joined_count++;
-                    continue;
-                }
-                if (is_spawn_var && joined_count < 64) {
-                    const char* vctype = par_spawn_value_ctype(s->var.init->spawn.call, joined_count);
-                    char vn[128]; token_to_cstr(vn, sizeof(vn), s->var.name);
-                    snprintf(joined_names[joined_count], 128, "%s", vn);
-                    snprintf(joined_futs[joined_count], 160, "__par_fut_%d_%d", par_id, joined_count);
-                    joined_ctypes[joined_count] = vctype;
-                    // Declare value var + spawn into hidden future.
-                    emit("    %s %s;\n", vctype, vn);
-                    emit("    Future* %s = ", joined_futs[joined_count]);
-                    codegen_expr(s->var.init);   // emits wyn_spawn_*(...)
-                    emit(";\n");
-                    joined_count++;
-                } else {
+                Expr* pcall = NULL; Token pbound = {0}; int pdeclares = 0;
+                ParBranch kind = par_branch_classify(s, &pcall, &pbound, &pdeclares);
+                if (kind == PAR_SEQ || joined_count >= 64 || implicit_spawn_count >= 64) {
                     emit("    ");
                     codegen_stmt(s);
+                    continue;
                 }
+                // Every dispatched shape goes through ONE emission: wrap the call in
+                // an EXPR_SPAWN and let the joinable spawn-expression lowering emit
+                // it, so pack and unpack cannot disagree between shapes.
+                // `var x = spawn f()` already IS an EXPR_SPAWN - reuse that node
+                // rather than nesting a second one around its call.
+                Expr* isp;
+                if (s->type == STMT_VAR && s->var.init &&
+                    s->var.init->type == EXPR_SPAWN) {
+                    isp = s->var.init;
+                } else {
+                    isp = &implicit_spawns[implicit_spawn_count++];
+                    isp->type = EXPR_SPAWN;
+                    isp->spawn.call = pcall;
+                    isp->_codegen_temp_id = -1;
+                }
+                snprintf(joined_futs[joined_count], 160, "__par_fut_%d_%d", par_id, joined_count);
+                if (kind == PAR_SPAWN_DISCARD) {
+                    snprintf(joined_names[joined_count], 128, "%s", "");   // no binding
+                    joined_ctypes[joined_count] = "long long";
+                } else {
+                    char vn[128]; token_to_cstr(vn, sizeof(vn), pbound);
+                    snprintf(joined_names[joined_count], 128, "%s", vn);
+                    joined_ctypes[joined_count] = par_spawn_value_ctype(pcall, joined_count);
+                    // Only a NEW declaration emits the value variable; `x = f()`
+                    // joins into the x that already exists in the enclosing scope.
+                    if (pdeclares) emit("    %s %s;\n", joined_ctypes[joined_count], vn);
+                }
+                emit("    Future* %s = ", joined_futs[joined_count]);
+                codegen_expr(isp);           // emits a joinable wyn_spawn_*(...)
+                emit(";\n");
+                joined_count++;
             }
 
             // Join all spawned tasks before leaving the block. With a timeout,

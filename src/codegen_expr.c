@@ -501,6 +501,13 @@ void codegen_expr(Expr* expr) {
 
 static void codegen_expr_inner(Expr* expr) {
     if (!expr) return;
+    // A per-call-site spawn wrapper re-emits its call at FILE scope, where the
+    // spawning scope's locals do not exist, so each argument is spliced to the
+    // local the wrapper unpacked it into (see WYN_SPAWN_SITE_ARG_SLOT).
+    if (WYN_SPAWN_SITE_IS_ARG(expr->_codegen_temp_id)) {
+        emit("__spa%d", WYN_SPAWN_SITE_ARG_INDEX(expr->_codegen_temp_id));
+        return;
+    }
     // If this expr was pre-evaluated to a temp, emit the temp name
     if (expr->_codegen_temp_id >= 0 && expr->_codegen_temp_id < 1000) {
         emit("__sa%d", expr->_codegen_temp_id);
@@ -6503,9 +6510,26 @@ static void codegen_expr_inner(Expr* expr) {
             break;
         }
         case EXPR_SPAWN: {
-            // Spawn expression: spawn fn(args) returns a future
+            // A call the per-NAME wrappers cannot dispatch (a namespaced builtin in
+            // either spelling) gets a per-CALL-SITE wrapper, IF the collecting scan
+            // registered one. Lookup, never intern: interning here would reference a
+            // wrapper the scan never emitted. A site is only registered where the
+            // branch's value is discarded, which is why nothing types a result here.
+            SpawnSite* _site = expr->spawn.call ? spawn_site_lookup(expr->spawn.call) : NULL;
+            if (_site) {
+                emit("({ ");
+                spawn_site_emit_args(_site);
+                emit("wyn_spawn_async_traced((TaskFuncWithReturn)__spawn_site_%d, __ss%d, __FILE__, __LINE__); })",
+                     _site->id, _site->id);
+                break;
+            }
+            // Spawn expression: spawn fn(args) returns a future.
+            // The per-name path is only usable when the callee spells a valid C
+            // identifier: `Time::sleep` does not, and it emitted a reference to
+            // `__spawn_wrapper_Time::sleep_1`, which does not compile.
             if (expr->spawn.call && expr->spawn.call->type == EXPR_CALL &&
-                expr->spawn.call->call.callee->type == EXPR_IDENT) {
+                expr->spawn.call->call.callee->type == EXPR_IDENT &&
+                spawn_callee_is_c_identifier(expr->spawn.call->call.callee->token)) {
                 Expr* call = expr->spawn.call;
                 Expr* callee = call->call.callee;
                 char func_name[256]; token_to_cstr(func_name, sizeof(func_name), callee->token);
@@ -6601,6 +6625,20 @@ static void codegen_expr_inner(Expr* expr) {
                     else
                         emit("wyn_spawn_async_traced((TaskFuncWithReturn)__spawn_wrapper_%s_%d, __sa_%d, __FILE__, __LINE__); })", func_name, arg_count, sid);
                 }
+            } else if (expr->spawn.call) {
+                // No wrapper is possible for this call shape, but the previous
+                // `NULL` DROPPED THE CALL: `var f = spawn Time.sleep(200); await f`
+                // returned 0 after 0ms and never slept. Run it synchronously and
+                // hand back a real, already-completed Future, so the side effect
+                // happens and `await` has something to read. The value is not
+                // carried (a builtin's C return type is unknown here - Time.sleep
+                // types as int and is declared `void`), so await still yields 0;
+                // that is unchanged, and the lost call is not.
+                static int sync_fut_id = 0;
+                int sfid = sync_fut_id++;
+                emit("({ Future* __sfut%d = future_new(); (void)(", sfid);
+                codegen_expr(expr->spawn.call);
+                emit("); future_set(__sfut%d, NULL); __sfut%d; })", sfid, sfid);
             } else {
                 emit("NULL /* spawn fallback */");
             }
