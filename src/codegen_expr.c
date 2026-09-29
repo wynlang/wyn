@@ -85,6 +85,30 @@ static const char* hashmap_insert_fn_for(Expr* value_expr) {
     return "hashmap_insert_int";
 }
 
+// THE authority for "read a value out of this map": which hashmap_get_* flavour a
+// one-argument map read lowers to. Keyed on the type the CHECKER resolved onto the
+// read expression, which is the map's value_type - so the getter cannot disagree
+// with the var-decl type or with the comparison that consumes it.
+//
+// #429: this used to be an inline switch in the `m.get(k)` receiver path and
+// NOWHERE else, so the namespace spelling `HashMap.get(m, k)` always emitted
+// hashmap_get_string. On an int-valued map that decoded a tagged int as a `char*`
+// and printed EMPTY at exit 0 - the silent-wrong-answer half of the same defect
+// whose store half segfaulted. Both spellings consult this now.
+static const char* hashmap_get_fn_for(const Type* value_type) {
+    if (!value_type) return "hashmap_get_string";
+    switch (value_type->kind) {
+        case TYPE_INT:   return "hashmap_get_int";
+        case TYPE_BOOL:  return "hashmap_get_bool";
+        case TYPE_FLOAT: return "hashmap_get_float";
+        case TYPE_ARRAY: return "hashmap_get_array";
+        // string, and anything else: string is the historical default and the
+        // non-crashing choice for a map whose value type is still open
+        // (`HashMap.new()` with nothing stored yet).
+        default:         return "hashmap_get_string";
+    }
+}
+
 // THE authority for emitting "store this value into this map".
 //
 // A map value is either a SCALAR (int/string/float/bool -> a typed
@@ -3253,6 +3277,39 @@ static void codegen_expr_inner(Expr* expr) {
                     extern bool is_module_extern_fn(const char*, const char*);
                     extern int wyn_namespace_c_symbol(const char*, const char*, char*, size_t);
                     char _nssym[320];
+                    // #429: the NAMESPACE spelling of a map STORE - `HashMap.set(m, k, v)`
+                    // and `HashMap.insert(m, k, v)`. This is the map half of what #391
+                    // fixed for sets, and BOTH names were blind to the value type in
+                    // opposite directions:
+                    //   HashMap.set    -> hashmap_set(), a thin alias for
+                    //                    hashmap_insert_string(), so `set(m, "k", 1)`
+                    //                    handed the integer 1 where a `const char*` was
+                    //                    expected and the runtime dereferenced it:
+                    //                    SEGFAULT from documented syntax.
+                    //   HashMap.insert -> hashmap_insert(), whose value parameter is an
+                    //                    `int`, so `insert(m, "k", "v")` stored the
+                    //                    string's POINTER truncated to an int and read
+                    //                    back as `1321456`, silently, at exit 0.
+                    // Fixing only the crashing one would have left the quiet one, which
+                    // is the harder of the two to ever notice.
+                    //
+                    // Routed through emit_hashmap_store(), which is already THE authority
+                    // the other four spellings use (`m[k] = v`, `m.set(k, v)`,
+                    // `HashMap::set(m, k, v)` and the `{k: v}` literal) - deliberately NOT
+                    // a second copy of the value-type decision here, because a second copy
+                    // of that decision is how this defect exists at all. A string value
+                    // still reaches hashmap_insert_string, which is exactly what
+                    // hashmap_set() called, so the existing string-valued corpus is
+                    // unchanged in behaviour.
+                    if (!is_module_extern_fn(_mname, _mfn) &&
+                        strcmp(module_name, "HashMap") == 0 &&
+                        (strcmp(_mfn, "set") == 0 || strcmp(_mfn, "insert") == 0) &&
+                        expr->method_call.arg_count == 3) {
+                        emit_hashmap_store(expr->method_call.args[0], NULL,
+                                           expr->method_call.args[1],
+                                           expr->method_call.args[2], 1);
+                        break;
+                    }
                     if (!is_module_extern_fn(_mname, _mfn) &&
                         wyn_namespace_c_symbol(module_name, _mfn, _nssym, sizeof(_nssym))) {
                         // V-38 (#391): the NAMESPACE spelling of a set element call -
@@ -3270,6 +3327,33 @@ static void codegen_expr_inner(Expr* expr) {
                                 ? _st->set_type.element_type
                                 : expr->method_call.args[expr->method_call.arg_count - 1]->expr_type;
                             _ns_fn = wyn_set_elem_fn(_nssym, _d);
+                        }
+                        // #429, read half: `HashMap.get(m, k)`. Same shape as the set
+                        // case above - the rename table pins it to hashmap_get_string,
+                        // which decodes a tagged int as a `char*` and yields EMPTY at
+                        // exit 0. The arguments are already in the right order for the
+                        // typed getter, so only the NAME changes, and it is named by the
+                        // same hashmap_get_fn_for() the `m.get(k)` receiver path uses.
+                        //
+                        // Read off the MAP (args[0]), exactly as the HashSet arm above
+                        // reads its element type, and NOT off expr->expr_type. That
+                        // distinction is load-bearing: when nothing can resolve a
+                        // namespace call's type the checker falls back to `int`, which
+                        // is a default and not evidence. Keying on it re-typed
+                        // `HashMap.get(st.m, k)` - where `st.m` is a struct FIELD whose
+                        // recorded type is a struct rather than a map, a separate known
+                        // defect - from the correct hashmap_get_string to
+                        // hashmap_get_int, breaking tests/regression/
+                        // test_collection_struct_field.wyn. An unresolved value type
+                        // must keep the historical string default, so this only ever
+                        // re-points a getter when the map really does declare what it
+                        // holds - the same condition the checker's own arm requires.
+                        else if (strcmp(module_name, "HashMap") == 0 &&
+                                 strcmp(_mfn, "get") == 0 &&
+                                 expr->method_call.arg_count == 2) {
+                            Type* _mt = expr->method_call.args[0]->expr_type;
+                            if (_mt && _mt->kind == TYPE_MAP && _mt->map_type.value_type)
+                                _ns_fn = hashmap_get_fn_for(_mt->map_type.value_type);
                         }
                         emit("%s(", _ns_fn);
                     } else {
@@ -4341,18 +4425,11 @@ static void codegen_expr_inner(Expr* expr) {
                 
                 // map.get(k): pick the getter matching the value type the checker
                 // resolved onto this node (from the map's value_type). Mirrors the
-                // index m[k] path so getter/var-decl/comparison all agree.
+                // index m[k] path so getter/var-decl/comparison all agree. The
+                // decision itself is hashmap_get_fn_for(), shared with the
+                // `HashMap.get(m, k)` namespace spelling (#429).
                 if (strcmp(method_name, "get") == 0 && expr->method_call.arg_count == 1) {
-                    const char* _getter = "hashmap_get_string";
-                    if (expr->expr_type) {
-                        switch (expr->expr_type->kind) {
-                            case TYPE_INT:   _getter = "hashmap_get_int"; break;
-                            case TYPE_BOOL:  _getter = "hashmap_get_bool"; break;
-                            case TYPE_FLOAT: _getter = "hashmap_get_float"; break;
-                            case TYPE_ARRAY: _getter = "hashmap_get_array"; break;
-                            case TYPE_STRING: default: _getter = "hashmap_get_string"; break;
-                        }
-                    }
+                    const char* _getter = hashmap_get_fn_for(expr->expr_type);
                     emit("%s(", _getter);
                     codegen_expr(expr->method_call.object);
                     emit(", ");
