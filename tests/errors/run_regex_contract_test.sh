@@ -35,11 +35,20 @@ UNAME=$(uname -s 2>/dev/null || echo Windows)
 case "$UNAME" in MINGW*|MSYS*|CYGWIN*|Windows*) IS_WINDOWS=1;; *) IS_WINDOWS=0;; esac
 win_known_broken(){
   case "$1" in
-    # `Regex.find` fails to BUILD on Windows - both modes, 24 of 26 other arms pass.
-    # The Windows engine is the bundled NFA (wre_find); POSIX uses regcomp/regexec. The
-    # compiler output is now printed in full by the arm above so the next Windows run
-    # names the cause. Tracked as a Windows-only build break.
-    "find returns an index") return 0;;
+    # EMPTY, and it should stay that way. The one entry this list ever held was
+    # "find returns an index": `Regex.find` failed to BUILD on Windows in both modes
+    # while 24 of the 26 other arms passed. Cause: `Regex.find` lowers to the
+    # LOWERCASE regex_find, which existed only in the POSIX branch of
+    # src/wyn_runtime.h - the `#ifdef _WIN32` branch defined Regex_find with a
+    # capital R, which nothing emits, so the symbol looked present. Cross-compiling
+    # the generated C with x86_64-w64-mingw32-gcc reported "implicit declaration of
+    # function 'regex_find'; did you mean 'Regex_find'?" and left `U regex_find` in
+    # the object file. Fixed by defining it in that branch over wre_find, so this arm
+    # is live on Windows again and the Windows leg is what proves it.
+    #
+    # Skipping an arm here is a last resort: it keeps the other arms live instead of
+    # letting one gap hide the rest, and the skip is printed so it cannot pass for a
+    # pass. It is not a waiver.
     *) return 1;;
   esac
 }
