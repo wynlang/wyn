@@ -6371,7 +6371,7 @@ static const char b64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstu
 char* Encoding_base64_encode(const char* data) {
     int len = strlen(data);
     int out_len = 4 * ((len + 2) / 3);
-    char* out = wyn_malloc(out_len + 1);
+    char* out = wyn_str_alloc(out_len);  // RC header required - see Uuid_generate
     int j = 0;
     for (int i = 0; i < len; i += 3) {
         int a = data[i], b = (i+1 < len) ? data[i+1] : 0, c = (i+2 < len) ? data[i+2] : 0;
@@ -6395,7 +6395,10 @@ static int b64_decode_char(char c) {
 
 char* Encoding_base64_decode(const char* data) {
     int len = strlen(data);
-    char* out = wyn_malloc(len);
+    // len+1 bytes, not len: decoding never exceeds 3/4 of the input, and
+    // wyn_str_alloc(0) is well defined where wyn_str_alloc(len - 1) would
+    // underflow on the empty string.
+    char* out = wyn_str_alloc(len);  // RC header required - see Uuid_generate
     int j = 0;
     for (int i = 0; i < len; i += 4) {
         int a = b64_decode_char(data[i]), b = b64_decode_char(data[i+1]);
@@ -6412,7 +6415,7 @@ char* Encoding_base64_decode(const char* data) {
 
 char* Encoding_hex_encode(const char* data) {
     int len = strlen(data);
-    char* out = wyn_malloc(len * 2 + 1);
+    char* out = wyn_str_alloc(len * 2);  // RC header required - see Uuid_generate
     for (int i = 0; i < len; i++) snprintf(out + i*2, 3, "%02x", (unsigned char)data[i]);
     out[len*2] = 0;
     return out;
@@ -6492,8 +6495,19 @@ char* Os_home_dir() { char* h = getenv("HOME"); return h ? h : "/tmp"; }
 #endif
 
 // === UUID v4 ===
+// wyn_str_alloc, NOT wyn_malloc: every string handed back to Wyn code must carry
+// an RC header. A raw malloc'd buffer is not just leaked (wyn_rc_release is a
+// silent no-op on it) - it makes the next `.len()` read OUT OF BOUNDS. The RC
+// probe decides "is this pointer mine?" by range-checking [heap_low, heap_high]
+// and then reading the header 16 bytes BEFORE the pointer; a non-RC malloc that
+// happens to land inside that range passes the range test, so the header read
+// runs off the front of the block into whatever precedes it. ASan reports it as
+// a heap-buffer-overflow READ in wyn_rc_is_heap on `Uuid.generate().len()`
+// (tests/stdlib/test_stdlib_expansion.wyn, which the asan-runtime-test target
+// now covers); untracked it is a silent read of adjacent heap that only faults
+// when the bytes before happen to be unmapped.
 char* Uuid_generate() {
-    char* uuid = wyn_malloc(37);
+    char* uuid = wyn_str_alloc(36);
     unsigned char bytes[16];
     FILE* f = fopen("/dev/urandom", "rb");
     if (f) { fread(bytes, 1, 16, f); fclose(f); }
@@ -6503,6 +6517,7 @@ char* Uuid_generate() {
     snprintf(uuid, 37, "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
         bytes[0],bytes[1],bytes[2],bytes[3],bytes[4],bytes[5],bytes[6],bytes[7],
         bytes[8],bytes[9],bytes[10],bytes[11],bytes[12],bytes[13],bytes[14],bytes[15]);
+    wyn_rc_set_length(uuid, 36);
     return uuid;
 }
 char* Uuid_v4() { return Uuid_generate(); }
@@ -6708,8 +6723,9 @@ long long DateTime_add_seconds(long long t, long long n) { return t + n; }
 char* DateTime_to_iso(long long timestamp) {
     time_t t = (time_t)timestamp;
     struct tm* tm = gmtime(&t);
-    char* buf = wyn_malloc(32);
-    strftime(buf, 32, "%Y-%m-%dT%H:%M:%SZ", tm);
+    char* buf = wyn_str_alloc(31);  // RC header required - see Uuid_generate
+    size_t n = strftime(buf, 32, "%Y-%m-%dT%H:%M:%SZ", tm);
+    wyn_rc_set_length(buf, (unsigned int)n);
     return buf;
 }
 
@@ -6769,7 +6785,10 @@ char* Net_resolve(const char* hostname) {
     struct addrinfo hints = {0}, *res;
     hints.ai_family = AF_INET;
     if (getaddrinfo(hostname, NULL, &hints, &res) != 0) return "";
-    char* ip = wyn_malloc(INET_ADDRSTRLEN);
+    // RC header required - see Uuid_generate. (The "" returns above are string
+    // literals: rodata is never inside [heap_low, heap_high], so the probe
+    // rejects them on the range test without reading anything.)
+    char* ip = wyn_str_alloc(INET_ADDRSTRLEN - 1);
     struct sockaddr_in* addr = (struct sockaddr_in*)res->ai_addr;
     inet_ntop(AF_INET, &addr->sin_addr, ip, INET_ADDRSTRLEN);
     freeaddrinfo(res);
@@ -6779,7 +6798,7 @@ char* Net_resolve(const char* hostname) {
 // === Db extensions ===
 char* Db_escape(const char* str) {
     int len = strlen(str);
-    char* out = wyn_malloc(len * 2 + 1);
+    char* out = wyn_str_alloc(len * 2);  // RC header required - see Uuid_generate
     int j = 0;
     for (int i = 0; i < len; i++) {
         if (str[i] == '\'') { out[j++] = '\''; out[j++] = '\''; }

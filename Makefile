@@ -963,6 +963,15 @@ runtime/libwyn_rt_asan.a: $(RT_SRCS) $(wildcard src/*.h) | $(MBEDTLS_LIB)
 # Compile a representative test set's generated C against the ASan runtime
 # and run each binary. Any ASan report (UAF, overflow, leak-at-exit is NOT
 # checked - detect_leaks=0 keeps signal high) fails the target.
+#
+# The list is expect/ and regression/ plus ONE stdlib file. The stdlib suite was
+# not covered here, and that is where the coverage mattered: uninstrumented,
+# test_stdlib_expansion.wyn passes 275 runs in a row in both build modes and
+# under MallocScribble/MallocGuardEdges; against the ASan runtime it reported a
+# heap-buffer-overflow READ on the first run, every run. Runtime string
+# constructors that returned a raw malloc'd buffer made the RC header probe read
+# off the front of the block. Keep this file in the list - it exercises JSON,
+# base64, crypto, uuid, datetime, regex, net and db string returns in one go.
 ASAN_TESTS = tests/expect/test_string_utf8.wyn \
              tests/expect/test_lambda_typed_variants.wyn \
              tests/expect/test_arrow_lambda.wyn \
@@ -988,7 +997,8 @@ ASAN_TESTS = tests/expect/test_string_utf8.wyn \
              tests/regression/test_rc_stage2_reconcile.wyn \
              tests/regression/test_json_escaping.wyn \
              tests/regression/test_json_multiple_docs.wyn \
-             tests/regression/test_json_parse_malformed.wyn
+             tests/regression/test_json_parse_malformed.wyn \
+             tests/stdlib/test_stdlib_expansion.wyn
 
 asan-runtime-test: wyn$(EXE_EXT) runtime/libwyn_rt_asan.a $(MBEDTLS_LIB)
 	@echo "=== ASan runtime test (representative set) ==="
