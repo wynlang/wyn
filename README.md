@@ -168,23 +168,34 @@ Flags:
 
 ## Performance
 
-Measured on an Apple M3 Pro, macOS 26, v1.20.0. Medians of warm runs; wall-clock
-figures include the ~7ms process-startup floor.
+**The numbers live on one page: <https://wynlang.com/docs/guides/benchmarks>.**
 
-- Hello world binary: 50KB release (51,400 bytes), 51KB dev (52,248 bytes)
-- Hello world runtime: ~7ms wall clock - the same as the equivalent C binary
-- Compilation: ~290ms dev, ~1.2s `--release` (hello world); `wyn check` ~10ms
-- Spawn: ~2μs per spawn+await (10K sequential in 32ms); 1M fire-and-forget in ~0.7s
-- Overlapping I/O: 8 awaited 100ms sleeps finish in ~112ms, not 800ms
-- Memory: ~172 bytes/task at 10K outstanding tasks; hello world peaks at 1.4MB RSS
-- Web: ~22,000 req/s with the `web` package (keep-alive, 200 concurrent, 0 failures)
+This file used to carry its own table, labelled v1.20.0. It was the *third* copy of
+one measurement - the published page, `benchmarks/README.md`, and here - and three
+copies of a measurement is the defect, not the staleness: whichever one is
+re-measured, the other two silently start contradicting it, and this file is the
+first thing a visitor reads. `benchmarks/README.md` dropped its copy for the same
+reason; this is the last one.
+
+It had already drifted. The binary sizes were off by ~500 bytes, and `--release`
+compile time had moved by about 10% without the line changing.
+
+What is stable enough to state without a date attached:
+
+- Compiles to a single native binary with no runtime dependency
 - 64-bit integers throughout
+- Strings are immutable, so `s = s + "x"` in a loop is O(n²). Use `StringBuilder`
+  or `.join()` when building a string incrementally - this is a complexity fact
+  about the design, not a timing, so it does not go stale.
 
-Caveat worth stating: strings are immutable, so `s = s + "x"` in a loop is
-O(n²) - 1M iterations takes ~11.7s (slower than Python's ~10.2s on the same
-shape). Use `StringBuilder` (1M appends in ~14ms) or `.join()`.
+To measure it yourself on your own machine, which is the only figure that answers
+"will this be fast enough for me":
 
-Full method and cross-language comparisons: https://wynlang.com/docs/guides/benchmarks
+```bash
+benchmarks/harness/run_bench.py      # re-measures every published row
+```
+
+Quote a number with the version and date it was taken on, or quote it from the page.
 
 ## Editor Support
 
