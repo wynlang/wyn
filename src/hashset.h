@@ -1,6 +1,10 @@
 #ifndef WYN_HASHSET_H
 #define WYN_HASHSET_H
 
+// For size_t in hashset_format's signature. hashmap.h already includes it for the
+// same reason; this header had no need for it until the formatter arrived (#427).
+#include <stddef.h>
+
 typedef struct WynHashSet WynHashSet;
 
 // V-38 (#391): the set stores a TAGGED element, the way HashMap already stores a
@@ -54,6 +58,10 @@ void hashset_remove_bool(WynHashSet* set, int v);
 // They are real now, and are the int family under its advertised spelling.
 void wyn_hashset_add_int(WynHashSet* set, long long v);
 int  wyn_hashset_contains_int(WynHashSet* set, long long v);
+
+// #427: render a set as its literal spelling - `{:1, 2}`, `{:"a"}`, `{:}` when empty.
+// snprintf semantics: returns the length that WOULD be written, so size then fill.
+int hashset_format(WynHashSet* set, char* out, size_t cap);
 
 void hashset_free(WynHashSet* set);
 

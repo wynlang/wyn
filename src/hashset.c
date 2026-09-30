@@ -247,6 +247,60 @@ void hashset_free(WynHashSet* set) {
     free(set);
 }
 
+// #427: render a set. `print(s)` used to print the set POINTER as a decimal
+// (e.g. 4383976288) - check-clean, exit 0, silently meaningless - because the
+// print path had no set arm and fell through to the integer one. hashmap_format
+// already existed for the map half and its comment says "Same for HashMap and
+// HashSet"; this is that other half.
+//
+// Written here, beside the map's, rather than in wyn_runtime.h, for the same
+// reason: only this file can see `struct WynHashSet` and the real element tags.
+// Going through hashset_elements() would not do - that bridge pushes every
+// element into a WynArray, so an int element comes back as the string "1" and the
+// tags that #391 added to keep `{:1}` and `{:"1"}` apart would be thrown away at
+// exactly the moment they matter.
+//
+// SPELLING: `{:1, 2}` with the leading colon, which is the set LITERAL syntax, so
+// what prints can be pasted back into a program. An EMPTY set is `{:}` for the
+// same reason - `{}` is the empty MAP literal, and printing a set as `{}` would
+// render two different values identically. A string element is quoted, matching
+// how the map renders a string value.
+//
+// ORDER IS BUCKET ORDER, not insertion order - the same caveat hashmap_format and
+// hashset_elements already carry. Tests must not assert a multi-element ordering.
+//
+// Returns the number of bytes that WOULD be written (snprintf semantics), so a
+// caller sizes with one call and fills with a second.
+int hashset_format(WynHashSet* set, char* out, size_t cap) {
+    size_t pos = 0;
+    #define HS_EMIT(...) do { \
+        int _n = snprintf(out && pos < cap ? out + pos : NULL, \
+                          out && pos < cap ? cap - pos : 0, __VA_ARGS__); \
+        if (_n > 0) pos += (size_t)_n; \
+    } while (0)
+    HS_EMIT("{:");
+    int first = 1;
+    if (set) {
+        for (int i = 0; i < HASHSET_SIZE; i++) {
+            for (Entry* e = set->buckets[i]; e; e = e->next) {
+                if (!first) HS_EMIT(", ");
+                first = 0;
+                switch (e->type) {
+                    case HASHSET_INT:    HS_EMIT("%lld", e->v.as_int); break;
+                    case HASHSET_BOOL:   HS_EMIT("%s", e->v.as_bool ? "true" : "false"); break;
+                    case HASHSET_FLOAT:  HS_EMIT("%g", e->v.as_float); break;
+                    case HASHSET_STRING: HS_EMIT("\"%s\"", e->v.as_string ? e->v.as_string : ""); break;
+                    default:             HS_EMIT("<?>"); break;
+                }
+            }
+        }
+    }
+    HS_EMIT("}");
+    #undef HS_EMIT
+    if (out && cap > 0) out[pos < cap ? pos : cap - 1] = 0;
+    return (int)pos;
+}
+
 // --- iteration -------------------------------------------------------------
 int hashset_count(WynHashSet* set) {
     return wyn_hashset_len(set);

@@ -665,6 +665,13 @@ void wyn_out_map(WynOut* o, WynHashMap* m);
 void print_map_no_nl(WynHashMap* m);
 char* map_to_string(WynHashMap* m);
 void println_map(WynHashMap* m);
+// SET rendering (#427), declared here from the start rather than discovered missing
+// later - #453 was exactly the cost of a formatter that reached only the debug header.
+int hashset_format(WynHashSet* set, char* out, size_t cap);
+void wyn_out_set(WynOut* o, WynHashSet* s);
+void print_set_no_nl(WynHashSet* s);
+char* set_to_string(WynHashSet* s);
+void println_set(WynHashSet* s);
 void wyn_out_flush(WynOut* o);
 void print_value(WynValue v);
 void print_hex(int x);
@@ -1245,6 +1252,7 @@ char* array_to_string(WynArray arr);
     bool: wyn_out_bool, \
     WynArray: wyn_out_array, \
     WynHashMap*: wyn_out_map, \
+    WynHashSet*: wyn_out_set, \
     default: wyn_out_int)(o, x)
 
 // Was: do { print(x); printf("\n"); } while(0) - TWO libc calls, so under
