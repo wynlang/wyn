@@ -399,6 +399,13 @@ void array_push(WynArray* arr, long long value);
 // Lightweight int array for spawn futures
 typedef struct { long long* data; int count; int capacity; } WynIntArray;
 WynIntArray int_array_new();
+// int_array_sort: declared for the same reason as the typed array HOFs above - codegen
+// emits the name and this header did not declare it. Unlike those, no program was
+// observed to diverge (`xs.sort()` on an int array gives the same answer in both modes,
+// because the packed-array path that emits this name needs a shape the probe did not
+// produce), so this one is a latent gap closed rather than a defect fixed - stated
+// rather than implied.
+void int_array_sort(WynIntArray* a);
 void int_array_push(WynIntArray* a, long long v);
 long long int_array_get(WynIntArray a, int i);
 int int_array_len(WynIntArray a);
@@ -640,6 +647,24 @@ void wyn_out_float(WynOut* o, double v);
 void wyn_out_bool(WynOut* o, bool v);
 void wyn_out_elem(WynOut* o, WynValue v);
 void wyn_out_array(WynOut* o, WynArray arr);
+// MAP RENDERING, missing from this header until now. v1.22.0 taught print() to render a
+// map as `{"a": 1}` instead of the map POINTER - but every one of those functions is
+// DEFINED in wyn_runtime.h, and this header declares what a --release program may call.
+// It declared none of them, so `--release` alone kept the defect the release fixed:
+//
+//   print(m)      the _Generic below had no WynHashMap* arm, so a map fell to
+//                 wyn_out_int and printed its pointer as a decimal - silently, exit 0.
+//   "${m}"        `call to undeclared function 'map_to_string'` - it did not build at all.
+//
+// The definitions were always IN libwyn_rt.a (runtime_exports.c compiles
+// wyn_runtime.h into it), so nothing new is linked here; only the declarations and the
+// _Generic arm were absent. That is why the two modes could disagree at all, and it is
+// the shape run_slim_header_parity_test.sh exists to catch - it did not cover print.
+int hashmap_format(WynHashMap* map, char* out, size_t cap);
+void wyn_out_map(WynOut* o, WynHashMap* m);
+void print_map_no_nl(WynHashMap* m);
+char* map_to_string(WynHashMap* m);
+void println_map(WynHashMap* m);
 void wyn_out_flush(WynOut* o);
 void print_value(WynValue v);
 void print_hex(int x);
@@ -872,6 +897,32 @@ long long Shared_add(long long handle, long long delta);
 WynArray wyn_array_map(WynArray arr, long long (*fn)(long long));
 WynArray wyn_array_filter(WynArray arr, long long (*fn)(long long));
 long long wyn_array_reduce(WynArray arr, long long (*fn)(long long, long long), long long initial);
+// The TYPED siblings of the three above. Only the int-to-int forms were declared here, so
+// .map / .filter / .reduce on a FLOAT or STRING array worked in debug and did not compile
+// at all under --release:
+//
+//   xs = [1.5, 2.5]
+//   ys = xs.map((v) => v * 2.0)     # wyn run -> 2 ; wyn run --release -> internal
+//                                  #   codegen error: undeclared 'wyn_array_map_float'
+//
+// Every one is defined in wyn_runtime.h and therefore already IN libwyn_rt.a
+// (runtime_exports.c compiles that header into it), so nothing new links here - the
+// declarations were simply absent, which is the only thing --release needs.
+//
+// They were invisible to run_slim_header_parity_test.sh because that gate asked whether
+// the exact token `"name"` appeared in the codegen sources, and codegen emits these from
+// inside longer literals. The gate now searches string-literal CONTENTS, which is what
+// surfaced all of them at once.
+WynArray wyn_array_map_str(WynArray arr, const char* (*fn)(const char*));
+WynArray wyn_array_map_str_to_int(WynArray arr, long long (*fn)(const char*));
+WynArray wyn_array_map_int_to_float(WynArray arr, double (*fn)(long long));
+WynArray wyn_array_map_float(WynArray arr, double (*fn)(double));
+WynArray wyn_array_map_float_to_int(WynArray arr, long long (*fn)(double));
+WynArray wyn_array_map_bool(WynArray arr, bool (*fn)(bool));
+WynArray wyn_array_filter_str(WynArray arr, long long (*fn)(const char*));
+WynArray wyn_array_filter_float(WynArray arr, long long (*fn)(double));
+WynArray wyn_array_filter_bool(WynArray arr, bool (*fn)(bool));
+double wyn_array_reduce_float(WynArray arr, double (*fn)(double, double), double initial);
 long file_modified_time(const char* path);
 int arr_sum(WynArray arr, int len);
 int arr_max(WynArray arr, int len);
@@ -1193,6 +1244,7 @@ char* array_to_string(WynArray arr);
     const char*: wyn_out_str, \
     bool: wyn_out_bool, \
     WynArray: wyn_out_array, \
+    WynHashMap*: wyn_out_map, \
     default: wyn_out_int)(o, x)
 
 // Was: do { print(x); printf("\n"); } while(0) - TWO libc calls, so under
