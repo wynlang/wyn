@@ -6147,6 +6147,61 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             return builtin_int;
         }
         case EXPR_ARRAY: {
+            // #415: an array of TUPLES is rejected here, at the literal, because nothing
+            // you can write with one compiles.
+            //
+            // The type system has no tuple type at all - there is no TYPE_TUPLE - so the
+            // array's element type degrades to the int default while codegen emits the
+            // real anonymous struct. Every use then dies in the generated C with
+            // "operand of type 'struct (unnamed struct at ...)' where arithmetic or
+            // pointer type is required", pointing at generated code rather than at the
+            // author's line, after `wyn check` exited 0.
+            //
+            // MEASURED before choosing where to put this: of seven things you can do with
+            // `rows = [("ada", 120)]`, SEVEN fail - .len(), indexing, push, `for r in
+            // rows`, `for a, b in rows`, and merely DECLARING one and never using it.
+            // Only destructuring an element already had its own error. So the defect is
+            // not the `for` destructuring the issue reported, it is the array literal
+            // itself, and rejecting it here covers all of them with one message instead of
+            // an arm per use site.
+            //
+            // The message names Wyn's two-variable `for` meaning on purpose. `for a, b in
+            // xs` is INDEX + VALUE here, not Python's element destructuring - `for i, v in
+            // [10, 20]` prints `0:10`, `1:20` - so a Python reader's mental model is wrong
+            // in a way the old C error could never convey, and would still be wrong if
+            // this only said "not supported".
+            if (expr->array.count > 0) {
+                for (int _ti = 0; _ti < expr->array.count; _ti++) {
+                    if (!expr->array.elements[_ti] ||
+                        expr->array.elements[_ti]->type != EXPR_TUPLE) continue;
+                    // A tuple node carries no line of its own (its token is unset),
+                    // so the reported line came out as 0 and show_source_line printed
+                    // nothing. Fall back through the tuple's first ELEMENT - which is a
+                    // real token - and then to the array literal itself.
+                    Expr* _tup = expr->array.elements[_ti];
+                    int _tline = _tup->token.line;
+                    if (_tline <= 0 && _tup->array.count > 0 && _tup->array.elements[0])
+                        _tline = _tup->array.elements[0]->token.line;
+                    if (_tline <= 0) _tline = expr->token.line;
+                    fprintf(stderr,
+                            "\nError at line %d: an array of tuples is not supported\n",
+                            _tline);
+                    show_source_line(_tline);
+                    fprintf(stderr,
+                        "  \033[34mHelp:\033[0m Wyn has no tuple TYPE, so a tuple cannot be an array's element.\n"
+                        "    Use a struct for the row:\n"
+                        "      struct Row { name: string, amount: int }\n"
+                        "      rows = [Row { name: \"ada\", amount: 120 }]\n"
+                        "      for r in rows { print(\"${r.name}=${r.amount}\") }\n"
+                        "    or two parallel arrays.\n"
+                        "  \033[34mNote:\033[0m `for a, b in xs` is INDEX and VALUE in Wyn, not tuple\n"
+                        "    unpacking as in Python - `for i, v in [10, 20]` gives `0:10` then `1:20`.\n"
+                        "    Tuple unpacking works on its own (`a, b = 1, 2`); it is arrays OF tuples\n"
+                        "    that have no representation.\n");
+                    had_error = true;
+                    return NULL;
+                }
+            }
             // Check array elements and ensure type consistency
             if (expr->array.count > 0) {
                 Type* element_type = check_expr(expr->array.elements[0], scope);
