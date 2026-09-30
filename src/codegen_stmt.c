@@ -3164,38 +3164,14 @@ void codegen_stmt(Stmt* stmt) {
                                 else return_type = "OptionInt";
                             } else return_type = "OptionInt";
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
-                            if (stmt->fn.return_type->call.arg_count > 0 &&
-                                stmt->fn.return_type->call.args[0]->type == EXPR_IDENT) {
-                                Token inner = stmt->fn.return_type->call.args[0]->token;
-                                extern const char* result_family_err_suffix(Expr*);
-                                // The emitted C signature must name the SAME family the
-                                // body's Ok()/Err() lower to (see current_fn_return_kind
-                                // below): for a primitive ok payload that is the builtin
-                                // only when E is a string, else `Result<Tag>_<ErrTag>`.
-                                const char* _rsuf = result_family_err_suffix(stmt->fn.return_type);
-                                const char* _rtag = NULL;
-                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)     _rtag = "String";
-                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0) _rtag = "Float";
-                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)  _rtag = "Bool";
-                                else if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)   _rtag = "Int";
-                                if (_rtag) {
-                                    snprintf(return_type_buf, sizeof(return_type_buf), "Result%s%s",
-                                             _rtag, _rsuf);
-                                    return_type = return_type_buf;
-                                }
-                                else {
-                                    // `Result<Struct, E>` -> monomorphic Result<Struct,E>.
-                                    char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner);
-                                    extern int is_known_struct(const char*);
-                extern int is_known_type_name(const char*);
-                                    extern const char* result_family_err_suffix(Expr*);
-                                    if (is_known_struct(_stn)) {
-                                        snprintf(return_type_buf, sizeof(return_type_buf), "Result%s%s",
-                                                 _stn, result_family_err_suffix(stmt->fn.return_type));
-                                        return_type = return_type_buf;
-                                    } else return_type = "ResultInt";
-                                }
-                            } else return_type = "ResultInt";
+                            // The emitted C signature must name the SAME family the
+                            // body's Ok()/Err() lower to (see current_fn_return_kind
+                            // below), and the same one the forward declaration in
+                            // codegen_program names. ONE authority for all of it (#424).
+                            extern void wyn_result_family_c_type(Expr*, char*, size_t);
+                            wyn_result_family_c_type(stmt->fn.return_type, return_type_buf,
+                                                     sizeof(return_type_buf));
+                            return_type = return_type_buf;
                         }
                     }
                 } else if (stmt->fn.return_type->type == EXPR_ARRAY) {
@@ -3431,6 +3407,18 @@ void codegen_stmt(Stmt* stmt) {
                                stmt->fn.param_types[i]->call.callee->token.length == 7 &&
                                memcmp(stmt->fn.param_types[i]->call.callee->token.start, "HashSet", 7) == 0) {
                         param_type = "WynHashSet*";
+                    } else if (stmt->fn.param_types[i]->type == EXPR_CALL &&
+                               stmt->fn.param_types[i]->call.callee &&
+                               stmt->fn.param_types[i]->call.callee->type == EXPR_IDENT &&
+                               stmt->fn.param_types[i]->call.callee->token.length == 6 &&
+                               memcmp(stmt->fn.param_types[i]->call.callee->token.start, "Result", 6) == 0) {
+                        // #424: the DEFINITION side of a `Result<T, E>` parameter. Must
+                        // name the family the forward declaration names, so both ask the
+                        // one authority.
+                        static char _rpbuf2[128];
+                        extern void wyn_result_family_c_type(Expr*, char*, size_t);
+                        wyn_result_family_c_type(stmt->fn.param_types[i], _rpbuf2, sizeof(_rpbuf2));
+                        param_type = _rpbuf2;
                     } else if (stmt->fn.param_types[i]->type == EXPR_OPTIONAL_TYPE) {
                         // T2.5.1: Optional param. int?/string?/…/Struct? map to the
                         // concrete Option family; otherwise the generic WynOptional*.

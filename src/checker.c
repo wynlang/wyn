@@ -1024,6 +1024,28 @@ static Type* wyn_set_annotation_type(Expr* type_expr) {
     return st;
 }
 
+// #424: is this annotation the `Result<T, E>` spelling?
+//
+// A PREDICATE only. The resolver already exists further down as
+// wyn_result_annotation_type(), which turns the annotation into the concrete family type
+// (ResultInt / ResultString / Result<Struct>) and carries two load-bearing rules with it -
+// E is resolved before the ok payload, and `Result<Struct, E>` registers its own
+// monomorphic family. Writing a second resolver here would have thrown both away; the
+// only thing the parameter ladders were missing was the question, not the answer.
+//
+// Deliberately NOT folded into wyn_annotation_is_optlike below: that predicate guards
+// wyn_optlike_annotation_type, which resolves to an Option FAMILY symbol. A Result has no
+// Option family, so widening the optional predicate would make the optional resolver
+// return NULL for a Result - and on the struct-field path a NULL resolution means
+// "no such field".
+static bool wyn_annotation_is_result(Expr* type_expr) {
+    return type_expr && type_expr->type == EXPR_CALL &&
+           type_expr->call.callee &&
+           type_expr->call.callee->type == EXPR_IDENT &&
+           type_expr->call.callee->token.length == 6 &&
+           memcmp(type_expr->call.callee->token.start, "Result", 6) == 0;
+}
+
 // Is this type ANNOTATION an optional, in either of its two spellings?
 //
 //   f: T?           EXPR_OPTIONAL_TYPE
@@ -8144,6 +8166,11 @@ void check_stmt(Stmt* stmt, SymbolTable* scope) {
                         // `b: Struct?` / `b: int?` - resolve to the Option family.
                         Type* ot = check_expr(fn->param_types[j], &fn_scope);
                         if (ot) param_type = ot;
+                    } else if (wyn_annotation_is_result(fn->param_types[j])) {
+                        // #424: `r: Result<int, string>`. See the note on the matching
+                        // arm in the signature pass - all three ladders need it.
+                        Type* rt = wyn_result_annotation_type(fn->param_types[j]);
+                        if (rt) param_type = rt;
                     } else if (fn->param_types[j]->type == EXPR_CALL &&
                                fn->param_types[j]->call.callee &&
                                fn->param_types[j]->call.callee->type == EXPR_IDENT &&
@@ -10436,6 +10463,21 @@ void check_program(Program* prog) {
                         // validates Some/None arguments (not the bare int default).
                         Type* ot = check_expr(fn->param_types[j], global_scope);
                         if (ot) param_type = ot;
+                    } else if (wyn_annotation_is_result(fn->param_types[j])) {
+                        // #424: `r: Result<int, string>` fell through to the builtin_int
+                        // default, so the first `.is_ok()` in the body was rejected with
+                        // "'is_ok()' needs a Result receiver, not int" - a message that
+                        // points the author at their VALUE when the annotation was what
+                        // got dropped. `r: int?` in the same position already worked,
+                        // which is what made this one missing arm rather than a gap.
+                        //
+                        // THREE copies of this ladder exist - module fns, this signature
+                        // pass, and the body pass - and #391 had to patch all three for
+                        // HashSet. The arm is added to all three, and the type it builds
+                        // comes from ONE helper, so the three cannot answer differently
+                        // about what a Result annotation means.
+                        Type* rt = wyn_result_annotation_type(fn->param_types[j]);
+                        if (rt) param_type = rt;
                     } else if (fn->param_types[j]->type == EXPR_CALL &&
                                fn->param_types[j]->call.callee &&
                                fn->param_types[j]->call.callee->type == EXPR_IDENT &&
@@ -10908,6 +10950,12 @@ void check_program(Program* prog) {
                         // arguments instead of defaulting to int.
                         Type* ot = check_expr(fn->param_types[j], &local_scope);
                         if (ot) param_type = ot;
+                    } else if (wyn_annotation_is_result(fn->param_types[j])) {
+                        // #424: `r: Result<int, string>`. This is the BODY pass - the
+                        // one that decides what `r.is_ok()` sees. See the note on the
+                        // signature pass's arm.
+                        Type* rt = wyn_result_annotation_type(fn->param_types[j]);
+                        if (rt) param_type = rt;
                     } else if (fn->param_types[j]->type == EXPR_FN_TYPE) {
                         // S3: `f: fn(float) -> float` - the param was defaulting to
                         // int inside the body, so `return f(v)` in an fn -> float

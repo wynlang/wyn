@@ -3113,6 +3113,41 @@ const char* result_family_err_suffix(Expr* return_type) {
     return buf;
 }
 
+// #424: THE name of the C type a `Result<T, E>` ANNOTATION lowers to.
+//
+// This rule lived in TWO copies - a function's return-type forward declaration
+// (codegen_program.c) and its definition (codegen_stmt.c) - each carrying a comment
+// warning that the two must name the same family or clang reports "conflicting types
+// for '<fn>'". The PARAMETER position needs the same answer in the same two places, so
+// spelling it there as well would have made FOUR copies of a rule whose copies are
+// already documented as fragile. One function, four callers.
+//
+// Writes into a CALLER-SUPPLIED buffer rather than returning a static one, because it
+// calls result_family_err_suffix() (which does return a static buffer) and a parameter
+// list names several types in one emit - two live results from one static buffer is how
+// the set-dispatch authority nearly went wrong for the same reason.
+void wyn_result_family_c_type(Expr* ann, char* out, size_t out_sz) {
+    if (!out || out_sz == 0) return;
+    snprintf(out, out_sz, "ResultInt");          // the historical default
+    if (!ann || ann->type != EXPR_CALL || ann->call.arg_count <= 0 ||
+        !ann->call.args[0] || ann->call.args[0]->type != EXPR_IDENT)
+        return;
+    Token inner = ann->call.args[0]->token;
+    // E FIRST: the suffix decides whether a primitive ok payload may use the builtin
+    // family at all (the builtin's err_value is hardcoded `const char*`).
+    const char* suf = result_family_err_suffix(ann);
+    const char* tag = NULL;
+    if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)     tag = "String";
+    else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0) tag = "Float";
+    else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)  tag = "Bool";
+    else if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)   tag = "Int";
+    if (tag) { snprintf(out, out_sz, "Result%s%s", tag, suf); return; }
+    // `Result<Struct, E>` -> the monomorphic family (ResultPoint, ResultPoint_Fail, ...).
+    char stn[96]; token_to_cstr(stn, sizeof(stn), inner);
+    extern int is_known_struct(const char*);
+    if (is_known_struct(stn)) snprintf(out, out_sz, "Result%s%s", stn, suf);
+}
+
 // Map an ok type-name token (from a `Result<Ok, Err>` annotation) to its C type
 // and its family-name tag. `ok_name` is the Wyn type name ("int"/"string"/"float"/
 // "bool"/<Struct>). A primitive's tag is capitalized so the family name matches the
