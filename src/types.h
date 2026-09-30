@@ -27,6 +27,9 @@ typedef struct {
 
 // Lookup method return type given receiver type and method name
 const char* lookup_method_return_type(const char* receiver_type, const char* method_name);
+// #425: the 4th column - declared argument types, comma-separated. NULL if the method is
+// unknown; "" if it takes none.
+const char* lookup_method_param_types(const char* receiver_type, const char* method_name);
 const char* lookup_module_fn_return_type(const char* fn_name);
 
 // Get receiver type string from Type for method dispatch

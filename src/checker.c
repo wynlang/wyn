@@ -1024,6 +1024,88 @@ static Type* wyn_set_annotation_type(Expr* type_expr) {
     return st;
 }
 
+// ---------------------------------------------------------------------------
+// #425: argument-TYPE checking against method_signatures' param_types column.
+//
+// The comparison is by COARSE CATEGORY, not by exact type, and that is the design rather
+// than a shortcut. The column's declared types were never verified against the lowerings
+// (#393 proved every row CALLABLE, which is a different claim), so a rule that demanded an
+// exact match would reject working programs on the strength of data nobody had read. A
+// category rule can only fire when the two sides are in provably different worlds - a
+// string where an int width is read - which is exactly the case that reinterprets a
+// pointer as a number and corrupts memory.
+//
+// int and float share one category on purpose: Wyn coerces between them freely, and the
+// existing map.get default-type rule already treats them as one.
+
+// Split the spec at depth 0, so `fn(int,int)->int` stays ONE argument. Mirrors the
+// splitter in the #393 reachability gate, which reads the same column from source.
+static int wyn_spec_arg_count(const char* spec) {
+    if (!spec || !*spec) return 0;
+    int n = 1, d = 0;
+    for (const char* p = spec; *p; p++) {
+        if (*p == '(' || *p == '[') d++;
+        else if (*p == ')' || *p == ']') d--;
+        else if (*p == ',' && d == 0) n++;
+    }
+    return n;
+}
+
+// The idx'th argument spec, as a (pointer, length) slice of `spec` with surrounding
+// spaces trimmed. Returns 0 when idx is out of range.
+static int wyn_spec_arg_at(const char* spec, int idx, const char** out, int* out_len) {
+    if (!spec || !*spec || idx < 0) return 0;
+    int d = 0, cur = 0;
+    const char* start = spec;
+    for (const char* p = spec; ; p++) {
+        if (*p == '(' || *p == '[') d++;
+        else if (*p == ')' || *p == ']') d--;
+        if ((*p == ',' && d == 0) || *p == '\0') {
+            if (cur == idx) {
+                const char* s = start; const char* e = p;
+                while (s < e && (*s == ' ' || *s == '\t')) s++;
+                while (e > s && (e[-1] == ' ' || e[-1] == '\t')) e--;
+                *out = s; *out_len = (int)(e - s);
+                return *out_len > 0;
+            }
+            if (*p == '\0') return 0;
+            cur++; start = p + 1;
+        }
+    }
+}
+
+// Category of a DECLARED spec. 0 means "a kind this rule does not judge" - which is the
+// safe answer and the one every unrecognised spelling gets.
+static char wyn_spec_category(const char* s, int len) {
+    if (!s || len <= 0) return 0;
+    if (len >= 3 && memcmp(s, "fn(", 3) == 0) return 'F';
+    if (s[0] == '[') return 'A';
+    if (len == 3 && memcmp(s, "int", 3) == 0) return 'N';
+    if (len == 5 && memcmp(s, "float", 5) == 0) return 'N';
+    if (len == 6 && memcmp(s, "string", 6) == 0) return 'S';
+    if (len == 4 && memcmp(s, "bool", 4) == 0) return 'B';
+    if (len == 5 && memcmp(s, "array", 5) == 0) return 'A';
+    if (len == 3 && memcmp(s, "map", 3) == 0) return 'M';
+    if (len == 3 && memcmp(s, "set", 3) == 0) return 'E';
+    return 0;
+}
+
+// Category of an ARGUMENT's resolved type. 0 for everything this rule must not judge:
+// structs, enums, Option/Result, json, ptr/cstr, and an unresolved type.
+static char wyn_arg_category(const Type* t) {
+    if (!t) return 0;
+    switch (t->kind) {
+        case TYPE_INT: case TYPE_FLOAT: return 'N';
+        case TYPE_STRING:               return 'S';
+        case TYPE_BOOL:                 return 'B';
+        case TYPE_ARRAY:                return 'A';
+        case TYPE_MAP:                  return 'M';
+        case TYPE_SET:                  return 'E';
+        case TYPE_FUNCTION:             return 'F';
+        default:                        return 0;
+    }
+}
+
 // #424: is this annotation the `Result<T, E>` spelling?
 //
 // A PREDICATE only. The resolver already exists further down as
@@ -4673,6 +4755,96 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
 
             Token method = expr->method_call.method;
             char method_name[256]; token_to_cstr(method_name, sizeof(method_name), method);
+
+            // #425: an argument of the wrong TYPE was unchecked. `"42".pad_left("a", "a")`
+            // compiled, ran, exited 0 and printed a ~44MB garbage string: pad_left lowers to
+            // `string_pad_left(const char*, int width, const char*)`, nothing checked that
+            // argument 1 is an int, so a POINTER arrived as the width and was used as a
+            // length.
+            //
+            // #393's param_types column is what makes a rule possible, and its reachability
+            // gate provably CANNOT catch this class: mutating pad_left's row to
+            // "string, string" still compiles, because that gate proves a row is callable,
+            // not that its declared types are the lowering's types. This is the column's
+            // first real reader.
+            //
+            // PLACED HERE for the same reason the set-element rule below is: a method does
+            // not leave this case by one route. `pad_left` returns from the explicit
+            // string-method chain hundreds of lines before the signature-table lookup is
+            // reached, so a rule sitting next to that lookup never ran for it - which is
+            // exactly what the first draft of this did. Here, the receiver, the arguments
+            // and the method name are all known and every route still passes through.
+            //
+            // DELIBERATELY COARSE, and that is the design rather than a shortcut. It
+            // compares CATEGORIES and fires only when both sides are known and the
+            // categories are disjoint. The column's declared types were never verified
+            // against the lowerings, so an exact-match rule would reject working programs on
+            // the strength of data nobody had read; being unable to prove an argument wrong
+            // must never mean rejecting it. A string handed to an int width is the case that
+            // reinterprets a pointer as a number; int vs float is not, and is allowed.
+            {
+                const char* _recv425 = get_receiver_type_string(object_type);
+                // A CONTAINER RECEIVER IS EXCLUDED, and this is a correctness
+                // requirement, not caution. method_signatures is keyed on the receiver
+                // type as a STRING - "array", "map", "set" - so it cannot see an element
+                // or value type at all; types.c says so in as many words about the set
+                // rows. That makes the declared argument type of every element-taking
+                // collection method a PLACEHOLDER rather than a contract: `array.push` is
+                // written "int", and `xs.push("s")` on a [string] array is correct code.
+                //
+                // A first draft judged them anyway and rejected NINE corpus files -
+                // `copied.push(s)`, `tests.push(current)`, `m2.insert("key", "val")`,
+                // `array.contains` on a string array. Every one was the ROW being a
+                // placeholder, not the program being wrong. Covering collections needs
+                // element-aware rows, which is a different change.
+                //
+                // What remains covered is every receiver whose type is fully known from
+                // the receiver alone - string, int, float, bool, option, result, json -
+                // which includes the reported defect (string.pad_left).
+                int _container425 = object_type &&
+                    (object_type->kind == TYPE_ARRAY || object_type->kind == TYPE_MAP ||
+                     object_type->kind == TYPE_SET);
+                const char* _pspec = (_recv425 && !_container425)
+                    ? lookup_method_param_types(_recv425, method_name) : NULL;
+                // Only when the arity MATCHES the declaration. This is a LOGICAL
+                // precondition, not an empirical one: comparing argument N against spec N
+                // only means anything if the two lists describe the same call, and arity has
+                // its own diagnostics elsewhere. Stated plainly because it is NOT verified by
+                // evidence - removing this guard changes nothing across 18,305 corpus files
+                // and breaks no gate arm, and I could not construct a case where it fires
+                // (the namespace spellings that would misalign, `HashSet.add(s, x)` and
+                // `Json.set_int(j, k, v)`, are excluded or never reach here). It is kept as a
+                // bound on what the rule is willing to reason about, and a future reader
+                // should not mistake it for a fix to an observed bug.
+                if (_pspec && *_pspec &&
+                    wyn_spec_arg_count(_pspec) == expr->method_call.arg_count) {
+                    for (int _ai = 0; _ai < expr->method_call.arg_count; _ai++) {
+                        const char* _one; int _onelen;
+                        if (!wyn_spec_arg_at(_pspec, _ai, &_one, &_onelen)) continue;
+                        char _want = wyn_spec_category(_one, _onelen);
+                        if (!_want) continue;                  // a spec kind we do not judge
+                        Type* _at = expr->method_call.args[_ai]->expr_type;
+                        if (!_at) _at = check_expr(expr->method_call.args[_ai], scope);
+                        char _got = wyn_arg_category(_at);
+                        if (!_got || _got == _want) continue;  // unknown, or agrees
+                        char _wbuf[64];
+                        snprintf(_wbuf, sizeof(_wbuf), "%.*s", _onelen, _one);
+                        fprintf(stderr,
+                                "\nError at line %d: '%s()' argument %d must be %s, not %s\n",
+                                method.line, method_name, _ai + 1, _wbuf, type_to_string(_at));
+                        show_source_line(method.line);
+                        fprintf(stderr,
+                                "  \033[34mHelp:\033[0m %s.%s lowers to a C call that reads "
+                                "argument %d as %s. Another type is not converted there, it is "
+                                "reinterpreted - which is how a wrong type becomes a garbage "
+                                "value instead of an error.\n",
+                                _recv425, method_name, _ai + 1, _wbuf);
+                        had_error = true;
+                        expr->expr_type = builtin_int;
+                        return builtin_int;
+                    }
+                }
+            }
 
             // A non-string element handed to a set method (V-35). This is deliberately
             // the FIRST thing checked after the receiver, the args and the method name
