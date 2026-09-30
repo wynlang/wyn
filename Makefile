@@ -465,6 +465,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_container_fresh_type_test.sh
 	@WYN=./wyn bash tests/errors/run_registry_reachable_test.sh
 	@bash tests/errors/run_slim_header_parity_test.sh
+	@echo "=== Running debug/--release output parity test ==="
+	@WYN=./wyn bash tests/errors/run_release_output_parity_test.sh
 	@WYN=./wyn bash tests/errors/run_collection_return_type_test.sh
 	@WYN=./wyn bash tests/errors/run_lambda_return_type_test.sh
 	@WYN=./wyn bash tests/errors/run_value_call_diagnostics_test.sh

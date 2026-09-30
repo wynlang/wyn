@@ -43,7 +43,8 @@ PASS=0; FAIL=0
 ok(){ echo "  ok    $1"; PASS=$((PASS+1)); }
 bad(){ echo "  FAIL  $1"; FAIL=$((FAIL+1)); }
 
-for f in src/wyn_runtime.h src/wyn_runtime_slim.h src/types.c src/codegen.c; do
+for f in src/wyn_runtime.h src/wyn_runtime_slim.h src/types.c src/codegen.c \
+         src/codegen_expr.c src/codegen_stmt.c src/codegen_program.c src/codegen_lambda.c; do
   if [ ! -f "$ROOT/$f" ]; then
     bad "cannot read $f - this gate is vacuous without it"
     echo ""; echo "slim-header-parity: $PASS pass, $FAIL fail"; exit 1
@@ -55,7 +56,17 @@ import re, sys, os
 root = sys.argv[1]
 def rd(p): return open(os.path.join(root, p)).read()
 full, slim = rd('src/wyn_runtime.h'), rd('src/wyn_runtime_slim.h')
-types, cg   = rd('src/types.c'), rd('src/codegen.c')
+# EVERY codegen translation unit that names an emitted symbol, not just codegen.c.
+# codegen.c #includes codegen_expr.c / codegen_stmt.c / codegen_program.c /
+# codegen_lambda.c, and MOST emit() calls live in those - so scanning codegen.c alone
+# made this gate blind to the majority of lowering targets. `map_to_string` is emitted by
+# codegen_expr.c, was defined in wyn_runtime.h, was absent from the slim header, and this
+# gate passed anyway: `print(m)` rendered a map POINTER under --release while debug
+# printed `{"a": 1}`, and `"${m}"` did not compile at all. Widening the scan is the fix
+# for the CLASS; adding one declaration would only have fixed the instance.
+types = rd('src/types.c')
+cg = ''.join(rd(f) for f in ('src/codegen.c', 'src/codegen_expr.c', 'src/codegen_stmt.c',
+                             'src/codegen_program.c', 'src/codegen_lambda.c'))
 
 # Names legitimately absent from the slim header. Each needs a reason, and the exactness
 # check below fails if one of these stops being missing.
@@ -70,10 +81,28 @@ defs  = set(re.findall(r'^(?:[A-Za-z_][A-Za-z0-9_ *]*?)\b([A-Za-z_][A-Za-z0-9_]*
 # there is nothing in the archive to link against).
 slim_names = set(re.findall(r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\(', slim))
 
+# Every STRING LITERAL in the dispatch tables and the codegen units, concatenated. The
+# reachability test below searches this, not the raw source, and that distinction is the
+# whole point of the 2026-09-30 widening.
+#
+# The old test asked whether the exact token `"name"` - quotes included - appeared in the
+# source. That only matches a name that is a string literal ALL BY ITSELF, which is true
+# for a dispatch-table row and false for most emissions: codegen writes
+#     emit("({ const char* __pms = map_to_string(")
+# so the name is in the MIDDLE of a longer literal and the old test could not see it.
+# `map_to_string` was consequently invisible: defined in wyn_runtime.h, emitted by
+# codegen_expr.c, absent from the slim header, and this gate passed - while `print(m)`
+# rendered a map POINTER under --release (debug printed `{"a": 1}`) and `"${m}"` did not
+# compile at all. Widening the FILE list alone did not fix it; the matching rule was the
+# blind spot.
+_LIT = re.compile(r'"((?:[^"\\\n]|\\.)*)"')
+_literal_text = " ".join(_LIT.findall(types) + _LIT.findall(cg))
+
 def reachable(n):
-    # types.c holds the method/namespace dispatch tables; codegen.c names the symbols it
-    # emits. A function named in either is reachable from ordinary Wyn source.
-    return f'"{n}"' in types or f'"{n}"' in cg
+    # A whole-word hit inside any emitted or tabled string literal means Wyn source can
+    # reach this symbol. Whole-word so `array_get` does not vouch for `array_get_str`.
+    return re.search(r'(?<![A-Za-z0-9_])' + re.escape(n) + r'(?![A-Za-z0-9_])',
+                     _literal_text) is not None
 
 missing = sorted(n for n in defs if n not in slim_names and reachable(n))
 unexpected = [n for n in missing if n not in ALLOWED]
