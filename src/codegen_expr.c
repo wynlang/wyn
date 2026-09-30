@@ -2076,6 +2076,16 @@ static void codegen_expr_inner(Expr* expr) {
                     codegen_skip_strdup = prev_skip;
                     break;
                 }
+                // #427: the same for a set. Without this, println(set) reached the
+                // integer path and printed the set pointer.
+                if (!arg_is_string && parg->expr_type &&
+                    parg->expr_type->kind == TYPE_SET) {
+                    emit("({ const char* __pss = set_to_string(");
+                    codegen_expr(parg);
+                    emit("); printf(\"%%s\\n\", __pss); wyn_rc_release(__pss); })");
+                    codegen_skip_strdup = prev_skip;
+                    break;
+                }
                 // println(Option) / println(Result): one renderer, shared with
                 // print() and with interpolation, resolved from the expression's
                 // TYPE rather than its syntactic shape. It must be tested before
@@ -6670,6 +6680,16 @@ static void codegen_expr_inner(Expr* expr) {
                         // Same defect as println(map): to_string(map) lowered to
                         // the integer path, so "${m}" rendered the map pointer.
                         emit("map_to_string(");
+                        codegen_expr(e);
+                        emit(")");
+                    } else if (e->expr_type && e->expr_type->kind == TYPE_SET) {
+                        // #427, the set half. print(s) is fixed by the WynHashSet*
+                        // arm in wyn_out_append's _Generic, but interpolation does
+                        // not go through that macro - it needs a string, so it took
+                        // the integer path and rendered the set POINTER even after
+                        // print(s) was correct. One arm per spelling, both naming
+                        // the same renderer.
+                        emit("set_to_string(");
                         codegen_expr(e);
                         emit(")");
                     } else if (_iarrel) {

@@ -467,6 +467,8 @@ test: wyn $(MBEDTLS_LIB)
 	@bash tests/errors/run_slim_header_parity_test.sh
 	@echo "=== Running debug/--release output parity test ==="
 	@WYN=./wyn bash tests/errors/run_release_output_parity_test.sh
+	@echo "=== Running print(set) rendering test (#427) ==="
+	@WYN=./wyn bash tests/errors/run_print_set_test.sh
 	@WYN=./wyn bash tests/errors/run_collection_return_type_test.sh
 	@WYN=./wyn bash tests/errors/run_lambda_return_type_test.sh
 	@WYN=./wyn bash tests/errors/run_value_call_diagnostics_test.sh

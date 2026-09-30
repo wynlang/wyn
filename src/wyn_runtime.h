@@ -2643,6 +2643,35 @@ void println_map(WynHashMap* m) {
     wyn_out_str(&o, "\n");
     wyn_out_flush(&o);
 }
+// Set rendering (#427). Exactly the map's shape one type over: hashset_format
+// (hashset.c) is the only place that can see the real element tags, and these four
+// entry points are what codegen emits for print / interpolation / println.
+void wyn_out_set(WynOut* o, WynHashSet* s) {
+    extern int hashset_format(WynHashSet* set, char* out, size_t cap);
+    int n = hashset_format(s, NULL, 0);
+    if (n < 0) { wyn_sb_append(&o->sb, "{:}"); return; }
+    char* tmp = (char*)wyn_malloc((size_t)n + 1);
+    hashset_format(s, tmp, (size_t)n + 1);
+    wyn_sb_append_n(&o->sb, tmp, (size_t)n);
+    free(tmp);
+}
+void print_set_no_nl(WynHashSet* s) {
+    WynOut o; wyn_out_begin(&o);
+    wyn_out_set(&o, s);
+    char* str = wyn_sb_finish(&o.sb);
+    if (str) { fputs(str, stdout); wyn_rc_release(str); }
+}
+char* set_to_string(WynHashSet* s) {
+    WynOut o; wyn_out_begin(&o);
+    wyn_out_set(&o, s);
+    return wyn_sb_finish(&o.sb);
+}
+void println_set(WynHashSet* s) {
+    WynOut o; wyn_out_begin(&o);
+    wyn_out_set(&o, s);
+    wyn_out_str(&o, "\n");
+    wyn_out_flush(&o);
+}
 #define wyn_out_append(o, x) _Generic((x), \
     int: wyn_out_int, \
     long: wyn_out_int, \
@@ -2654,6 +2683,7 @@ void println_map(WynHashMap* m) {
     bool: wyn_out_bool, \
     WynArray: wyn_out_array, \
     WynHashMap*: wyn_out_map, \
+    WynHashSet*: wyn_out_set, \
     default: wyn_out_int)(o, x)
 
 // Writes straight to stdout, allocation-free. wyn_out_elem() above is the
