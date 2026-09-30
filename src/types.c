@@ -258,6 +258,16 @@ static const MethodSignature method_signatures[] = {
     {"map", "len", "int", ""},
     {"map", "contains", "int", "string"},
     {"map", "set_int", "void", "string, int"},
+    // #426: set_float / set_bool were the two MISSING siblings of a four-name family.
+    // codegen handles all four in ONE branch (`set_int`/`set_string`/`set_float`/
+    // `set_bool` -> hashmap_insert_<X>) and only two of the four were registered here.
+    // Verified working against the previous build before these rows were written:
+    // `m.set_float("b", 2.5)` then reading "b" answers 2.5, and `m.set_bool("b", false)`
+    // answers false with len 2 - so they describe a real lowering, not a hoped-for one.
+    // Added rather than special-cased in the checker, because the whole family belongs
+    // in one place; an incomplete list is what let #426's rule reject working code.
+    {"map", "set_float", "void", "string, float"},
+    {"map", "set_bool", "void", "string, bool"},
     {"map", "stringify", "string", ""},
     {"map", "remove", "void", "string"},
     // (a second {"map","contains","bool",1} row lived here and was DEAD - lookup is

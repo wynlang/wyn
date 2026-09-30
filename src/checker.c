@@ -5832,22 +5832,117 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 return builtin_int;
             }
 
-            // Unknown method on a STRING or ARRAY receiver: reject at check time.
-            // Everything the language supports on these two receivers returned
-            // earlier (the explicit chain above or the method_signatures table);
-            // reaching here means codegen would fail with a bare
-            // "Unknown method '...'" C-compile error or emit garbage. Restricted
-            // to string/array so structs, maps, options, FFI handles and other
-            // receivers keep their existing (lenient) paths.
-            if (object_type &&
-                (object_type->kind == TYPE_STRING || object_type->kind == TYPE_ARRAY)) {
-                const char* recv = object_type->kind == TYPE_STRING ? "string" : "array";
+            // Unknown method on a STRING, ARRAY, MAP or SET receiver: reject at
+            // check time. Everything the language supports on these receivers
+            // returned earlier (the explicit chain above or the method_signatures
+            // table); reaching here means codegen would fail with a bare
+            // "Unknown method '...'" C-compile error or emit garbage. Structs,
+            // options, FFI handles and other receivers keep their existing
+            // (lenient) paths.
+            //
+            // #426: map and set were added here. They were the two receivers where
+            // codegen's own last-resort diagnostic did the MOST damage, and it did
+            // two different wrong things depending only on how the call was used:
+            //
+            //   m.definitely_not_a_method(3)          prints "Error: Unknown method
+            //                                         ...", emits NOTHING, and the
+            //                                         program COMPILES AND EXITS 0
+            //                                         with the call silently dropped.
+            //   t = s.symmetric_difference({:"b"})    the same empty emission lands
+            //                                         in a value position, so the
+            //                                         generated C is invalid and the
+            //                                         build dies as "compilation
+            //                                         failed (internal codegen
+            //                                         error)" - the compiler
+            //                                         reporting its own bug for
+            //                                         ordinary user error.
+            //
+            // The first is the serious one: an error message that does not fail the
+            // build means `wyn run` and `wyn build` cannot be trusted as gates, so a
+            // green test harness is not evidence the code ran. (#393's registry gate
+            // had to be tightened to require a clean compile for exactly this
+            // reason.) One check-time rule answers both, and neither now reaches
+            // codegen at all.
+            // EXCLUDE THE NAMESPACE SPELLING. `HashSet.add(s, x)` and
+            // `HashMap.get_bool(m, k)` are namespace calls, but init_checker registers
+            // the names `HashMap` and `HashSet` as the collection TYPES (see the note at
+            // the top of reject_unknown_namespace_method), so the RECEIVER of one types
+            // TYPE_MAP / TYPE_SET and arrives here looking exactly like a method call on
+            // a value. It is not one: the collection is the first ARGUMENT, the arity is
+            // one higher than the method form's, and the call lowers through
+            // wyn_namespace_c_symbol(), which neither dispatch_method() nor
+            // method_signatures describes. Unknown methods on a namespace already have
+            // their own rule (reject_unknown_namespace_method), so nothing is lost by
+            // standing aside here.
+            //
+            // This was NOT found by reading the code - a differential `wyn check` sweep
+            // of every .wyn file in the workspace found it, as two of the tree's own
+            // regression tests (test_collection_field_param.wyn and
+            // test_collection_struct_field.wyn on `HashSet.add`, plus
+            // test_hashmap_typed_setters.wyn on `HashMap.get_bool`). A rule that rejects
+            // working code is worse than the bug it fixes, which is why the sweep is the
+            // gate for a change of this shape.
+            bool _ns_spelled = false;
+            if (expr->method_call.object->type == EXPR_IDENT) {
+                char _rcv[128];
+                token_to_cstr(_rcv, sizeof(_rcv), expr->method_call.object->token);
+                extern bool is_builtin_module(const char*);
+                _ns_spelled = is_builtin_module(_rcv);
+            }
+            if (!_ns_spelled && object_type &&
+                (object_type->kind == TYPE_STRING || object_type->kind == TYPE_ARRAY ||
+                 object_type->kind == TYPE_MAP    || object_type->kind == TYPE_SET)) {
+                extern const char* get_receiver_type_string(const Type*);
+                const char* recv = get_receiver_type_string(object_type);
+                if (!recv) recv = "value";
+                // ASK THE LOWERING AUTHORITY FIRST, FOR MAP AND SET ONLY.
+                //
+                // dispatch_method() (types.c) is the table codegen actually emits from,
+                // and until now nothing in the checker consulted it - codegen_expr.c was
+                // its only caller. That is the structural reason this rule could not
+                // simply be extended to map and set: `m.has(k)`, `m.free()` and
+                // `s.add(x)` all lower correctly and all three are absent from
+                // method_signatures, so a rule keyed only on what the CHECKER happens to
+                // know rejects working code. Each was measured against the previous build
+                // before this was written: those three print the right answers, while
+                // `s.free()`, `s.to_array()` and `s.elements()` print "Unknown method",
+                // drop the call and exit 0 - the defect itself. Asking the authority
+                // separates the two exactly, where a second list of map/set method names
+                // would not, and a second list is the shape that produced this bug.
+                //
+                // STRING AND ARRAY ARE DELIBERATELY EXCLUDED from this consultation, and
+                // that is not caution - it is a correction. Consulting it for them too
+                // silently REVERSED a decision #393 made on purpose: `array.find` is
+                // mapped by dispatch_method and IS in both runtime headers, but it cannot
+                // be typed (array_find_fn returns a bare `long long`, so typing the call
+                // as OptionInt would hand `.is_some()` a non-Option value - the trap that
+                // retired the Option combinator rows), so its row was REMOVED and this
+                // rule rejecting it is the intended behaviour. A blanket consultation
+                // made `a.find(8)` compile again, in 20 corpus files. "dispatch_method
+                // has a lowering" therefore does NOT mean "the language offers this
+                // method" - only that codegen could emit something. For map and set the
+                // two coincide; for array they provably do not.
+                if (object_type->kind == TYPE_MAP || object_type->kind == TYPE_SET) {
+                    MethodDispatch _lower;
+                    extern bool dispatch_method(const char*, const char*, int, MethodDispatch*);
+                    if (dispatch_method(recv, method_name, expr->method_call.arg_count, &_lower)) {
+                        expr->expr_type = builtin_int;   // pre-existing lenient path
+                        return builtin_int;
+                    }
+                }
                 extern const char* suggest_method_name(const char*, const char*);
                 const char* near = suggest_method_name(recv, method_name);
                 char _hl[320], _sug[192];
                 snprintf(_hl, sizeof(_hl), "%s has no method '%s'", recv, method_name);
                 if (near) snprintf(_sug, sizeof(_sug), ".%s()", near);
-                report_unknown_method(method.line, _hl, near ? _sug : NULL, NULL);
+                // Carry codegen's own hints across, so the message the author sees is
+                // no less useful than the one that used to be printed too late.
+                const char* _help = NULL;
+                if (object_type->kind == TYPE_MAP)
+                    _help = "HashMap has .get(key), .set(key, value), .has(key), .remove(key), .keys(), .values(), .len() - or index it: m[\"key\"]";
+                else if (object_type->kind == TYPE_SET)
+                    _help = "HashSet has .add(item), .contains(item), .remove(item), .len(), .union(other), .intersection(other), .difference(other)";
+                report_unknown_method(method.line, _hl, near ? _sug : NULL, _help);
                 had_error = true;
                 expr->expr_type = builtin_int;
                 return builtin_int;
