@@ -405,6 +405,29 @@ const char* lookup_method_return_type(const char* receiver_type, const char* met
     return NULL;  // Method not found
 }
 
+// #425: the declared ARGUMENT TYPES of a method, as the comma-separated spec string in
+// the 4th column ("int, string"), or NULL when the method is unknown. Empty string means
+// "takes no arguments" and is NOT the same answer as NULL.
+//
+// #393 added that column and proved every row is CALLABLE. It could not prove the
+// declared types are the lowering's types - mutating `pad_left`'s row to "string, string"
+// still compiled, because reachability asks whether a call can be made, not whether the
+// types are right. So this is the column's first real reader, and the rule built on it is
+// deliberately coarse for that reason (see wyn_arg_category in checker.c).
+const char* lookup_method_param_types(const char* receiver_type, const char* method_name) {
+    if (!receiver_type || !method_name) return NULL;
+    for (int i = 0; method_signatures[i].receiver_type != NULL; i++) {
+        if (strcmp(method_signatures[i].receiver_type, receiver_type) == 0 &&
+            strcmp(method_signatures[i].method_name, method_name) == 0) {
+            // First match wins, matching lookup_method_return_type - the table
+            // registers some rows twice and the two lookups must agree on which one
+            // they are describing.
+            return method_signatures[i].param_types;
+        }
+    }
+    return NULL;
+}
+
 // How close two identifiers are, for every "did you mean" hint: differing chars +
 // length difference. WYN_NAME_FAR means "not worth suggesting". One function
 // because the value-receiver suggester and the namespace suggester must rank
