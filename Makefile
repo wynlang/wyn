@@ -450,6 +450,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_unknown_method_test.sh
 	@echo "=== Running unknown-collection-method test (map/set fail the build, #426) ==="
 	@WYN=./wyn bash tests/errors/run_unknown_collection_method_test.sh
+	@echo "=== Running Result-as-a-parameter test (#424) ==="
+	@WYN=./wyn bash tests/errors/run_result_param_test.sh
 	@echo "=== Running Option/Result-predicate-on-a-scalar test (V-28) ==="
 	@WYN=./wyn bash tests/errors/run_scalar_option_method_test.sh
 	@WYN=./wyn bash tests/errors/run_typed_set_test.sh

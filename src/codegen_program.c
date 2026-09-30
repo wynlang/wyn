@@ -1468,42 +1468,14 @@ void codegen_program(Program* prog) {
                                 else return_type = "OptionInt";
                             } else return_type = "OptionInt";
                         } else if (type_name.length == 6 && memcmp(type_name.start, "Result", 6) == 0) {
-                            // Resolve Result<int, string> -> ResultInt, Result<string, string> -> ResultString
-                            if (fn->return_type->call.arg_count > 0 &&
-                                fn->return_type->call.args[0]->type == EXPR_IDENT) {
-                                Token inner = fn->return_type->call.args[0]->token;
-                                extern const char* result_family_err_suffix(Expr*);
-                                // This FORWARD DECLARATION must name the same family as
-                                // the definition (codegen_stmt) — a primitive ok payload
-                                // uses the builtin only for a string E, else its own
-                                // `Result<Tag>_<ErrTag>` family. Disagreeing here emits
-                                // "conflicting types for '<fn>'".
-                                const char* _rsuf = result_family_err_suffix(fn->return_type);
-                                const char* _rtag = NULL;
-                                if (inner.length == 6 && memcmp(inner.start, "string", 6) == 0)     _rtag = "String";
-                                else if (inner.length == 5 && memcmp(inner.start, "float", 5) == 0) _rtag = "Float";
-                                else if (inner.length == 4 && memcmp(inner.start, "bool", 4) == 0)  _rtag = "Bool";
-                                else if (inner.length == 3 && memcmp(inner.start, "int", 3) == 0)    _rtag = "Int";
-                                if (_rtag) {
-                                    snprintf(return_type_buf, sizeof(return_type_buf), "Result%s%s",
-                                             _rtag, _rsuf);
-                                    return_type = return_type_buf;
-                                }
-                                else {
-                                    // `Result<Struct, E>` -> the monomorphic
-                                    // Result<Struct,E> family (ResultPoint,
-                                    // ResultPoint_Fail, …). The err suffix keeps this
-                                    // C signature name in lockstep with the family.
-                                    char _stn[96]; token_to_cstr(_stn, sizeof(_stn), inner);
-                                    extern int is_known_struct(const char*);
-                                    extern const char* result_family_err_suffix(Expr*);
-                                    if (is_known_struct(_stn)) {
-                                        snprintf(return_type_buf, sizeof(return_type_buf), "Result%s%s",
-                                                 _stn, result_family_err_suffix(fn->return_type));
-                                        return_type = return_type_buf;
-                                    } else return_type = "ResultInt";
-                                }
-                            } else return_type = "ResultInt";
+                            // This FORWARD DECLARATION must name the same family as the
+                            // definition (codegen_stmt) or clang reports "conflicting
+                            // types for '<fn>'". Both now ask ONE authority, so they
+                            // cannot drift apart (#424).
+                            extern void wyn_result_family_c_type(Expr*, char*, size_t);
+                            wyn_result_family_c_type(fn->return_type, return_type_buf,
+                                                     sizeof(return_type_buf));
+                            return_type = return_type_buf;
                         }
                     }
                 } else if (fn->return_type->type == EXPR_ARRAY) {
@@ -1754,6 +1726,19 @@ void codegen_program(Program* prog) {
                                fn->param_types[j]->call.callee->token.length == 7 &&
                                memcmp(fn->param_types[j]->call.callee->token.start, "HashSet", 7) == 0) {
                         param_type = "WynHashSet*";
+                    } else if (fn->param_types[j]->type == EXPR_CALL &&
+                               fn->param_types[j]->call.callee &&
+                               fn->param_types[j]->call.callee->type == EXPR_IDENT &&
+                               fn->param_types[j]->call.callee->token.length == 6 &&
+                               memcmp(fn->param_types[j]->call.callee->token.start, "Result", 6) == 0) {
+                        // #424: `r: Result<int, string>` emitted `long long`, so the
+                        // caller got "passing 'ResultInt' to parameter of incompatible
+                        // type 'long long'". Same authority as the return type and as
+                        // the definition side, so all four agree on the family name.
+                        static char _rpbuf[128];
+                        extern void wyn_result_family_c_type(Expr*, char*, size_t);
+                        wyn_result_family_c_type(fn->param_types[j], _rpbuf, sizeof(_rpbuf));
+                        param_type = _rpbuf;
                     } else if (fn->param_types[j]->type == EXPR_OPTIONAL_TYPE) {
                         // T2.5.1: Optional param. int?/string?/…/Struct? map to the
                         // concrete Option family; otherwise the generic WynOptional*.
