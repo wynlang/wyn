@@ -194,6 +194,8 @@ jobs:
       #     runner already normalizes the embedded source path and strips CR.
       #   * the check-only tests/errors/ suites - they only run `wyn check` and
       #     assert on diagnostic text, so no exec/signal/fork behavior is involved.
+      #   * the pure text-analysis suites - they read src/ and the Makefile and
+      #     invoke no wyn.exe, no perl and no compiler at all.
       #
       # What is NOT gated on Windows, and why (deliberate, not an oversight):
       #   * tests/errors/ suites that execute compiled binaries and assert on
@@ -246,6 +248,13 @@ jobs:
           run_suite tests/errors/run_struct_eq_test.sh
           run_suite tests/errors/run_unterminated_string_test.sh
           run_suite tests/errors/run_empty_radix_literal_test.sh
+
+          # Needs no wyn.exe, no perl and no compiler - it reads src/ and the Makefile
+          # and compares two sets. The Makefile list it guards (TU_INCLUDED_SRCS) is
+          # platform-independent, so leaving it out of THIS roster would mean a
+          # Windows-only contributor is the one person the gate cannot see: exactly the
+          # "a gate must be enrolled to run" class it was written to kill.
+          run_suite tests/errors/run_tu_include_list_test.sh
 
           if [ "$rc" -ne 0 ]; then
             echo "Windows portable subset: FAILURES above"

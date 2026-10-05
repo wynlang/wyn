@@ -179,16 +179,21 @@ CORE_SRCS = src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/
 # runtime/libwyn_rt.a. Linking spawn.c here forced the whole thread-pool
 # scheduler (spawn_fast.c: wyn_sched_pump_one/inflight) into the compiler too.
 
-# codegen.c #includes these .c files directly (single translation unit), so they
-# are NOT in CORE_SRCS (compiling them standalone would duplicate symbols). List
-# them here as prerequisites so editing one triggers a rebuild - otherwise make
-# sees no changed prerequisite and silently keeps a stale binary.
 # Sources #included directly into another translation unit (codegen.c pulls in the
 # codegen_* files, checker.c pulls in checker_builtins.c). They are NOT in CORE_SRCS -
 # compiling them standalone would duplicate symbols - but they must be prerequisites,
 # or make sees no changed prerequisite and silently keeps a stale binary.
+#
+# THIS LIST IS DERIVED, NOT REMEMBERED. tests/errors/run_tu_include_list_test.sh greps
+# src/ for `#include "<name>.c"` and fails on a set difference in either direction. It
+# was forgotten once: src/codegen_gpu.c (codegen.c:2820) was absent for its whole life,
+# so every edit to the GPU codegen left `make` reporting success over the OLD binary.
+# The `$(wildcard src/*.h)` prerequisite on the rule below does NOT cover these - they
+# are .c files. The gate is only as good as what its regex can SEE, so it self-tests
+# that regex against every include spelling (trailing `//` and `/* */` comments
+# included - an early version was anchored at end-of-line and blind to them).
 TU_INCLUDED_SRCS = src/codegen_expr.c src/codegen_stmt.c src/codegen_lambda.c src/codegen_program.c \
-                   src/checker_builtins.c
+                   src/codegen_gpu.c src/checker_builtins.c
 
 wyn$(EXE_EXT): $(CORE_SRCS) $(TU_INCLUDED_SRCS) $(wildcard src/*.h)
 	$(CC) $(CFLAGS) -I src -I vendor/tcc/include -I vendor/minicoro -o $@ $(CORE_SRCS) vendor/tcc/lib/libtcc.a $(PLATFORM_LIBS)
@@ -394,6 +399,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_cc_err_isolation_test.sh
 	@echo "=== Running stale-pch recovery test ==="
 	@WYN=./wyn bash tests/errors/run_stale_pch_test.sh
+	@echo "=== Running TU-included-sources list test (derived from the #include sites) ==="
+	@bash tests/errors/run_tu_include_list_test.sh
 	@echo "=== Running unresolved-import abort test ==="
 	@WYN=./wyn bash tests/errors/run_unresolved_import_test.sh
 	@echo "=== Running selective-import alias rejection test ==="
