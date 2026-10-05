@@ -338,11 +338,18 @@ debug-memory: wyn
 # it's not wired into this target - run it manually if you regenerate the list.)
 # check-fast: the EDIT-LOOP gate, not a merge gate. Target <= 30s.
 #
-# WHY: `make test` chains ~100 steps and takes ~9 minutes; run_bdd.sh alone is
-# ~250s. That cost is per-iteration during debugging, so a 10-round session spends
-# over an hour waiting. This runs the two things that actually catch codegen
-# mistakes fast: the build (0 warnings) and the golden-C snapshots, which pin the
-# generated C and are exactly what the soundness work perturbs.
+# WHY: `make test` runs 147 `bash tests/...` gates - counted from the recipe below,
+# 146 of them before the scripts/ syntax gate was added to it - and takes ~38
+# MINUTES, not the "~9 minutes" this comment claimed until 2026-10-05. Measured:
+# median of the 11 green scripts/suite.sh runs (29,33,35,37,37,38,38,39,40,41,44 min),
+# recovered from each log's birth->mtime delta because the harness stamped nothing -
+# which is why scripts/suite.sh now timestamps every line and prints a total elapsed.
+# run_bdd.sh alone is 173-233s (timed twice, serially, in the per-gate timing pass).
+# That cost is per-iteration during debugging, so a 10-round session spends most of a
+# day waiting. check-fast itself was 12-14s here (timed twice). It runs the two things
+# actually catch codegen mistakes fast: the build (0 warnings) and the golden-C
+# snapshots, which pin the generated C and are exactly what the soundness work
+# perturbs.
 #
 # THIS IS NOT A SUBSTITUTE FOR `make test`, AND MUST NOT BECOME ONE. `make test`
 # stays the merge gate and the source of truth. The lesson from the v1.20.0 cycle
@@ -356,6 +363,14 @@ check-fast: wyn
 	@echo "check-fast passed. This is NOT 'make test' - run that before pushing."
 
 test: wyn $(MBEDTLS_LIB)
+	@# FIRST, because it costs under a second and because scripts/ is the one
+	@# directory in this repo that no gate watched. The measurement harness
+	@# (scripts/suite.sh, scripts/sweep_*.py) rotted while it lived outside any
+	@# repo; being tracked does not stop that, being GATED does. This roster is an
+	@# explicit list and not a glob, so a new gate is invisible until this line
+	@# exists - which is the whole reason it is here rather than assumed.
+	@echo "=== Running scripts/ syntax gate (bash -n + py_compile, with floors) ==="
+	@bash tests/lint_scripts.sh
 	@echo "=== Running assertion tests (run_bdd.sh) ==="
 	@WYN=./wyn bash tests/run_bdd.sh
 	@echo "=== Running TLS seam test ==="
