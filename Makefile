@@ -456,7 +456,10 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_arg_type_test.sh
 	@echo "=== Running Option/Result-predicate-on-a-scalar test (V-28) ==="
 	@WYN=./wyn bash tests/errors/run_scalar_option_method_test.sh
-	@WYN=./wyn bash tests/errors/run_typed_set_test.sh
+	@echo "=== Running typed-HashSet test, debug half + the wyn-check arms (V-38, #391) ==="
+	@WYN=./wyn bash tests/errors/run_typed_set_debug_test.sh
+	@echo "=== Running typed-HashSet test, --release half (V-38, #391) ==="
+	@WYN=./wyn bash tests/errors/run_typed_set_release_test.sh
 	@echo "=== Running map value-type test (HashMap.set/get namespace spelling, #429) ==="
 	@WYN=./wyn bash tests/errors/run_map_value_type_test.sh
 	@echo "=== Running void-call-type test (a void call is not an int) ==="
