@@ -61,47 +61,14 @@
 
 WYN="${WYN:-./wyn}"
 WYNABS=$(cd "$(dirname "$WYN")" && pwd)/$(basename "$WYN")
-TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
-PASS=0; FAIL=0
+# The counters, `section`/`ok`/`bad`, the sandbox and the FLOOR all come from
+# split_gate_lib.bash, which each driver sources before this file - one harness for every
+# split gate, so there is not a second floor implementation to keep in step with this one.
+# Note the sandbox comes from `gate_tmpdir` and NOT from a local `trap ... EXIT`: that trap
+# is the harness's completion check, and replacing it would let an `exit` in this file end
+# the driver before its floor is ever read.
+TMP=$(gate_tmpdir)
 ARM=0
-
-# A section header prints only when an arm under it actually runs, so the half that skips
-# the mode-independent arms does not emit bare headings.
-PENDING=""
-section(){ PENDING="$1"; }
-flush(){ if [ -n "$PENDING" ]; then echo "$PENDING"; PENDING=""; fi; }
-ok(){ flush; echo "  ok    $1"; PASS=$((PASS+1)); }
-bad(){ flush; echo "  FAIL  $1"; FAIL=$((FAIL+1)); }
-
-# verdict <half-label> <floor>   -- the gate. Called by each driver as its last command.
-#
-# TWO assertions, because `FAIL -eq 0` alone is not a gate. It says nothing about how many
-# arms RAN, and this file is driven by a skip switch (TS_CHECK_ARMS) - so a half that
-# executed nothing prints "0 pass, 0 fail" and exits 0: a fully green gate that proved
-# nothing. That is not hypothetical here. .github/workflows/ci.yml carries a comment about
-# tests/run_tests_parallel.sh, which sat in CI reporting exactly "0 pass, 0 fail" with exit
-# 0 on every run because its test list was missing; the fix there was to make it REFUSE
-# rather than report a vacuous success. This is the same medicine, in-script.
-#
-# The floor counts PASS+FAIL - assertions that actually REPORTED - not PASS. On PASS alone a
-# single legitimately-failing arm would trip the floor too and blame thinning for a plain
-# regression; the FAIL check already owns that case and names the arm.
-#
-# `-lt <floor>`, never `-ne <count>`: a floor reds when the list is thinned but stays quiet
-# when an arm is correctly ADDED, so landing a new assertion does not require editing this
-# number. The floors live in the drivers, next to the switch settings that determine them.
-verdict(){
-  half=$1; floor=$2; ran=$((PASS + FAIL))
-  echo ""
-  echo "typed-set[$half]: $PASS pass, $FAIL fail ($ran assertions ran, floor $floor)"
-  if [ "$ran" -lt "$floor" ]; then
-    echo "  FAIL  typed-set[$half] ran only $ran assertions, below its floor of $floor." >&2
-    echo "        The arm list was thinned - TS_CHECK_ARMS, an early return in a helper, or" >&2
-    echo "        a dropped section. Restore the arms; only lower the floor deliberately." >&2
-    return 1
-  fi
-  [ "$FAIL" -eq 0 ]
-}
 
 # reject <label> <source> <message-substring>
 # `wyn check` must FAIL and name the rule. Asserting the message and not just the exit
@@ -121,12 +88,14 @@ reject(){
 # caches <file>.out, so a reused directory can hand the next arm the previous arm's binary
 # and report green.
 expect(){
-  ARM=$((ARM+1)); d="$TMP/c$ARM"; mkdir -p "$d"
-  printf '%b\n' "$2" > "$d/a.wyn"
+  # `armdir`, not `d`: split_gate_lib.bash uses `d` for its own sandbox handling,
+  # and an arms file sourced into the driver shares its namespace.
+  ARM=$((ARM+1)); armdir="$TMP/c$ARM"; mkdir -p "$armdir"
+  printf '%b\n' "$2" > "$armdir/a.wyn"
   if [ "$TS_MODE" = release ]; then
-    got=$(perl -e "alarm($TS_RUN_ALARM); exec @ARGV" -- "$WYNABS" run --release "$d/a.wyn" 2>&1)
+    got=$(perl -e "alarm($TS_RUN_ALARM); exec @ARGV" -- "$WYNABS" run --release "$armdir/a.wyn" 2>&1)
   else
-    got=$(perl -e "alarm($TS_RUN_ALARM); exec @ARGV" -- "$WYNABS" run "$d/a.wyn" 2>&1)
+    got=$(perl -e "alarm($TS_RUN_ALARM); exec @ARGV" -- "$WYNABS" run "$armdir/a.wyn" 2>&1)
   fi
   got=$(printf '%s' "$got" | sed 's/\x1b\[[0-9;]*m//g' | grep -vE 'Compiled in|^Warning|unused variable')
   if [ "$got" = "$3" ]; then ok "[$TS_MODE] $1"
@@ -364,3 +333,7 @@ expect "int array literal"  'fn main() {\n  a = [1, 2, 3]\n  print(a.len())\n}' 
 expect "int-valued hashmap" 'fn main() {\n  m = {"a": 1}\n  print(m["a"])\n}' '1'
 expect "a set inside an array literal" 'fn main() {\n  s = {:1}\n  a = [s]\n  print(a.len())\n}' '1'
 
+# The tally and the floor belong to the DRIVER, which calls `gate_verdict` from
+# split_gate_lib.bash as its last command. Do not `exit` from this file: it is sourced, so
+# an exit ends the driver too - the harness's EXIT trap turns that into a failure rather
+# than a silent partial green, but a `return` is what you want.

@@ -502,8 +502,10 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_regex_contract_test.sh
 	@WYN=./wyn bash tests/errors/run_json_handle_test.sh
 	@WYN=./wyn bash tests/errors/run_option_combinator_test.sh
-	@echo "=== Running Option/Result combinator API gate ==="
-	@WYN=./wyn bash tests/errors/run_option_combinator_api_test.sh
+	@echo "=== Running Option/Result combinator API gate, debug half + the wyn-check arms (#392) ==="
+	@WYN=./wyn bash tests/errors/run_option_combinator_api_debug_test.sh
+	@echo "=== Running Option/Result combinator API gate, --release half + the slim header (#392) ==="
+	@WYN=./wyn bash tests/errors/run_option_combinator_api_release_test.sh
 	@echo "=== Running bug-batch-2 test ==="
 	@WYN=./wyn bash tests/errors/run_bug_batch2_test.sh
 	@echo "=== Running user test-runner test ==="
