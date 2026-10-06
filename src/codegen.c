@@ -1045,6 +1045,25 @@ int is_str_array_var(const char* name) {
         if (strcmp(str_array_var_names[i], name) == 0) return 1;
     return 0;
 }
+// Forget the [string]-array locals at a function boundary, exactly as
+// reset_array_vars / reset_int_array_vars / reset_float_vars / reset_sb_vars do.
+//
+// Keyed on the variable NAME only, and consulted to choose the ELEMENT accessor
+// (array_get_str vs array_get_int) and string-ness in binary ops. Without a reset
+// it accumulated every [string]-array local in the translation unit, so
+//
+//     fn a() { var ws = ["x","y"]; var xs = ws.map((s) => s.upper()); print(xs[0]) }
+//     fn b() { var xs = [10, 20];                                     print(xs[0]) }
+//
+// emitted `array_get_str(xs, 0)` inside b() for an array built with
+// array_push_int: b() printed an EMPTY LINE instead of 10, exit status 0. A
+// silently wrong answer, and order-dependent -- declare b() first and it is
+// correct. Same leak and same fix as the four tables that already reset; this
+// one had NO reset function at all.
+void reset_str_array_vars(void) {
+    for (int i = 0; i < str_array_var_count; i++) free(str_array_var_names[i]);
+    str_array_var_count = 0;
+}
 
 // Return the C identifier for a Wyn variable name: if the name collides with a
 // C keyword / runtime symbol it was declared under the "wynfn_" namespace, so

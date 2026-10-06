@@ -1,0 +1,84 @@
+// Regression: [string]-array ELEMENT tracking is per-FUNCTION, not per-program.
+//
+// `register_str_array_var` keys on the variable NAME only, and is consulted to
+// choose the element ACCESSOR (array_get_str vs array_get_int). Unlike its four
+// siblings - reset_array_vars / reset_int_array_vars / reset_float_vars /
+// reset_sb_vars - it had NO reset function at all, so the table accumulated
+// every [string]-array local in the translation unit. A LATER local sharing a
+// name with an earlier string array then read its elements through
+// array_get_str, including when the array had been built with array_push_int:
+//
+//     fn a() { var ws = ["x","y"]; var xs = ws.map((s) => s.upper()); print(xs[0]) }
+//     fn b() { var xs = [10, 20];                                     print(xs[0]) }
+//
+// b() printed an EMPTY LINE instead of 10, with exit status 0 - a silently wrong
+// answer, not a compile error, so no gate that only checks exit codes could see
+// it. Order-dependent: declare b() before a() and it is correct, which is why it
+// survives casual review.
+//
+// This is the fifth table in that family to bite. It also blocks batching test
+// arms into one program, since that is precisely what makes names collide.
+//
+// There are TWO per-function reset clusters: top-level functions reset in
+// codegen_statement, module `pub fn`s in emit_function_with_prefix. Both are
+// exercised here - deleting the module one alone left every top-level arm green.
+
+// EXPECT: X
+// EXPECT: 10
+// EXPECT: 20
+// EXPECT: B
+// EXPECT: 2
+// EXPECT: M
+// EXPECT: 31
+
+import strarr_leak_mod
+
+// Registers `xs` as a [string] array (the .map result is typed [string]).
+fn registers_str_array() -> string {
+    var ws = ["x", "y"]
+    var xs = ws.map((s) => s.upper())
+    return xs[0]
+}
+
+// Same NAME, [int] elements. Without the reset these two arms printed raw HEAP
+// ADDRESSES (measured: 4385252004 for the slot holding 10) - the int slot read
+// back through array_get_str and then used as a number. Asserting the CORRECT
+// value matters here: the wrong one is ASLR-dependent and differs every run.
+fn same_name_int_array() -> int {
+    var xs = [10, 20]
+    return xs[0] + 0
+}
+
+fn same_name_int_array_second_slot() -> int {
+    var xs = [10, 20]
+    return xs[1] + 0
+}
+
+// The [string] branch must still work AFTER the [int] one, so this arm catches a
+// fix that reset the table at the wrong moment and lost a live entry.
+//
+// It does NOT catch "drop the tracking altogether", and the distinction was
+// measured rather than assumed: with registration disabled entirely, every arm
+// here still passes, because a newer type-driven path already answers for these
+// shapes. So nothing in the 320-program corpus exercises this registry in the
+// POSITIVE direction — the registry may be redundant. That is a separate
+// question from this leak, and it is filed rather than guessed at here.
+fn str_array_again() -> string {
+    var ws = ["a", "b"]
+    var xs = ws.map((s) => s.upper())
+    return xs[1]
+}
+
+fn str_array_len_again() -> int {
+    var ws = ["a", "b"]
+    var xs = ws.map((s) => s.upper())
+    return xs.len()
+}
+
+print(registers_str_array())
+print(same_name_int_array())
+print(same_name_int_array_second_slot())
+print(str_array_again())
+print(str_array_len_again())
+print(strarr_leak_mod.str_first())
+print(strarr_leak_mod.int_second())

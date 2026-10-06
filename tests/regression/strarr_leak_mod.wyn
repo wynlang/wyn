@@ -1,0 +1,19 @@
+// Fixture for test_str_array_var_name_leak.wyn. Module `pub fn`s are emitted by a
+// DIFFERENT code path than top-level functions - emit_function_with_prefix in
+// codegen_stmt.c, which keeps its own per-function reset cluster - so the
+// [string]-array registry leak has to be guarded there too. Measured: deleting
+// only the module cluster's reset_str_array_vars() left the top-level arms of
+// that test GREEN, so without this fixture half the fix is untested.
+//
+// Declaration ORDER is load-bearing: the [string] array must be registered
+// before the same-named [int] array is emitted.
+pub fn str_first() -> string {
+    var ws = ["m", "n"]
+    var xs = ws.map((s) => s.upper())
+    return xs[0]
+}
+
+pub fn int_second() -> int {
+    var xs = [31, 41]
+    return xs[0] + 0
+}
