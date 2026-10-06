@@ -164,7 +164,9 @@ jobs:
         # the M:N scheduler instead of the thread pool. The suite must be
         # behavior-identical on both substrates.
         if: runner.os != 'Windows'
-        run: WYN_ASYNC_CORO=1 bash tests/run_bdd.sh
+        # WYN_TEST_FILTER= : a gate must not be thinnable by its environment.
+        # See the same clearing, and why, in the Makefile `test:` recipe.
+        run: WYN_ASYNC_CORO=1 WYN_TEST_FILTER= bash tests/run_bdd.sh
         shell: bash
 
       # tests/run_tests_parallel.sh USED TO RUN HERE and has been removed, not moved.

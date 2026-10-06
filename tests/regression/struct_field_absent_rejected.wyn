@@ -1,0 +1,13 @@
+// Rejection: reading a genuinely-absent field on a known user struct must be a
+// clean check-time error naming the field. Companion of
+// struct_field_typo_rejected.wyn, which carries the full rationale.
+//
+// Mirrors arm 2 of 2 of tests/errors/run_struct_field_test.sh, retained so this
+// PR stays purely additive.
+// EXPECT_CHECK_FAIL:
+// EXPECT_ERR: has no field 'z'
+struct Pt { x: int, y: int }
+fn main() {
+    var p = Pt{x: 1, y: 2}
+    println(p.z)
+}

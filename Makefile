@@ -377,7 +377,14 @@ test: wyn $(MBEDTLS_LIB)
 	@echo "=== Running scripts/ syntax gate (bash -n + py_compile, with floors) ==="
 	@bash tests/lint_scripts.sh
 	@echo "=== Running assertion tests (run_bdd.sh) ==="
-	@WYN=./wyn bash tests/run_bdd.sh
+# WYN_TEST_FILTER= is NOT redundant. The filter run_bdd.sh gained is an edit-loop
+# tool, and a gate must not be thinnable by its caller's environment: an exported
+# WYN_TEST_FILTER would otherwise narrow this step to a handful of programs and
+# still report success - "a gate passes because its matching rule got smaller" is
+# the failure this suite exists to catch. Clearing it here makes the gate's own
+# invocation define the gate. Same clearing, same reason, at ci.yml's
+# WYN_ASYNC_CORO run_bdd step.
+	@WYN=./wyn WYN_TEST_FILTER= bash tests/run_bdd.sh
 	@echo "=== Running TLS seam test ==="
 	@bash tests/tls/run_tls_seam_test.sh
 	@echo "=== Running JSON Schema derivation test ==="

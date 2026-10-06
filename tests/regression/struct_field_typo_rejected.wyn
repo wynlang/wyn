@@ -1,0 +1,23 @@
+// Rejection: a struct field TYPO used to pass `wyn check` and only fail at
+// build with a raw C error ("no member named ..."). It must be a clean
+// check-time error naming the field. Valid access: struct_field_ok.wyn.
+//
+// The check-phase directive is load-bearing here for the same reason the rule
+// is: this defect WAS a backend error and was moved into the checker. The
+// either-phase directive is satisfied by a non-zero exit from either one, so it
+// could not tell a fixed compiler from a regressed one.
+//
+// Note the expected text is taken from the DIAGNOSTIC, not from the source line
+// below: run_bdd.sh searches stdout+stderr combined, which includes the
+// compiler's echo of the offending line, so a pattern copied out of the program
+// would match even with the rule deleted. The runner rejects such a pattern.
+//
+// Mirrors arm 1 of 2 of tests/errors/run_struct_field_test.sh, retained so this
+// PR stays purely additive.
+// EXPECT_CHECK_FAIL:
+// EXPECT_ERR: has no field 'namee'
+struct User { name: string, age: int }
+fn main() {
+    var u = User{name: "a", age: 1}
+    println(u.namee)
+}

@@ -1,0 +1,12 @@
+// Rejection: an empty `0b` literal must be a clean LEXER error at check time,
+// not a silent 0. Companion of empty_hex_literal_rejected.wyn, which carries the
+// full rationale for EXPECT_CHECK_FAIL and for retaining the shell script.
+//
+// Mirrors arm 2 of 2 of tests/errors/run_empty_radix_literal_test.sh (retained:
+// it is the only Windows gate for this rule).
+// EXPECT_CHECK_FAIL:
+// EXPECT_ERR: binary literal '0b' needs at least one digit
+fn main() {
+    var a = 0b
+    println("${a}")
+}

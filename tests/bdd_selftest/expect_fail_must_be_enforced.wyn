@@ -1,0 +1,20 @@
+// NEGATIVE CONTROL for `// EXPECT_FAIL:`. The runner must report FAIL for this
+// file, and the self-test block inverts the verdict accordingly.
+//
+// This program COMPILES. It carries `// EXPECT_FAIL:` anyway. So if the runner
+// reports anything other than FAIL, EXPECT_FAIL is not being enforced — and
+// every ported rejection test in tests/regression/*_rejected.wyn would then be
+// passing vacuously, because their only assertion is that compilation fails.
+//
+// Why a control is needed at all rather than trusting the implementation: a
+// rejection directive is satisfied by the ABSENCE of success, and this repo has
+// been burned repeatedly by assertions that pass when the thing they watch
+// disappears. The directive cannot prove itself; only a program it must reject
+// can.
+//
+// Keep this program trivially valid. If it ever stops compiling for an unrelated
+// reason the control still reports FAIL and the self-test still passes — i.e. it
+// would silently stop testing anything. That is why it is one statement with no
+// dependencies, no imports and no annotations.
+// EXPECT_FAIL:
+println("this program compiles, so EXPECT_FAIL must reject it")

@@ -1,0 +1,24 @@
+// NEGATIVE CONTROL for `// EXPECT_ERR:`. The runner must report FAIL for this
+// file; the self-test block inverts the verdict.
+//
+// The construction isolates EXPECT_ERR from the directive beside it. The program
+// genuinely fails to compile (an empty `0x` literal), so `// EXPECT_FAIL:` is
+// SATISFIED. The only thing that can make the runner report FAIL is the error
+// pattern below, which no diagnostic in this compiler emits. If the runner
+// reports anything other than FAIL, EXPECT_ERR is matching nothing.
+//
+// This control earned its place by catching exactly that. Before the runner
+// stripped the compiler's echoed source window from the text it searches, this
+// file reported PASS — the diagnostic renderer prints a window of lines around
+// the error, so the `// EXPECT_ERR:` line itself appeared in the output and the
+// pattern matched ITSELF. EXPECT_ERR was asserting nothing at all, and nothing
+// else in the suite could have noticed.
+//
+// The pattern is deliberately a string no diagnostic could ever contain, and it
+// appears nowhere in this file outside its own directive line — the runner
+// rejects a pattern that occurs in the test's own non-directive source, because
+// the echoed window would satisfy such a pattern even with the rule deleted.
+// EXPECT_FAIL:
+// EXPECT_ERR: no_diagnostic_in_this_compiler_emits_this_text
+var a = 0x
+println("${a}")
