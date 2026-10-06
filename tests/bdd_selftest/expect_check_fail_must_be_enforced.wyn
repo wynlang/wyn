@@ -1,0 +1,16 @@
+// NEGATIVE CONTROL for `// EXPECT_CHECK_FAIL:`. The runner must report FAIL for
+// this file; the self-test block inverts the verdict.
+//
+// This program passes `wyn check` cleanly and carries the check-phase directive
+// anyway. If the runner does not report FAIL, EXPECT_CHECK_FAIL is not enforced.
+//
+// This control is NOT redundant with expect_fail_must_be_enforced.wyn, and the
+// difference is the whole reason the stricter directive exists. EXPECT_FAIL is
+// satisfied by a non-zero exit from EITHER phase, so a rule that was moved out
+// of the C backend and into the checker — which is what several of this
+// project's fixes actually did — still satisfies EXPECT_FAIL after it regresses,
+// because the backend emits a raw clang error instead. Only a directive that
+// pins the PHASE can tell a fixed compiler from a regressed one, and only this
+// control can tell whether that pinning is real.
+// EXPECT_CHECK_FAIL:
+println("this program checks clean, so EXPECT_CHECK_FAIL must reject it")

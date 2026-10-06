@@ -1,0 +1,23 @@
+// Rejection: an empty `0x` literal (no digits after the prefix) used to lex as
+// a 0-valued INT, pass `wyn check`, and then hit an internal codegen error. It
+// must be a clean LEXER error at check time. Valid radix literals are covered
+// by tests/regression/radix_literal_ok.wyn.
+//
+// Why the check-phase directive and not the either-phase one: "at check time" is
+// the whole point of the rule, and only the check-phase directive asserts which
+// phase rejected. With the either-phase directive the mutant that deletes the
+// lexer guard still exits non-zero - the C backend emits a raw clang error,
+// "invalid suffix 'x' on integer constant" - so the gate would stay green on
+// exactly the regression it exists to catch. Measured, not assumed.
+//
+// Mirrors arm 1 of 2 of tests/errors/run_empty_radix_literal_test.sh, which is
+// deliberately RETAINED: .github/workflows/ci.yml gates that script on Windows
+// and excludes run_bdd.sh there, so deleting it would DROP Windows coverage of
+// this rule rather than move it. Retire it in a follow-up once the rejection
+// path here is Windows-runnable.
+// EXPECT_CHECK_FAIL:
+// EXPECT_ERR: hex literal '0x' needs at least one digit
+fn main() {
+    var a = 0x
+    println("${a}")
+}

@@ -1,0 +1,16 @@
+// NEGATIVE CONTROL for the directive-conflict rule. The runner must report FAIL
+// for this file; the self-test block inverts the verdict.
+//
+// `// EXPECT:` asserts a program's OUTPUT, which presupposes it ran. The
+// rejection directives assert it never got that far. A file carrying both is
+// incoherent, and the runner rejects the combination rather than silently
+// honouring one of them.
+//
+// Without this control the conflict rule is the one rule in the runner with no
+// coverage, so it could quietly become a no-op — at which point a test carrying
+// both directives would be scored on whichever branch happened to run first, and
+// a contributor who added `// EXPECT:` to a rejection test would get a green
+// result for a test that asserts nothing.
+// EXPECT: ok
+// EXPECT_FAIL:
+println("ok")
