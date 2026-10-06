@@ -31,8 +31,10 @@
 # would not have compiled either; they are two different representations. #392 therefore
 # lowers each combinator INLINE over the family struct and adds no runtime function at
 # all. Full coverage (every method x every payload x both build modes) lives in
-# tests/errors/run_option_combinator_api_test.sh; this file keeps the ORIGINAL programs
-# from the defect report, now asserted to produce answers.
+# tests/errors/option_combinator_api_arms.bash, run by the two drivers
+# run_option_combinator_api_debug_test.sh and run_option_combinator_api_release_test.sh;
+# this file keeps the ORIGINAL programs from the defect report, now asserted to produce
+# answers.
 #
 # What the live representation provides, read off the archive rather than guessed -
 # `nm runtime/libwyn_rt.a | grep ' T _Option'`:

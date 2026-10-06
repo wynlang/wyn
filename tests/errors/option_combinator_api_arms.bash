@@ -2,6 +2,35 @@
 # The Option/Result COMBINATOR API (#392): map, and_then, filter, expect, or_else,
 # map_err.
 #
+# THIS FILE IS SOURCED, NOT RUN. The two drivers are
+# `run_option_combinator_api_debug_test.sh` and
+# `run_option_combinator_api_release_test.sh`; they exist so the debug and `--release`
+# halves can run CONCURRENTLY. It deliberately does NOT end in `.sh`, so a roster derived
+# from `tests/**/*.sh` cannot mistake a sourced library for a gate, and it is not
+# executable. Same shape as typed_set_arms.bash, deliberately, and the two share one
+# harness - tests/errors/split_gate_lib.bash owns the counters, the tally and the FLOOR.
+#
+# WHY ONE ARM LIST AND TWO DRIVERS. The previous single script was the SLOWEST GATE IN THE
+# PROJECT: 751s measured in a serial sweep of all 146 gates (462s on a re-time), 11-15% of
+# the whole suite on its own and 1.3-2.3x the next one. It earned that by building and
+# running every arm in BOTH dev and `--release` back to back inside one `both()` loop, on
+# one serial `make test` recipe line that nothing could overlap. At N>=7 parallel workers
+# the floor of the ENTIRE suite was this one script. Copying the arms into two scripts
+# would have made two lists of the same thing that have to agree - the defect shape this
+# repo keeps paying for - so the ARMS live here once and the drivers set three variables:
+#
+#   OCA_MODE        debug | release  - which mode every `both` / `expect_panic` arm runs in
+#   OCA_CHECK_ARMS  1 | 0            - run the mode-independent arms (`reject`: `wyn check`
+#                                      only, and `wyn check` has no --release)
+#   OCA_SLIM_ARM    1 | 0            - run the `wyn run --release` slim-header arm, which
+#                                      is release-only by construction
+#
+# The arm set is UNCHANGED, only partitioned: 60 `both` arms x 2 modes + 3 `expect_panic`
+# arms x 2 modes + 7 mode-independent `reject` arms + 1 slim-header arm = 134, exactly what
+# the single script asserted. Debug half = 60 + 3 + 7 = 70; release half = 60 + 3 + 1 = 64;
+# 70 + 64 = 134. Each driver names a FLOOR on the arms it actually ran, enforced by
+# `gate_verdict`, so a skip switch left on cannot report a partial run as success.
+#
 # THESE USED TO BE REJECTED. src/types.c advertised ten of them while lowering them to
 # `wyn_optional_map` / `wyn_result_map`, archive functions that take `WynOptional*` /
 # `WynResult*` - a heap-boxed representation codegen never emits. Codegen emits the
@@ -14,12 +43,16 @@
 # the way the family-completeness gate does: the only names these lowerings call are
 # `<Family>_Some/_None/_Ok/_Err`, and that gate already pins all of them in BOTH headers.
 #
-# WHY EVERY ARM RUNS IN BOTH BUILD MODES. `wyn build` and `wyn build --release` emit
-# different runtime headers (wyn_runtime.h vs the hand-maintained wyn_runtime_slim.h), so
-# a lowering that names something absent from the slim one is green in one mode and red
-# in the other. And `wyn build --release` deliberately keeps the FULL header, so the last
-# section uses `wyn run --release` - the only command that actually compiles the slim
-# header.
+# WHY EVERY ARM STILL RUNS IN BOTH BUILD MODES, ACROSS THE TWO DRIVERS. `wyn build` and
+# `wyn build --release` emit different runtime headers (wyn_runtime.h vs the
+# hand-maintained wyn_runtime_slim.h), so a lowering that names something absent from the
+# slim one is green in one mode and red in the other. That is why the release half is a
+# half and not a deletion. And `wyn build --release` deliberately keeps the FULL header, so
+# the slim-header section uses `wyn run --release` - the only command that actually
+# compiles the slim header. Note the flag position in both: `wyn build --release FILE` and
+# `wyn run --release FILE`, flags BEFORE the path. The other order silently compiles
+# non-release and hands `--release` to the program, which would make the release half a
+# second debug run.
 #
 # WHY THE ARMS ASSERT PAYLOAD-SPECIFIC OPERATIONS AND NOT JUST PRINTED BYTES. `map`
 # CHANGES THE FAMILY - the result family comes from the callback's RETURN type, not the
@@ -28,37 +61,64 @@
 # exactly how #413's `Result<string,E>.unwrap_or` printed a pointer as a number), so each
 # cross-type arm then calls an operation only the NEW payload supports: `.upper()` on a
 # string, `+ 0.25` on a float.
-set -uo pipefail
+: "${OCA_MODE:?option_combinator_api_arms.bash is sourced; set OCA_MODE=debug|release}"
+: "${OCA_CHECK_ARMS:?set OCA_CHECK_ARMS=1 to run the mode-independent (wyn check) arms}"
+: "${OCA_SLIM_ARM:?set OCA_SLIM_ARM=1 to run the wyn-run---release slim-header arm}"
+# Every alarm budget is the driver's to set - no hardcoded alarm is left in this file, so
+# the two halves cannot silently share one budget.
+: "${OCA_BUILD_ALARM:=180}"   # per `wyn build` invocation
+: "${OCA_EXEC_ALARM:=60}"     # per built-binary execution
+: "${OCA_CHK_ALARM:=120}"     # per `wyn check` invocation
+: "${OCA_SLIM_ALARM:=240}"    # the one `wyn run --release` arm (compiles AND runs)
+
+# MODE -> the flag, and the label. `${MODE_FLAG:-dev}` reproduces the single script's
+# labels byte for byte: "dev" for the empty flag, "--release" otherwise - so the assertion
+# labels the two halves print are the same strings the one script printed.
+case "$OCA_MODE" in
+  debug)   MODE_FLAG="" ;;
+  release) MODE_FLAG="--release" ;;
+  # `exit` and not `return`, because a wrong mode must not reach the verdict at all. The
+  # harness's EXIT trap preserves a non-zero status, so this still reads as 2.
+  *) echo "option_combinator_api_arms.bash: OCA_MODE must be debug|release, got '$OCA_MODE'" >&2; exit 2 ;;
+esac
+
 WYN="${WYN:-./wyn}"
 case "$WYN" in /*) ;; *) WYN="$(pwd)/$WYN" ;; esac
-TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
-PASS=0; FAIL=0
-ok(){ echo "  ok    $1"; PASS=$((PASS+1)); }
-bad(){ echo "  FAIL  $1"; FAIL=$((FAIL+1)); }
+# The counters, `section`/`ok`/`bad`, the sandbox and the FLOOR all come from
+# split_gate_lib.bash, which each driver sources before this file - the same harness
+# typed_set_arms.bash uses, so there is ONE floor implementation and not one per split gate.
+# Note the sandbox comes from `gate_tmpdir` and NOT from a local `trap ... EXIT`: that trap
+# is the harness's completion check, and replacing it would let an `exit` in this file end
+# the driver before its floor is ever read.
+TMP=$(gate_tmpdir)
 
-# both <label> <program> <expected-stdout>  - builds and runs in dev AND --release.
+# both <label> <program> <expected-stdout>  - builds and runs in $OCA_MODE.
+# The body is the single script's loop body unchanged; only the `for mode in "" "--release"`
+# became one mode, fixed by the driver.
 both() {
-    local label="$1" prog="$2" want="$3" mode got
+    local label="$1" prog="$2" want="$3" got
+    local mode="$MODE_FLAG"
     printf '%s\n' "$prog" > "$TMP/t.wyn"
-    for mode in "" "--release"; do
-        rm -f "$TMP/t" "$TMP/t.wyn.c"
-        if ! (cd "$TMP" && perl -e 'alarm(180); exec @ARGV' -- "$WYN" build $mode "$TMP/t.wyn") \
-             > "$TMP/b.log" 2>&1; then
-            bad "$label (${mode:-dev}) builds"
-            grep -m1 -oE "(error|Error)[:@] .*" "$TMP/b.log" | cut -c1-110 | sed 's/^/          /'
-            continue
-        fi
-        got=$(perl -e 'alarm(60); exec @ARGV' -- "$TMP/t" 2>&1)
-        if [ "$got" = "$want" ]; then ok "$label (${mode:-dev})"
-        else bad "$label (${mode:-dev}): want [$(echo "$want" | tr '\n' '|')] got [$(echo "$got" | tr '\n' '|')]"; fi
-    done
+    rm -f "$TMP/t" "$TMP/t.wyn.c"
+    if ! (cd "$TMP" && perl -e "alarm($OCA_BUILD_ALARM); exec @ARGV" -- "$WYN" build $mode "$TMP/t.wyn") \
+         > "$TMP/b.log" 2>&1; then
+        bad "$label (${mode:-dev}) builds"
+        grep -m1 -oE "(error|Error)[:@] .*" "$TMP/b.log" | cut -c1-110 | sed 's/^/          /'
+        return 0
+    fi
+    got=$(perl -e "alarm($OCA_EXEC_ALARM); exec @ARGV" -- "$TMP/t" 2>&1)
+    if [ "$got" = "$want" ]; then ok "$label (${mode:-dev})"
+    else bad "$label (${mode:-dev}): want [$(echo "$want" | tr '\n' '|')] got [$(echo "$got" | tr '\n' '|')]"; fi
 }
 
 # reject <label> <program> <substring the message must contain>
+# Mode-independent: `wyn check` takes no --release, so these would be IDENTICAL work in
+# both halves. Only the driver with OCA_CHECK_ARMS=1 runs them.
 reject() {
+    [ "$OCA_CHECK_ARMS" = 1 ] || return 0
     local label="$1" out code
     printf '%s\n' "$2" > "$TMP/r.wyn"
-    out=$(perl -e 'alarm(120); exec @ARGV' -- "$WYN" check "$TMP/r.wyn" 2>&1); code=$?
+    out=$(perl -e "alarm($OCA_CHK_ALARM); exec @ARGV" -- "$WYN" check "$TMP/r.wyn" 2>&1); code=$?
     if [ $code -ne 0 ] && echo "$out" | grep -q "$3"; then ok "reject: $label"
     else bad "reject: $label (code=$code) [$(echo "$out" | tr '\n' '|' | cut -c1-130)]"; fi
 }
@@ -76,7 +136,7 @@ fn n_() -> float? { return None }'
 OB='fn s_() -> bool? { return Some(true) }
 fn n_() -> bool? { return None }'
 
-echo "-- Option.map: Some(x) -> Some(f(x)), None -> None"
+section "-- Option.map: Some(x) -> Some(f(x)), None -> None"
 both "Option<int>.map same payload" "$OI
 fn main() {
   print(s_().map(fn(x: int) -> int { return x * 3 }).unwrap_or(-1))
@@ -102,7 +162,7 @@ fn main() {
 }" 'false
 true'
 
-echo "-- Option.map CHANGES the family: the result family is the callback's return type"
+section "-- Option.map CHANGES the family: the result family is the callback's return type"
 # `.upper()` / `+ 0.25` on the mapped value is the load-bearing part: it can only compile
 # and answer correctly if the result really is the NEW payload family.
 both "Option<int>.map -> Option<string>" "$OI
@@ -142,7 +202,7 @@ fn main() {
 }" 'true
 false'
 
-echo "-- Option.and_then: the callback already returns an Option, so it is flattened"
+section "-- Option.and_then: the callback already returns an Option, so it is flattened"
 both "Option<int>.and_then same family" "$OI
 fn dbl(x: int) -> int? { return Some(x + x) }
 fn main() {
@@ -179,7 +239,7 @@ fn main() {
 }" 'false
 true'
 
-echo "-- Option.filter: Some(x) when p(x), else None - and the family never changes"
+section "-- Option.filter: Some(x) when p(x), else None - and the family never changes"
 both "Option<int>.filter" "$OI
 fn main() {
   print(s_().filter(fn(x: int) -> bool { return x > 0 }).unwrap_or(-1))
@@ -213,7 +273,7 @@ fn main() {
 false
 false'
 
-echo "-- Option.expect: yields the payload, and the type is the payload's"
+section "-- Option.expect: yields the payload, and the type is the payload's"
 both "Option<int>.expect" "$OI
 fn main() { print(s_().expect(\"need it\") + 1) }" '5'
 both "Option<string>.expect" "$OS
@@ -223,7 +283,7 @@ fn main() { print(s_().expect(\"need it\") + 0.25) }" '1.75'
 both "Option<bool>.expect" "$OB
 fn main() { print(s_().expect(\"need it\")) }" 'true'
 
-echo "-- Option.or_else: None -> f(), a value passes straight through"
+section "-- Option.or_else: None -> f(), a value passes straight through"
 both "Option<int>.or_else" "$OI
 fn fb() -> int? { return Some(7) }
 fn main() {
@@ -265,7 +325,7 @@ fn e_() -> Result<float, string> { return Err("boom") }'
 RB='fn k_() -> Result<bool, string> { return Ok(true) }
 fn e_() -> Result<bool, string> { return Err("boom") }'
 
-echo "-- Result.map: Ok(x) -> Ok(f(x)), Err survives UNCHANGED"
+section "-- Result.map: Ok(x) -> Ok(f(x)), Err survives UNCHANGED"
 both "Result<int>.map same payload" "$RI
 fn main() {
   print(k_().map(fn(x: int) -> int { return x * 3 }).unwrap_or(-1))
@@ -293,7 +353,7 @@ fn main() {
 }" 'false
 true'
 
-echo "-- Result.map CHANGES the family, and carries the error across the change"
+section "-- Result.map CHANGES the family, and carries the error across the change"
 both "Result<int>.map -> Result<string>" "$RI
 fn main() {
   print(k_().map(fn(x: int) -> string { return \"i\${x}\" }).unwrap_or(\"-\").upper())
@@ -326,7 +386,7 @@ fn main() {
 }" 'true
 false'
 
-echo "-- Result.and_then: flattened, and an Err from either side is reported"
+section "-- Result.and_then: flattened, and an Err from either side is reported"
 both "Result<int>.and_then same family" "$RI
 fn dbl(x: int) -> Result<int, string> { return Ok(x + x) }
 fn main() {
@@ -363,7 +423,7 @@ fn main() {
 }" 'false
 true'
 
-echo "-- Result.map_err: Err(e) -> Err(f(e)), Ok untouched, family unchanged"
+section "-- Result.map_err: Err(e) -> Err(f(e)), Ok untouched, family unchanged"
 both "Result<int>.map_err" "$RI
 fn shout(e: string) -> string { return e.upper() }
 fn main() {
@@ -393,7 +453,7 @@ fn main() {
 }" 'BOOM
 true'
 
-echo "-- Result.expect: yields the Ok payload, typed as that payload"
+section "-- Result.expect: yields the Ok payload, typed as that payload"
 both "Result<int>.expect" "$RI
 fn main() { print(k_().expect(\"need it\") + 1) }" '5'
 both "Result<string>.expect" "$RS
@@ -403,7 +463,7 @@ fn main() { print(k_().expect(\"need it\") + 0.25) }" '1.75'
 both "Result<bool>.expect" "$RB
 fn main() { print(k_().expect(\"need it\")) }" 'true'
 
-echo "-- Result.or_else: Err -> f(), an Ok passes straight through"
+section "-- Result.or_else: Err -> f(), an Ok passes straight through"
 both "Result<int>.or_else" "$RI
 fn fb() -> Result<int, string> { return Ok(7) }
 fn main() {
@@ -436,20 +496,19 @@ false'
 # ---------------------------------------------------------------------------
 # expect() on an EMPTY value: the CALLER's message, and a failing exit status.
 # ---------------------------------------------------------------------------
-echo "-- expect() panics with the caller's message"
+section "-- expect() panics with the caller's message"
 expect_panic() {   # $1 label  $2 program  $3 expected stderr line
-    local label="$1" mode out code
+    local label="$1" out code
+    local mode="$MODE_FLAG"
     printf '%s\n' "$2" > "$TMP/x.wyn"
-    for mode in "" "--release"; do
-        rm -f "$TMP/x" "$TMP/x.wyn.c"
-        if ! (cd "$TMP" && perl -e 'alarm(180); exec @ARGV' -- "$WYN" build $mode "$TMP/x.wyn") \
-             > "$TMP/b.log" 2>&1; then
-            bad "$label (${mode:-dev}) builds"; continue
-        fi
-        out=$(perl -e 'alarm(60); exec @ARGV' -- "$TMP/x" 2>&1); code=$?
-        if [ $code -ne 0 ] && [ "$out" = "$3" ]; then ok "$label (${mode:-dev})"
-        else bad "$label (${mode:-dev}): code=$code out=[$out] want=[$3]"; fi
-    done
+    rm -f "$TMP/x" "$TMP/x.wyn.c"
+    if ! (cd "$TMP" && perl -e "alarm($OCA_BUILD_ALARM); exec @ARGV" -- "$WYN" build $mode "$TMP/x.wyn") \
+         > "$TMP/b.log" 2>&1; then
+        bad "$label (${mode:-dev}) builds"; return 0
+    fi
+    out=$(perl -e "alarm($OCA_EXEC_ALARM); exec @ARGV" -- "$TMP/x" 2>&1); code=$?
+    if [ $code -ne 0 ] && [ "$out" = "$3" ]; then ok "$label (${mode:-dev})"
+    else bad "$label (${mode:-dev}): code=$code out=[$out] want=[$3]"; fi
 }
 expect_panic "Option.expect on None" "$OI
 fn main() { print(n_().expect(\"value must be present\")) }" 'value must be present'
@@ -464,7 +523,7 @@ fn main() { print(n_().expect(\"100% required: %s %d %n\")) }" '100% required: %
 # ---------------------------------------------------------------------------
 # Chaining, and the SLIM header.
 # ---------------------------------------------------------------------------
-echo "-- chained combinators"
+section "-- chained combinators"
 both "map.map.filter.unwrap_or chain" "$OI
 fn main() {
   print(s_().map(fn(x: int) -> int { return x * 3 }).map(fn(y: int) -> string { return \"y\${y}\" }).filter(fn(s: string) -> bool { return s.len() > 1 }).unwrap_or(\"-\").upper())
@@ -484,8 +543,11 @@ fn main() {
 # `wyn build --release` deliberately keeps the FULL runtime header, so none of the arms
 # above compile wyn_runtime_slim.h at all. `wyn run --release` is the one command that
 # emits it, so it is the only way a missing slim declaration becomes a compile error.
-echo "-- the SLIM header, actually compiled (wyn run --release)"
-cat > "$TMP/slim.wyn" <<'WYN'
+# RELEASE-ONLY BY CONSTRUCTION, which is why it is gated on its own switch rather than on
+# OCA_MODE: there is no debug spelling of this arm to run.
+if [ "$OCA_SLIM_ARM" = 1 ]; then
+  section "-- the SLIM header, actually compiled (wyn run --release)"
+  cat > "$TMP/slim.wyn" <<'WYN'
 fn s_() -> string? { return Some("ab") }
 fn e_() -> Result<int, string> { return Err("boom") }
 fn shout(x: string) -> string { return x.upper() }
@@ -495,18 +557,19 @@ fn main() {
   print(s_().expect("here"))
 }
 WYN
-out=$(cd "$TMP" && perl -e 'alarm(240); exec @ARGV' -- "$WYN" run --release "$TMP/slim.wyn" 2>&1); rc=$?
-if [ $rc -eq 0 ] && echo "$out" | grep -q "^AB$" && echo "$out" | grep -q "^BOOM$"; then
-    ok "combinators compile against the SLIM header (wyn run --release)"
-else
-    bad "combinators against the slim header (rc=$rc) [$(echo "$out" | tr '\n' '|' | cut -c1-140)]"
+  out=$(cd "$TMP" && perl -e "alarm($OCA_SLIM_ALARM); exec @ARGV" -- "$WYN" run --release "$TMP/slim.wyn" 2>&1); rc=$?
+  if [ $rc -eq 0 ] && echo "$out" | grep -q "^AB$" && echo "$out" | grep -q "^BOOM$"; then
+      ok "combinators compile against the SLIM header (wyn run --release)"
+  else
+      bad "combinators against the slim header (rc=$rc) [$(echo "$out" | tr '\n' '|' | cut -c1-140)]"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
 # What is still REFUSED, and refused with a reason. A combinator API that silently
 # accepts a shape it cannot lower is how the original defect looked.
 # ---------------------------------------------------------------------------
-echo "-- refused, with the reason named"
+section "-- refused, with the reason named"
 reject "map_err on an Option" 'fn g() -> int? { return Some(1) }
 fn main() { print(g().map_err(fn(e: string) -> string { return e })) }' \
         "Option does not have 'map_err()'"
@@ -536,7 +599,7 @@ fn main() { print(gp().map(fn(p: P) -> int { return p.x })) }' \
 # The receiver is recognised by its MONOMORPHIC FAMILY NAME ("OptionInt"), so a USER
 # struct whose name merely starts with Option/Result and which really defines one of
 # these methods must keep working. This arm is what fails if that guard is dropped.
-echo "-- a user struct named Option*/Result* keeps its own methods"
+section "-- a user struct named Option*/Result* keeps its own methods"
 both "user struct with its own map/filter" 'struct ResultSet {
   n: int
   fn map(self) -> int { return self.n * 2 }
@@ -577,7 +640,7 @@ both "array map/filter still lower as arrays" 'fn main() {
 # are asserted so that whoever gives LambdaExpr a return type sees BOTH change together
 # and does not fix one while leaving the other.
 # ---------------------------------------------------------------------------
-echo "-- pre-existing: a lambda's declared '-> bool' is dropped by the parser"
+section "-- pre-existing: a lambda's declared '-> bool' is dropped by the parser"
 both "comparison-bodied LAMBDA picks the Int family (pre-existing)" "$OF
 fn main() { print(s_().map(fn(x: float) -> bool { return x > 1.0 }).unwrap_or(false)) }" '1'
 both "the array path has the identical symptom (pre-existing)" 'fn main() {
@@ -587,4 +650,8 @@ both "a NAMED fn with the same signature picks the Bool family" "$OF
 fn big(x: float) -> bool { return x > 1.0 }
 fn main() { print(s_().map(big).unwrap_or(false)) }" 'true'
 
-echo ""; echo "option-combinator-api: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]
+# The tally and the floor belong to the DRIVER, which calls `gate_verdict` from
+# split_gate_lib.bash as its last command - see run_option_combinator_api_debug_test.sh /
+# _release_test.sh. Do not `exit` from this file: it is sourced, so an exit ends the driver
+# too - the harness's EXIT trap turns that into a failure rather than a silent partial
+# green, but a `return` is what you want.

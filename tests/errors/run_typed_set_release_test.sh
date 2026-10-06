@@ -18,15 +18,20 @@
 # Deliberately does NOT cd: `make test` invokes this as `WYN=./wyn bash tests/errors/...`
 # from the repo root and the arms file resolves that relative WYN against the cwd.
 set -uo pipefail
+# shellcheck source=tests/errors/split_gate_lib.bash
+. "$(dirname "$0")/split_gate_lib.bash"
+# FLOOR = the 50 `expect` arms, the only ones this half runs (TS_CHECK_ARMS=0 skips the 38
+# `wyn check`-only arms, which the debug half owns):
+#   grep -cE '^expect ' tests/errors/typed_set_arms.bash
+# 88 + 50 = 138, the tally the single pre-split script printed.
+# It is a FLOOR, so adding an arm needs no edit here; see `gate_verdict` in
+# split_gate_lib.bash. gate_begin must precede the arms: it installs the EXIT trap that
+# catches an arms file that exits before the verdict is reached.
+gate_begin "typed-set[release]" 50
 export TS_MODE=release
 export TS_CHECK_ARMS=0
 export TS_RUN_ALARM=90
 export TS_CHK_ALARM=20
 # shellcheck source=tests/errors/typed_set_arms.bash
 . "$(dirname "$0")/typed_set_arms.bash"
-# FLOOR = the 50 `expect` arms, the only ones this half runs (TS_CHECK_ARMS=0 skips the 38
-# `wyn check`-only arms, which the debug half owns):
-#   grep -cE '^expect ' tests/errors/typed_set_arms.bash
-# 88 + 50 = 138, the tally the single pre-split script printed.
-# It is a FLOOR, so adding an arm needs no edit here; see `verdict` in the arms file.
-verdict release 50
+gate_verdict
