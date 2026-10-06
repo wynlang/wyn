@@ -153,3 +153,8 @@ benchmarks/*
 # untracked in `git status` after one benchmark run. This re-ignores them; it must
 # stay BELOW the exception to win.
 benchmarks/*.wyn.c
+
+# Python bytecode. scripts/sweep_*.py import scripts/sweep_common.py, so running a
+# sweep from the repo leaves scripts/__pycache__/ in `git status` every time.
+__pycache__/
+*.pyc
