@@ -56,7 +56,7 @@ cp -r include/* "$VENDOR_DIR/tcc_include/" 2>/dev/null || true
 echo "Building libwyn_rt_tcc.a..."
 cd "$WYN_ROOT"
 mkdir -p /tmp/tcc_rt_build
-for f in src/wyn_arena.c src/runtime_exports.c src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/spawn.c src/spawn_fast.c src/future.c src/net.c src/net_runtime.c src/test_runtime.c src/net_advanced.c src/file_io_simple.c src/stdlib_enhanced.c; do
+for f in src/wyn_arena.c src/runtime_exports.c src/wyn_wrapper.c src/wyn_interface.c src/io.c src/optional.c src/result.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/spawn.c src/spawn_fast.c src/future.c src/test_runtime.c src/net_advanced.c src/file_io_simple.c src/stdlib_enhanced.c; do
     "$VENDOR_DIR/bin/tcc" -c -I src -w "$f" -o "/tmp/tcc_rt_build/$(basename "$f" .c).o" 2>/dev/null || true
 done
 # Use ar rc (no ranlib) for TCC-compatible archive

@@ -2,6 +2,13 @@
 #define WYN_RUNTIME_H
 #define _POSIX_C_SOURCE 200809L
 #define _DEFAULT_SOURCE 1
+// MUST come AFTER the two feature macros above, not before. arc_runtime.h pulls
+// in <stdint.h>, which on glibc includes <features.h>, and features.h LATCHES
+// the feature-test macro set on first inclusion - so declaring _POSIX_C_SOURCE
+// afterwards is too late and POSIX declarations silently disappear. Invisible on
+// macOS; it breaks the Linux build. Found by verifying this change on real glibc,
+// not by reading.
+#include "arc_runtime.h"
 
 // Reference counting (wyn_rc.c)
 #include <stddef.h>
@@ -177,7 +184,6 @@ static inline char* wyn_sb_finish(WynStrBuf* sb) {
 #include <errno.h>
 #include "wyn_interface.h"
 #include "io.h"
-#include "arc_runtime.h"
 #include "spawn.h"
 #include "gui.h"
 #include "future.h"
@@ -5027,8 +5033,6 @@ int bit_clear(int x, int pos) { return x & ~(1 << pos); }
 int bit_toggle(int x, int pos) { return x ^ (1 << pos); }
 int bit_check(int x, int pos) { return (x >> pos) & 1; }
 int bit_count(int x) { int c = 0; while(x) { c += x & 1; x >>= 1; } return c; }
-
-// ARC functions are provided by arc_runtime.c
 
 // Result type implementations
 // The Ok payload is `long long`, NOT `int`: Wyn's `int` IS a 64-bit long long

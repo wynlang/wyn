@@ -1,0 +1,39 @@
+// Coverage for `check_file_exists`, which had NONE anywhere in the tree.
+//
+// Why this test exists, and why it is in the same change as a large deletion:
+// `src/io.c` defines 42 functions and exactly ONE of them is referenced outside
+// io.c/io.h — `wyn_file_exists`. The only Wyn constructs that emit it are
+// `check_file_exists(path)` and `check_file_exists_stored()`
+// (src/codegen_expr.c:2260 and :2303), and NO .wyn file in tests/ or examples/
+// used either. So the single live symbol holding up that file was ungated: a
+// future tidy-up could delete it and every gate would stay green.
+//
+// Note it is NOT the same function as `File::exists`, which lowers to
+// `file_exists`, defined inline at wyn_runtime.h:3327. That distinction cost a
+// verification pass: a control program written with `File::exists` kept passing
+// with `wyn_file_exists` deleted, which looked like evidence the symbol was dead
+// when it was only evidence the probe was wrong.
+//
+// Proven to be load-bearing: delete the definition at src/io.c:211-219, rebuild
+// the runtime lib, and this program FAILS TO BUILD (rc=1).
+// EXPECT: present
+// EXPECT: absent
+fn main() {
+    // An ABSOLUTE path, deliberately. A relative one such as "README.md" passes
+    // only while the harness happens to run from the repo root, and run_bdd.sh
+    // builds each test in a $TMPDIR sandbox — so a relative path makes this test's
+    // result depend on a harness detail rather than on the compiler. /etc is safe
+    // here specifically because ci.yml excludes run_bdd.sh from the Windows job;
+    // if that ever changes, this arm needs a platform split, not a silent skip.
+    if check_file_exists("/etc/hosts") {
+        println("present")
+    } else {
+        println("MISSING - check_file_exists returned false for a file that exists")
+    }
+
+    if check_file_exists("/etc/no_such_file_in_this_repo_xyz") {
+        println("WRONG - check_file_exists returned true for a file that does not exist")
+    } else {
+        println("absent")
+    }
+}

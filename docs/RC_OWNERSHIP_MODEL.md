@@ -15,11 +15,10 @@ All claims below are grounded in the actual generated C (`./wyn build x.wyn
 
 ## 0. TL;DR
 
-- There are **two independent "RC" systems** in the tree. Only one is live for
-  strings: the `wyn_rc_*` refcount in `src/wyn_rc.c`. The `wyn_arc_*` /
-  `WynObject` system in `src/arc_runtime.c` is legacy and is **not** on the
-  string or enum path (grep shows codegen never emits `wyn_arc_retain/release`
-  for user strings; the string releases are all `wyn_rc_release`).
+- There is **one** "RC" system in the tree: the `wyn_rc_*` refcount in
+  `src/wyn_rc.c`. There used to be a second, the `wyn_arc_*` / `WynObject` system in
+  `src/arc_runtime.c`; it was never on the string or enum path and has been
+  **deleted** (see §1.6).
 - The compiler has **no move/alias analysis**. Ownership is inferred by a set of
   **syntactic heuristics in codegen** (per-`STMT_VAR` init-expression shape),
   layered over a single-owner "release every tracked string once at scope/return
@@ -114,15 +113,23 @@ void wyn_rc_release(const void* ptr) {
   heap-corruption / double-free depending on allocator reuse. So the magic-poison
   is a **best-effort** guard, not a correctness guarantee.
 
-### 1.6 The other (legacy) system — `src/arc_runtime.c`
+### 1.6 The other (legacy) system — `src/arc_runtime.c` — **deleted**
 
-`WynArc` (`arc_runtime.c:5-20`) and `WynObject`/`wyn_arc_alloc`/`wyn_arc_retain`/
-`wyn_arc_release` (`arc_runtime.c:23-44`) use a **non-atomic** `ref_count` and a
-destructor hook. `pop_scope()` in `src/codegen.c:1439-1443` calls
-`wyn_arc_release` on tracked `string_objects[]`, but that array is only populated
-by an ARC-object path that the string codegen no longer uses (strings are emitted
-as `const char*`, not `WynObject*`). Treat `arc_runtime.c` as **out of scope** for
-#32/#25; the live model is `wyn_rc_*`.
+`WynArc`, `WynObject` and the eleven `wyn_arc_*` entry points used a **non-atomic**
+`ref_count` and a destructor hook. They had exactly two apparent callers and both
+were unreachable by construction:
+
+- `pop_scope()` in `src/codegen.c` called `wyn_arc_release` over
+  `scopes[].string_objects[]`, but nothing ever incremented `string_count`, so the
+  loop ran zero times.
+- `codegen_stmt.c` emitted `wyn_arc_release(obj->field)` inside each struct's
+  `_cleanup` function, guarded by `field_arc_managed[i]` — whose only assignment in
+  the tree is `bool needs_arc = false;` (`parser.c:4008`).
+
+`src/arc_runtime.c`, `src/net.c`, `src/net.h`, `src/net_runtime.c` and `src/arena.h`
+were therefore removed. `src/arc_runtime.h` survives trimmed to the `WynTypeId` enum,
+which is the canonical definition shared by `wyn_runtime.h` and
+`wyn_runtime_slim.h`. The live model is `wyn_rc_*`.
 
 ---
 
@@ -513,9 +520,8 @@ Do **not** hand-patch each; note them as the motivation for the eventual **Optio
 C** escape analysis and defer to a dedicated epic (this is where prior attempts
 over-reached). Record it in the release plan.
 
-**Defer explicitly:** the legacy `arc_runtime.c` / `WynObject` system (dead for
-strings/enums) — leave untouched; consider removal in a separate cleanup once
-confirmed unreferenced.
+**Done:** the legacy `arc_runtime.c` / `WynObject` system was confirmed unreferenced
+and removed in the separate cleanup this entry asked for. See §1.6.
 
 ---
 

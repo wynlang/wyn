@@ -48,7 +48,7 @@ int _fileno(FILE* stream);
 const char* wyn_runtime_sources[] = {
     "src/wyn_arena.c", "src/wyn_rc.c", "src/wyn_wrapper.c", "src/wyn_interface.c",
     "src/io.c", "src/optional.c", "src/result.c",
-    "src/arc_runtime.c", "src/concurrency.c", "src/async_runtime.c",
+    "src/concurrency.c", "src/async_runtime.c",
     "src/safe_memory.c", "src/error.c", "src/string_runtime.c",
     "src/hashmap.c", "src/hashset.c", "src/json.c",
     "src/stdlib_runtime.c", "src/hashmap_runtime.c",
@@ -56,7 +56,7 @@ const char* wyn_runtime_sources[] = {
     "src/stdlib_time.c", "src/stdlib_crypto.c", "src/stdlib_math.c",
     "src/spawn.c", "src/spawn_fast.c", "src/io_loop.c",
     "src/coroutine.c", "src/future.c",
-    "src/net.c", "src/net_runtime.c", "src/test_runtime.c",
+    "src/test_runtime.c",
     "src/net_advanced.c", "src/file_io_simple.c", "src/stdlib_enhanced.c",
     NULL
 };
@@ -3380,19 +3380,18 @@ int main(int argc, char** argv) {
                 snprintf(rt_lib, sizeof(rt_lib),
                     "%s/src/wyn_arena.c %s/src/wyn_rc.c %s/src/coroutine.c %s/src/io_loop.c "
                     "%s/src/runtime_exports.c %s/src/wyn_wrapper.c %s/src/wyn_interface.c %s/src/io.c "
-                    "%s/src/optional.c %s/src/result.c %s/src/arc_runtime.c %s/src/concurrency.c "
+                    "%s/src/optional.c %s/src/result.c %s/src/concurrency.c "
                     "%s/src/async_runtime.c %s/src/safe_memory.c %s/src/error.c %s/src/string_runtime.c "
                     "%s/src/hashmap.c %s/src/hashset.c %s/src/json.c "
                     "%s/src/stdlib_runtime.c %s/src/hashmap_runtime.c %s/src/stdlib_string.c "
                     "%s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c "
-                    "%s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c %s/src/net.c %s/src/net_runtime.c "
+                    "%s/src/spawn.c %s/src/spawn_fast.c %s/src/future.c "
                     "%s/src/test_runtime.c %s/src/net_advanced.c %s/src/file_io_simple.c %s/src/stdlib_enhanced.c",
-                    // 35 %s specifiers ↔ 35 wyn_root args (one per runtime source).
+                    // 32 %s specifiers ↔ 32 wyn_root args (one per runtime source).
                     wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root,
                     wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root,
-                    wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root,
-                    wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root,
-                    wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
+                    wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root,
+                    wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
             }
             
             // Try cross-compilers: zig preferred on macOS, gcc on Linux
@@ -3416,10 +3415,10 @@ int main(int argc, char** argv) {
                     const char* rt_srcs[] = {
                         "wyn_arena", "wyn_rc", "coroutine", "spawn_fast", "future",
                         "spawn", "io_loop", "wyn_interface", "hashset", "hashmap", "io", "json",
-                        "optional", "result", "arc_runtime", "concurrency", "async_runtime",
+                        "optional", "result", "concurrency", "async_runtime",
                         "safe_memory", "error", 
                          "stdlib_string", "stdlib_array", "stdlib_time",
-                        "stdlib_crypto", "stdlib_math", "net", "test_runtime",
+                        "stdlib_crypto", "stdlib_math", "test_runtime",
                         "net_advanced", "file_io_simple", "stdlib_enhanced", NULL
                     };
                     system("rm -rf /tmp/wyn_cross_rt && mkdir -p /tmp/wyn_cross_rt");
@@ -3462,10 +3461,10 @@ int main(int argc, char** argv) {
                     const char* rt_srcs2[] = {
                         "wyn_arena", "wyn_rc", "coroutine", "spawn_fast", "future",
                         "spawn", "io_loop", "wyn_interface", "hashset", "hashmap", "io", "json",
-                        "optional", "result", "arc_runtime", "concurrency", "async_runtime",
+                        "optional", "result", "concurrency", "async_runtime",
                         "safe_memory", "error", 
                          "stdlib_string", "stdlib_array", "stdlib_time",
-                        "stdlib_crypto", "stdlib_math", "net", "test_runtime",
+                        "stdlib_crypto", "stdlib_math", "test_runtime",
                         "net_advanced", "file_io_simple", "stdlib_enhanced", NULL
                     };
                     system("rm -rf /tmp/wyn_cross_rt && mkdir -p /tmp/wyn_cross_rt");
@@ -3537,7 +3536,7 @@ int main(int argc, char** argv) {
             const char* win_srcs[] = {
                 "wyn_arena", "wyn_rc", "win_stubs",
                 "wyn_interface", "hashset", "hashmap", "io", "json",
-                "optional", "result", "arc_runtime",
+                "optional", "result",
                 "safe_memory", "error", "stdlib_string", "stdlib_array", "stdlib_time",
                 "stdlib_crypto", "stdlib_math", "test_runtime",
                 "file_io_simple", "stdlib_enhanced", NULL
@@ -3587,8 +3586,8 @@ int main(int argc, char** argv) {
                 "%s/src/hashmap.c %s/src/hashset.c %s/src/json.c "
                 "%s/src/string_runtime.c %s/src/stdlib_runtime.c %s/src/hashmap_runtime.c "
                 "%s/src/test_runtime.c %s/src/spawn.c %s/src/spawn_fast.c %s/src/io_loop.c %s/src/coroutine.c %s/src/future.c "
-                "%s/src/net.c %s/src/net_advanced.c %s/src/net_runtime.c "
-                "%s/src/optional.c %s/src/result.c %s/src/arc_runtime.c "
+                "%s/src/net_advanced.c "
+                "%s/src/optional.c %s/src/result.c "
                 "%s/src/safe_memory.c %s/src/error.c %s/src/concurrency.c %s/src/async_runtime.c "
                 "%s/src/stdlib_string.c %s/src/stdlib_array.c %s/src/stdlib_time.c %s/src/stdlib_crypto.c %s/src/stdlib_math.c "
                 "-lpthread -lm",
@@ -3597,8 +3596,8 @@ int main(int argc, char** argv) {
                 wyn_root, wyn_root, wyn_root,
                 wyn_root, wyn_root, wyn_root,
                 wyn_root, wyn_root, wyn_root, wyn_root, wyn_root, wyn_root,
-                wyn_root, wyn_root, wyn_root,
-                wyn_root, wyn_root, wyn_root,
+                wyn_root,
+                wyn_root, wyn_root,
                 wyn_root, wyn_root, wyn_root, wyn_root,
                 wyn_root, wyn_root, wyn_root, wyn_root, wyn_root);
             printf("Cross-compiling for iOS (arm64)...\n");

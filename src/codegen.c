@@ -1,11 +1,11 @@
 #define _POSIX_C_SOURCE 200809L
+#include "arc_runtime.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
 #include "common.h"
 #include "ast.h"
-#include "arc_runtime.h"
 #include "optional.h"
 #include "result.h"
 #include "optimize.h"
@@ -2301,16 +2301,15 @@ const char* get_struct_future_type(const char* name) {
 // Forward declaration
 static void emit(const char* fmt, ...);
 
-// Scope tracking for automatic cleanup with ARC integration (growable in both
-// depth and per-scope entry count)
+// Scope tracking for automatic cleanup (growable in both depth and per-scope
+// entry count). The `string_objects` / `string_count` / `string_cap` members that
+// used to sit here belonged to the retired ARC epic: nothing ever incremented
+// string_count, so the release loop in pop_scope() ran zero times.
 typedef struct {
     char** vars;
     char** types;                 // Track type for proper cleanup
-    WynObject** string_objects;   // Track ARC string objects
     int count;
     int cap;
-    int string_count;
-    int string_cap;
 } Scope;
 
 static Scope* scopes = NULL;
@@ -2331,12 +2330,10 @@ static void push_scope() {
             exit(1);
         }
         scopes = tmp;
-        // Zero the newly added slots so vars/types/string_objects start NULL
         memset(scopes + scope_cap, 0, (size_t)(newcap - scope_cap) * sizeof *scopes);
         scope_cap = newcap;
     }
     scopes[scope_depth].count = 0;
-    scopes[scope_depth].string_count = 0;
     scope_depth++;
 }
 
@@ -2366,13 +2363,6 @@ static void pop_scope() {
             }
         }
         
-        // Release ARC string objects
-        for (int i = 0; i < scopes[scope_depth].string_count; i++) {
-            if (scopes[scope_depth].string_objects[i]) {
-                wyn_arc_release(scopes[scope_depth].string_objects[i]);
-                scopes[scope_depth].string_objects[i] = NULL;
-            }
-        }
     }
 }
 

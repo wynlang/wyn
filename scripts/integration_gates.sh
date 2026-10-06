@@ -108,26 +108,20 @@ validate_day10_codegen_arc() {
     
     local errors=0
     
-    # 1. Verify basic code generation works
-    log_info "Checking basic LLVM code generation..."
-    
-    # Check for codegen functions
-    if grep -q "codegen_.*_expr\|codegen_.*_stmt" src/llvm_codegen.c 2>/dev/null; then
-        log_success "Basic codegen functions found"
-    else
-        log_warning "Basic codegen functions not yet implemented"
-    fi
-    
-    # 2. Verify ARC runtime system
-    log_info "Checking ARC runtime system..."
-    
-    # Look for ARC-related files (may not exist yet)
-    if [[ -f "src/arc_runtime.c" ]] || grep -q "arc_.*retain\|arc_.*release" src/*.c 2>/dev/null; then
-        log_success "ARC runtime system components found"
-    else
-        log_warning "ARC runtime system not yet implemented"
-    fi
-    
+    # 1. The "basic LLVM code generation" check that used to be here is gone too. It
+    # grepped src/llvm_codegen.c, a file that does not exist in this tree - there is no
+    # LLVM backend; codegen emits C - so with 2>/dev/null the grep was always false and
+    # the branch always took its log_warning. The new
+    # tests/errors/run_runtime_source_lists_test.sh gate is what found it: it reds on any
+    # src/<name>.c named anywhere that has no file behind it.
+
+    # 2. The ARC-runtime check that used to be here is gone with the ARC epic.
+    # It tested `[[ -f src/arc_runtime.c ]] || grep -q 'arc_.*release' src/*.c`, and
+    # both arms are now false: the file is deleted and codegen no longer emits or calls
+    # wyn_arc_release. Its else branch was log_warning, not log_error, so it could never
+    # red anything either way - exactly the shape of assertion this repo has been bitten
+    # by. Removed rather than inverted; there is no ARC system left to assert about.
+
     # 3. Integration test
     log_info "Testing codegen-ARC integration readiness..."
     

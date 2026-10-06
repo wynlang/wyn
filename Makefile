@@ -167,7 +167,7 @@ platform-info:
 	@echo "Platform flags: $(PLATFORM_CFLAGS)"
 
 # C-based compiler
-CORE_SRCS = src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string_runtime.c src/arc_runtime.c src/async_runtime.c src/concurrency.c src/optional.c src/result.c src/type_inference.c src/module_loader.c src/module.c src/module_registry.c src/io.c src/net.c src/stdlib_array.c src/stdlib_string.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c src/cmd_compile.c src/cmd_test.c src/cmd_other.c src/cmd_ui.c src/hashmap.c src/hashset.c src/json.c src/types.c src/patterns.c  src/toml.c src/package.c src/pkgspec.c src/lsp.c src/bindgen.c src/cpkg.c src/tcc_backend.c src/wyn_arena.c src/wyn_rc.c src/coroutine.c src/wyn_schema.c
+CORE_SRCS = src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string_runtime.c src/async_runtime.c src/concurrency.c src/optional.c src/result.c src/type_inference.c src/module_loader.c src/module.c src/module_registry.c src/io.c src/stdlib_array.c src/stdlib_string.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c src/cmd_compile.c src/cmd_test.c src/cmd_other.c src/cmd_ui.c src/hashmap.c src/hashset.c src/json.c src/types.c src/patterns.c  src/toml.c src/package.c src/pkgspec.c src/lsp.c src/bindgen.c src/cpkg.c src/tcc_backend.c src/wyn_arena.c src/wyn_rc.c src/coroutine.c src/wyn_schema.c
 # src/wyn_schema.c is here before anything calls it (the `ai fn` parser and codegen
 # land in later changes). It is listed anyway so every `make`, on all four CI
 # platforms, compiles it under -Wall -Wextra: a module that only the test runner
@@ -203,21 +203,21 @@ wyn-windows: PLATFORM_CFLAGS += -DWYN_PLATFORM_WINDOWS
 wyn-windows: PLATFORM_LIBS = -lws2_32 -lpthread -lm
 wyn-windows: CC = x86_64-w64-mingw32-gcc
 wyn-windows: EXE_EXT = .exe
-wyn-windows: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/module_loader.c src/io.c src/net.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
+wyn-windows: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string_runtime.c src/optional.c src/result.c src/type_inference.c src/module_loader.c src/io.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
 	$(CC) $(CFLAGS) -I src -o wyn$(EXE_EXT) $^ $(PLATFORM_LIBS)
 
 wyn-linux: PLATFORM_CFLAGS += -DWYN_PLATFORM_LINUX
 wyn-linux: PLATFORM_LIBS = -lpthread -lm
 wyn-linux: CC = gcc
 wyn-linux: EXE_EXT =
-wyn-linux: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/module_loader.c src/io.c src/net.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
+wyn-linux: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string_runtime.c src/optional.c src/result.c src/type_inference.c src/module_loader.c src/io.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
 	$(CC) $(CFLAGS) -I src -o wyn$(EXE_EXT) $^ $(PLATFORM_LIBS)
 
 wyn-macos: PLATFORM_CFLAGS += -DWYN_PLATFORM_MACOS
 wyn-macos: PLATFORM_LIBS = -lpthread -lm
 wyn-macos: CC = clang
 wyn-macos: EXE_EXT =
-wyn-macos: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string_runtime.c src/arc_runtime.c src/optional.c src/result.c src/type_inference.c src/module_loader.c src/io.c src/net.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
+wyn-macos: src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/generics.c src/safe_memory.c src/error.c src/security.c src/memory.c src/string_runtime.c src/optional.c src/result.c src/type_inference.c src/module_loader.c src/io.c src/wyn_interface.c src/optimize.c src/traits.c src/platform.c
 	$(CC) $(CFLAGS) -I src -o wyn$(EXE_EXT) $^ $(PLATFORM_LIBS)
 
 # Phase 2 Integration Testing
@@ -250,22 +250,12 @@ test_security: tests/test_security
 tests/test_security: tests/test_security.c src/security.c
 	$(CC) $(CFLAGS) -I src -o $@ $^
 
-# String memory management tests
-test_string_memory: tests/memory/test_string_memory
-	@echo "=== Running String Memory Tests ==="
-	@./tests/memory/test_string_memory
-
-tests/memory/test_string_memory: tests/memory/test_string_memory.c src/string_runtime.c src/arc_runtime.c src/safe_memory.c src/error.c
-	@mkdir -p tests/memory
-	$(CC) $(CFLAGS) -I src -o $@ $^ -lpthread
-
-test_string_leaks: tests/memory/test_string_leaks
-	@echo "=== Running String Leak Detection Tests ==="
-	@./tests/memory/test_string_leaks
-
-tests/memory/test_string_leaks: tests/memory/test_string_leaks.c src/string_runtime.c src/arc_runtime.c src/safe_memory.c src/error.c
-	@mkdir -p tests/memory
-	$(CC) $(CFLAGS) -I src -o $@ $^ -lpthread
+# NOTE: `test_string_memory` and `test_string_leaks` used to live here. Their
+# prerequisites tests/memory/test_string_memory.c and .../test_string_leaks.c were
+# deleted from the tree long ago (they are still in git history), so both targets
+# could only fail with "No rule to make target". Neither was in the `test:` roster
+# and neither is named anywhere outside this file, so nothing lost a gate. They were
+# removed rather than re-pointed when src/arc_runtime.c left.
 
 test_string_comprehensive: tests/memory/test_string_comprehensive.wyn.out
 	@echo "=== Running Comprehensive String Tests ==="
@@ -423,6 +413,8 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_stale_pch_test.sh
 	@echo "=== Running TU-included-sources list test (derived from the #include sites) ==="
 	@bash tests/errors/run_tu_include_list_test.sh
+	@echo "=== Running runtime source-list existence test (16 hand-maintained lists) ==="
+	@bash tests/errors/run_runtime_source_lists_test.sh
 	@echo "=== Running unresolved-import abort test ==="
 	@WYN=./wyn bash tests/errors/run_unresolved_import_test.sh
 	@echo "=== Running selective-import alias rejection test ==="
@@ -689,75 +681,15 @@ test: wyn $(MBEDTLS_LIB)
 # Alias kept for muscle memory.
 test_bdd: test
 
-# ARC Runtime Tests (T2.3.1)
-test_arc_runtime: tests/test_arc_runtime
-	@echo "=== Running ARC Runtime Tests ==="
-	@./tests/test_arc_runtime
-
-tests/test_arc_runtime: tests/test_arc_runtime.c src/arc_runtime.c src/error.c src/safe_memory.c
-	$(CC) $(CFLAGS) -I src -o $@ $^
-
-# ARC Operations Tests (T2.3.2)
-test_arc_operations: tests/test_arc_operations
-	@echo "=== Running ARC Operations Tests ==="
-	@./tests/test_arc_operations
-
-tests/test_arc_operations: tests/test_arc_operations.c src/arc_runtime.c src/weak_references.c src/error.c src/safe_memory.c
-	$(CC) $(CFLAGS) -I src -o $@ $^ -lpthread
-
-# Weak Reference Tests (T2.3.3)
-test_weak_references: tests/test_weak_references
-	@echo "=== Running Weak Reference Tests ==="
-	@./tests/test_weak_references
-
-tests/test_weak_references: tests/test_weak_references.c src/arc_runtime.c src/arc_operations.c src/error.c src/safe_memory.c
-	$(CC) $(CFLAGS) -I src -o $@ $^ -lpthread
-
-# Cycle Detection Tests (T2.3.4)
-test_cycle_detection: tests/test_cycle_detection_minimal
-	@echo "=== Running Cycle Detection Tests ==="
-	@./tests/test_cycle_detection_minimal
-
-tests/test_cycle_detection_minimal: tests/test_cycle_detection_minimal.c src/arc_runtime.c src/arc_operations.c src/weak_references.c src/cycle_detection.c src/error.c src/safe_memory.c
-	$(CC) $(CFLAGS) -I src -o $@ $^ -lpthread
-
-# Memory Pool Tests (T2.3.5)
-test_memory_pool: tests/test_memory_pool
-	@echo "=== Running Memory Pool Tests ==="
-	@./tests/test_memory_pool
-
-tests/test_memory_pool: tests/test_memory_pool.c src/arc_runtime.c src/arc_operations.c src/weak_references.c src/error.c src/safe_memory.c
-	$(CC) $(CFLAGS) -I src -o $@ $^ -lpthread
-
-# Performance Monitor Tests (T2.3.6)
-
-
-# Escape Analysis Tests (T2.4.1)
-test_escape_analysis: tests/test_escape_analysis
-	@echo "=== Running Escape Analysis Tests ==="
-	@./tests/test_escape_analysis
-
-tests/test_escape_analysis: tests/test_escape_analysis.c src/arc_runtime.c src/arc_operations.c src/weak_references.c src/error.c src/safe_memory.c
-	$(CC) $(CFLAGS) -I src -o $@ $^
-
-# ARC Insertion Tests (T2.4.2)
-test_arc_insertion: tests/test_arc_insertion
-	@echo "=== Running ARC Insertion Tests ==="
-	@./tests/test_arc_insertion
-
-tests/test_arc_insertion: tests/test_arc_insertion.c src/arc_runtime.c src/arc_operations.c src/weak_references.c src/error.c src/safe_memory.c
-	$(CC) $(CFLAGS) -I src -o $@ $^
-
-# Weak Reference Code Generation Tests (T2.4.3)
-test_weak_codegen: tests/test_weak_codegen
-	@echo "=== Running Weak Reference Code Generation Tests ==="
-	@./tests/test_weak_codegen
-
-tests/test_weak_codegen: tests/test_weak_codegen.c src/arc_runtime.c src/arc_operations.c src/weak_references.c src/error.c src/safe_memory.c
-	$(CC) $(CFLAGS) -I src -o $@ $^
-
-# ARC Optimization Passes Tests (T2.4.4)
-
+# NOTE: eight ARC-epic test targets used to live here - test_arc_runtime,
+# test_arc_operations, test_weak_references, test_cycle_detection, test_memory_pool,
+# test_escape_analysis, test_arc_insertion, test_weak_codegen - plus two empty
+# section headers. Every one of them named a prerequisite that is not in the tree
+# (tests/test_arc_*.c, src/arc_operations.c, src/weak_references.c,
+# src/cycle_detection.c; all deleted long ago, still in git history), so they could
+# only fail with "No rule to make target". None was in the `test:` roster and none is
+# named anywhere outside this file. They were removed rather than re-pointed when
+# src/arc_runtime.c left.
 
 # LLVM Context Management Tests (T2.1.2)
 test_lexer: tests/test_lexer
@@ -958,14 +890,20 @@ RT_SRCS = src/wyn_arena.c src/wyn_rc.c src/runtime_exports.c src/wyn_wrapper.c \
           src/wyn_tls.c src/wyn_https.c \
           src/wyn_interface.c src/coroutine.c src/spawn_fast.c src/spawn.c src/future.c \
           src/io.c src/io_loop.c src/optional.c src/result.c \
-          src/arc_runtime.c src/concurrency.c src/async_runtime.c \
+          src/concurrency.c src/async_runtime.c \
           src/safe_memory.c src/error.c src/string_runtime.c \
           src/hashmap.c src/hashset.c src/json.c \
           src/stdlib_runtime.c src/hashmap_runtime.c \
           src/stdlib_string.c src/stdlib_array.c src/stdlib_time.c \
           src/stdlib_crypto.c src/stdlib_math.c \
-          src/net.c src/net_runtime.c src/net_advanced.c \
+          src/net_advanced.c \
           src/test_runtime.c src/file_io_simple.c src/stdlib_enhanced.c
+
+# The archive members, DERIVED from RT_SRCS rather than from a glob over the
+# persistent runtime/obj* directories. See the note on the libwyn_rt.a rule.
+RT_OBJS       = $(patsubst %.c,%.o,$(addprefix runtime/obj/,$(notdir $(RT_SRCS))))
+RT_OBJS_ASAN  = $(patsubst %.c,%.o,$(addprefix runtime/obj_asan/,$(notdir $(RT_SRCS))))
+RT_OBJS_TSAN  = $(patsubst %.c,%.o,$(addprefix runtime/obj_tsan/,$(notdir $(RT_SRCS))))
 
 # The runtime library must be rebuilt whenever any runtime source (or a header
 # they include, notably wyn_runtime.h/io_loop.h) changes - otherwise compiled
@@ -990,9 +928,15 @@ runtime/libwyn_rt.a: $(RT_SRCS) $(wildcard src/*.h) | wyn$(EXE_EXT) $(MBEDTLS_LI
 	@# silently survives into the lib and every compiled program links it.
 	@# This has already cost real debugging time: a runtime fix appeared to have
 	@# no effect, and a perf regression looked unreproducible, because the lib
-	@# still contained pre-fix objects. Build the archive from scratch instead.
+	@# still contained pre-fix objects. Build the archive from scratch instead -
+	@# and name the members, DERIVED from RT_SRCS, rather than globbing
+	@# runtime/obj/*.o. Deleting the archive alone did not fix the case the comment
+	@# above describes: runtime/obj/ persists across builds, so an .o whose source
+	@# is GONE was still swept into the fresh archive by the glob and kept shipping
+	@# in every compiled program. RT_SRCS is the single source of truth for what
+	@# belongs in this lib; a deleted source now cannot survive in it.
 	@rm -f runtime/libwyn_rt.a
-	@ar rcs runtime/libwyn_rt.a runtime/obj/*.o
+	@ar rcs runtime/libwyn_rt.a $(RT_OBJS)
 	@echo "Built runtime/libwyn_rt.a ($$(du -h runtime/libwyn_rt.a | cut -f1))"
 
 # ASan-instrumented runtime: compile RT_SRCS with -fsanitize=address into a
@@ -1011,7 +955,8 @@ runtime/libwyn_rt_asan.a: $(RT_SRCS) $(wildcard src/*.h) | $(MBEDTLS_LIB)
 		-D_GNU_SOURCE -DWYN_HAVE_TLS -I src -I vendor/minicoro -I $(MBEDTLS_DIR)/include \
 		-c $$f -o runtime/obj_asan/$$(basename $$f .c).o; \
 	done
-	@ar rcs runtime/libwyn_rt_asan.a runtime/obj_asan/*.o
+	@rm -f runtime/libwyn_rt_asan.a
+	@ar rcs runtime/libwyn_rt_asan.a $(RT_OBJS_ASAN)
 	@echo "Built runtime/libwyn_rt_asan.a"
 
 # Compile a representative test set's generated C against the ASan runtime
@@ -1082,7 +1027,8 @@ runtime/libwyn_rt_tsan.a: $(RT_SRCS) $(wildcard src/*.h) | $(MBEDTLS_LIB)
 		-D_GNU_SOURCE -DWYN_HAVE_TLS -I src -I vendor/minicoro -I $(MBEDTLS_DIR)/include \
 		-c $$f -o runtime/obj_tsan/$$(basename $$f .c).o; \
 	done
-	@ar rcs runtime/libwyn_rt_tsan.a runtime/obj_tsan/*.o
+	@rm -f runtime/libwyn_rt_tsan.a
+	@ar rcs runtime/libwyn_rt_tsan.a $(RT_OBJS_TSAN)
 	@echo "Built runtime/libwyn_rt_tsan.a"
 
 # Concurrency-focused test set: spawn/await/parallel/channels are where the
@@ -1143,7 +1089,7 @@ endif
 
 # TCC runtime - excludes spawn.c, coroutine.c (can't compile macOS headers with TCC)
 TCC_BIN = vendor/tcc/bin/tcc
-TCC_RT_SRCS = src/wyn_arena.c src/wyn_rc.c src/io_loop.c src/runtime_exports.c src/wyn_wrapper.c src/wyn_interface.c src/optional.c src/result.c src/arc_runtime.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/net.c src/net_runtime.c src/test_runtime.c src/net_advanced.c src/file_io_simple.c src/stdlib_enhanced.c
+TCC_RT_SRCS = src/wyn_arena.c src/wyn_rc.c src/io_loop.c src/runtime_exports.c src/wyn_wrapper.c src/wyn_interface.c src/optional.c src/result.c src/concurrency.c src/async_runtime.c src/safe_memory.c src/error.c src/string_runtime.c src/hashmap.c src/hashset.c src/json.c src/json_runtime.c src/stdlib_runtime.c src/hashmap_runtime.c src/stdlib_string.c src/stdlib_array.c src/stdlib_time.c src/stdlib_crypto.c src/stdlib_math.c src/test_runtime.c src/net_advanced.c src/file_io_simple.c src/stdlib_enhanced.c
 runtime-tcc:
 	@echo "Building TCC runtime library..."
 	@mkdir -p /tmp/tcc_rt_obj
