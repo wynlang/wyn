@@ -4013,13 +4013,12 @@ void codegen_stmt(Stmt* stmt) {
                      stmt->struct_decl.name.length, stmt->struct_decl.name.start,
                      stmt->struct_decl.name.length, stmt->struct_decl.name.start);
             }
-            for (int i = 0; i < stmt->struct_decl.field_count; i++) {
-                if (stmt->struct_decl.field_arc_managed[i]) {
-                    emit("    if (obj->%.*s) wyn_arc_release(obj->%.*s);\n",
-                         stmt->struct_decl.fields[i].length, stmt->struct_decl.fields[i].start,
-                         stmt->struct_decl.fields[i].length, stmt->struct_decl.fields[i].start);
-                }
-            }
+            // The body of this _cleanup function used to emit one
+            // `wyn_arc_release(obj->field)` per ARC-managed field. field_arc_managed[]
+            // is only ever assigned from `bool needs_arc = false;` (parser.c:4008), so
+            // the body was always empty and wyn_arc_release was never called from
+            // generated C. The function itself is kept: it is emitted unconditionally
+            // and generated code may reference it.
             emit("}\n\n");
             
             // Generate methods defined in struct

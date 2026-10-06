@@ -1,6 +1,7 @@
 // wyn_runtime_slim.h - types + forward declarations for optimized builds
 #ifndef WYN_RUNTIME_SLIM_H
 #define WYN_RUNTIME_SLIM_H
+#include "arc_runtime.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,7 +39,6 @@ static inline void* wyn_realloc(void* p, size_t n) { void* q = realloc(p, n); if
 // back. A copied enum that drifted by one would silently mis-read every float
 // instead of failing loudly, so both headers take the values from the single
 // canonical definition here. wyn_runtime.h:170 includes this same file.
-#include "arc_runtime.h"
 // The HashMap / HashSet entry points are plain functions living in
 // hashmap.c / hashset.c, i.e. real symbols in libwyn_rt.a. Include
 // their canonical headers rather than restating the prototypes, for the same

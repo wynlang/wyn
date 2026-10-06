@@ -258,6 +258,13 @@ jobs:
           # "a gate must be enrolled to run" class it was written to kill.
           run_suite tests/errors/run_tu_include_list_test.sh
 
+          # Same shape, and this one belongs on the Windows roster even more than the
+          # last: two of the sixteen lists it guards (win_srcs[] and wasm_srcs[]) exist
+          # ONLY for targets nobody builds on macOS or Linux, and the cross-compile
+          # paths that consume them discard system()'s status and send stderr to
+          # /dev/null, so a name with no file behind it produces no error anywhere.
+          run_suite tests/errors/run_runtime_source_lists_test.sh
+
           if [ "$rc" -ne 0 ]; then
             echo "Windows portable subset: FAILURES above"
             exit 1
