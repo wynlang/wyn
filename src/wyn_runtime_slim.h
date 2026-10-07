@@ -446,6 +446,9 @@ void int_array_sort(WynIntArray* a);
 void int_array_push(WynIntArray* a, long long v);
 long long int_array_get(WynIntArray a, int i);
 int int_array_len(WynIntArray a);
+// int_array_free: codegen emits this at every exit from a packed [int] local's
+// declaring scope (#466). Declared here or a --release build cannot link it.
+void int_array_free(WynIntArray* a);
 // await_all / await_any over a set of futures. Declared after WynIntArray
 // because they take one by value. wyn_runtime.h:4807-4917.
 //
