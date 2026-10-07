@@ -1,0 +1,42 @@
+#include "wyn_runtime.h"
+#ifdef __TINYC__
+#define __auto_type long long
+#endif
+
+
+__attribute__((hot)) static inline long long pick(long long n);
+long long wyn_main();
+
+/* 31_match_switch_scope.wyn:19 */ 
+#line 19 "31_match_switch_scope.wyn"
+__attribute__((hot)) static inline long long pick(long long n) {
+    switch (n) {
+        case 0: {    /* 31_match_switch_scope.wyn:22 */ 
+#line 22 "31_match_switch_scope.wyn"
+WynIntArray a = ({ WynIntArray __arr_0 = int_array_new(); __arr_0; });
+    int_array_push(&(a), (long long)(3));
+    int_array_push(&(a), (long long)(4));
+    return (int_array_get(a, 0) + int_array_get(a, 1));
+ break; }
+        case 1: {    /* 31_match_switch_scope.wyn:27 */ 
+#line 27 "31_match_switch_scope.wyn"
+return 1;
+ break; }
+        default: {    /* 31_match_switch_scope.wyn:29 */ 
+#line 29 "31_match_switch_scope.wyn"
+WynIntArray z = ({ WynIntArray __arr_1 = int_array_new(); __arr_1; });
+    int_array_push(&(z), (long long)(-1));
+    return int_array_get(z, 0);
+ break; }
+    }
+}
+
+/* 31_match_switch_scope.wyn:36 */ 
+#line 36 "31_match_switch_scope.wyn"
+long long wyn_main() {
+    ({ const char* __ps = to_string(pick(0)); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string(pick(1)); println(__ps); wyn_rc_release(__ps); });
+    ({ const char* __ps = to_string(pick(9)); println(__ps); wyn_rc_release(__ps); });
+    return 0;
+}
+

@@ -2314,21 +2314,45 @@ void codegen_match_statement(Stmt* stmt) {
         for (int i = 0; i < stmt->match_stmt.case_count; i++) {
             MatchCase* match_case = &stmt->match_stmt.cases[i];
             
+            // EACH ARM GETS ITS OWN C BLOCK. A Wyn `match` arm is a scope - the
+            // checker already treats it as one (see the hoisting note in
+            // codegen_stmt.c: "match arms use child scopes in the checker") - but
+            // STMT_BLOCK emits no braces of its own, so an arm's declarations used
+            // to land directly in the switch's single compound statement. Emitted:
+            //
+            //     case 0:  WynIntArray a = ...;
+            //              return int_array_get(a, 0);
+            //      break;
+            //     case 1:  return 1;          /* `a` is in scope and UNINITIALISED */
+            //
+            // Three consequences, in increasing severity. It is a declaration after
+            // a label, which is only legal from C23 and an extension before it. A
+            // `__attribute__((cleanup))` on such a declaration is a HARD clang error
+            // ("jump bypasses initialization of variable with cleanup attribute"),
+            // which is what broke the first attempt at releasing container locals at
+            // scope exit (#466). And any release emitted for `a` at the end of the
+            // switch would run for arms that never initialised it, freeing a garbage
+            // pointer - a crash rather than a diagnostic.
+            //
+            // Bracing is behaviour-neutral on its own (verified: the regression
+            // corpus and the golden snapshots are unchanged, and no golden program
+            // contains an integer match) and it is the prerequisite for emitting any
+            // scope-exit release inside an arm.
             if (match_case->pattern->type == PATTERN_LITERAL) {
-                emit("        case %.*s: ", 
+                emit("        case %.*s: {",
                      match_case->pattern->literal.value.length,
                      match_case->pattern->literal.value.start);
-                
+
                 if (match_case->body) {
                     codegen_stmt(match_case->body);
                 }
-                emit(" break;\n");
+                emit(" break; }\n");
             } else if (match_case->pattern->type == PATTERN_WILDCARD) {
-                emit("        default: ");
+                emit("        default: {");
                 if (match_case->body) {
                     codegen_stmt(match_case->body);
                 }
-                emit(" break;\n");
+                emit(" break; }\n");
             }
         }
         

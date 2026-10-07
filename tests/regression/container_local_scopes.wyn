@@ -1,0 +1,147 @@
+// CONTAINER LOCALS IN EVERY STATEMENT POSITION, COMPILED AND RUN.
+//
+// A census of the corpus found this matrix almost entirely empty: across every
+// .wyn under tests/ and examples/ there was NOT ONE array, map or set local
+// declared inside a match arm, an else branch, a closure body or a bare nested
+// block. 418 were declared at function top level, 4 in a for body, 3 in a while
+// body, 1 in an if branch.
+//
+// That gap is why a `__attribute__((cleanup))` attempt at releasing container
+// locals at scope exit (#466) shipped past review: the construct it broke - a
+// packed [int] declared in a NON-FINAL arm of an integer match - was not tested
+// anywhere. `wyn check` cannot see a codegen-to-C failure, and no golden program
+// contains an integer match at all. run_bdd.sh DOES compile every program it runs
+// (via `wyn build`, which shells out to cc), so a test here is a real gate; there
+// was simply nothing to gate.
+//
+// An integer match lowers to a C `switch` and an arm body is a STMT_BLOCK that
+// emits no braces of its own, so before the accompanying change an arm's
+// declarations landed directly in the switch's single compound statement: a
+// declaration after a label, in scope but UNINITIALISED in every sibling arm. Any
+// release emitted for it would have freed a garbage pointer.
+//
+// Values are chosen so a wrong answer is distinguishable from a crash: each print
+// is derived from the container's contents, not a constant.
+//
+// EXPECT: 7
+// EXPECT: 1
+// EXPECT: -1
+// EXPECT: 30
+// EXPECT: 15
+// EXPECT: ab
+// EXPECT: 2
+// EXPECT: 42
+// EXPECT: 1
+// EXPECT: 9
+// EXPECT: 15
+// EXPECT: zz
+// EXPECT: 3
+
+// (a) packed [int] in a NON-FINAL arm, (b) in the wildcard arm.
+fn packed_in_match(n: int) -> int {
+    match n {
+        0 => {
+            var a: [int] = []
+            a.push(3)
+            a.push(4)
+            return a[0] + a[1]
+        }
+        1 => { return 1 }
+        _ => {
+            var z: [int] = []
+            z.push(-1)
+            return z[0]
+        }
+    }
+}
+
+// A generic [string] array in a non-final arm: a different representation with
+// reference-counted elements, so it exercises the other free path.
+fn strings_in_match(n: int) -> string {
+    match n {
+        0 => {
+            var s = []
+            s.push("a")
+            s.push("b")
+            return s[0] + s[1]
+        }
+        _ => { return "zz" }
+    }
+}
+
+// A map and a set in a non-final arm.
+fn containers_in_match(n: int) -> int {
+    match n {
+        0 => {
+            var m = HashMap.new()
+            m.set("x", 10)
+            m.set("y", 20)
+            return m.get("x") + m.get("y")
+        }
+        1 => {
+            var st = HashSet.new()
+            st.add(5)
+            st.add(6)
+            st.add(5)
+            return st.len()
+        }
+        _ => { return 0 }
+    }
+}
+
+// (c) an else branch.
+fn in_else(flag: bool) -> int {
+    if flag {
+        return 0
+    } else {
+        var a: [int] = []
+        a.push(40)
+        a.push(2)
+        return a[0] + a[1]
+    }
+}
+
+// (e) a bare nested block, and a map alongside it.
+fn in_nested_block() -> int {
+    var total = 0
+    {
+        var a: [int] = []
+        a.push(4)
+        a.push(5)
+        total = a[0] + a[1]
+    }
+    {
+        var m = HashMap.new()
+        m.set("k", 6)
+        total = total + m.get("k")
+    }
+    return total
+}
+
+fn main() {
+    println(packed_in_match(0))
+    println(packed_in_match(1))
+    println(packed_in_match(9))
+
+    println(containers_in_match(0))
+    println(in_nested_block())
+
+    println(strings_in_match(0))
+    println(containers_in_match(1))
+
+    println(in_else(false))
+    println(in_else(true) + 1)
+
+    // (d) a closure body declaring a container local.
+    var f = (k: int) => {
+        var a: [int] = []
+        a.push(k)
+        a.push(k + 1)
+        return a[0] + a[1]
+    }
+    println(f(4))
+    println(f(7))
+
+    println(strings_in_match(3))
+    println(containers_in_match(1) + 1)
+}

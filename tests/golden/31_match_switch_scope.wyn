@@ -1,0 +1,40 @@
+// Pins the C that an integer `match` lowers to: a `switch` whose every arm body
+// is its OWN BRACED BLOCK.
+//
+// No golden program contained an integer match at all before this one, so the
+// lowering was unpinned. It mattered: an arm body is a STMT_BLOCK that emits no
+// braces of its own, so an arm's declarations landed directly in the switch's
+// single compound statement - a declaration after a label, in scope but
+// UNINITIALISED in every sibling arm. A `__attribute__((cleanup))` on one is a hard
+// clang error, which is what broke the first attempt at releasing container locals
+// at scope exit (#466), and any release emitted for it would have freed a garbage
+// pointer in the arms that never ran its initialiser.
+//
+// Bracing is behaviour-neutral, which is exactly why it needs a GOLDEN rather than
+// a behavioural test: removing the braces again would not change any program's
+// output (clang accepts the declaration as an extension), so only a snapshot of the
+// emitted C can catch the regression. Mutation-verified by removing the braces and
+// watching this snapshot diff.
+
+fn pick(n: int) -> int {
+    match n {
+        0 => {
+            var a: [int] = []
+            a.push(3)
+            a.push(4)
+            return a[0] + a[1]
+        }
+        1 => { return 1 }
+        _ => {
+            var z: [int] = []
+            z.push(-1)
+            return z[0]
+        }
+    }
+}
+
+fn main() {
+    println(pick(0))
+    println(pick(1))
+    println(pick(9))
+}
