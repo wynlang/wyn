@@ -56,6 +56,16 @@ s = socket.socket(); s.bind(("127.0.0.1", 0))
 print(s.getsockname()[1]); s.close()'
 }
 
+read_reported_port() {  # $1 log  $2 leading word
+    local i p
+    for i in $(seq 1 300); do
+        p=$(sed -n "s/^$2 \\([0-9][0-9]*\\)\$/\\1/p" "$1" 2>/dev/null | head -1)
+        if [ -n "$p" ]; then printf '%s' "$p"; return 0; fi
+        sleep 0.1
+    done
+    return 1
+}
+
 wait_for_line() {  # $1 log  $2 grep pattern
     local i
     for i in $(seq 1 100); do
@@ -69,10 +79,22 @@ wait_for_line() {  # $1 log  $2 grep pattern
 # This is the exact shape that used to die: respond, then Http.free(req), then loop.
 cat > "$TMP/freed.wyn" <<'EOF'
 fn main() -> int {
+    // WALK from the suggested port rather than trusting it. The kernel handed the
+    // harness a free port, but it was released before this process could bind it, so
+    // a sibling can take it in between - and tests/errors/run_test_port_hygiene_test.sh
+    // requires a walk for exactly that reason. The bound port is reported back so the
+    // harness never assumes which one it got.
     var port = Env.get("PORT").to_int()
-    var server = Http.serve(port)
+    var server = -1
+    var tries = 0
+    while tries < 200 {
+        server = Http.serve(port)
+        if server > 0 { break }
+        port = port + 1
+        tries = tries + 1
+    }
     if server <= 0 { return 7 }
-    println("ready")
+    println("ready ${port}")
     var n = 0
     while n < 5 {
         var req = Http.accept(server)
@@ -93,14 +115,11 @@ if ! perl -e 'alarm(180); exec @ARGV' -- "$WYN" build "$TMP/freed.wyn" -o "$FR_B
 else
     ok "a server calling Http.free(req) builds"
     FR_PORT=""
-    for _try in 1 2 3; do
-        P=$(free_port)
-        PORT="$P" "$FR_BIN" > "$TMP/freed.log" 2>&1 &
-        FR_PID=$!
-        disown "$FR_PID" 2>/dev/null
-        if wait_for_line "$TMP/freed.log" '^ready$'; then FR_PORT="$P"; break; fi
-        kill -9 "$FR_PID" 2>/dev/null; FR_PID=""
-    done
+    P=$(free_port)
+    PORT="$P" "$FR_BIN" > "$TMP/freed.log" 2>&1 &
+    FR_PID=$!
+    disown "$FR_PID" 2>/dev/null
+    FR_PORT=$(read_reported_port "$TMP/freed.log" ready) || FR_PORT=""
     if [ -z "$FR_PORT" ]; then
         bad "Http.free server bound a port"
         sed -n '1,10p' "$TMP/freed.log"

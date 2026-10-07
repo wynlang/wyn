@@ -79,10 +79,16 @@ sync)
     B="${2:-dev}"
     inside "git fetch -q /src/repos/wyn '$B' && git checkout -q -f -B '$B' FETCH_HEAD && git reset -q --hard FETCH_HEAD; if git status --porcelain -uno | grep -q .; then echo 'WARNING: clone still dirty after sync' >&2; fi; git log --oneline -1"
     ;;
-build)   inside "rm -f wyn && make 2>&1 | tail -3; echo '--- warnings:'; true" ;;
-bdd)     if [ -n "${2:-}" ]; then inside "WYN_TEST_FILTER='$2' bash tests/run_bdd.sh | tail -3"
-         else inside "bash tests/run_bdd.sh | tail -3"; fi ;;
-test)    inside "make test 2>&1 | tail -20" ;;
+# EVERY ONE OF THESE PIPES INTO `tail`, SO WITHOUT pipefail THE EXIT STATUS IS
+# TAIL'S AND IS ALWAYS 0. That is not hypothetical: `test` reported exit 0 for a run
+# whose log ended in `make: *** [Makefile:678: test] Error 1`, and the only reason it
+# was noticed is that the failure happened to land inside the last 20 lines. A gate
+# that cannot report failure through its exit status is the same defect suite.sh had
+# three of. `build` was worse - it ended in `; true`, so it could never fail at all.
+build)   inside "set -o pipefail; rm -f wyn && make 2>&1 | tail -3" ;;
+bdd)     if [ -n "${2:-}" ]; then inside "set -o pipefail; WYN_TEST_FILTER='$2' bash tests/run_bdd.sh | tail -3"
+         else inside "set -o pipefail; bash tests/run_bdd.sh | tail -3"; fi ;;
+test)    inside "set -o pipefail; make test 2>&1 | tail -20" ;;
 sh)      shift; inside "$*" ;;
 status)
     docker ps -a --filter "name=^${NAME}$" --format '  container: {{.Names}} {{.Status}} ({{.Image}})'
