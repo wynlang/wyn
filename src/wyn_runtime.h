@@ -281,7 +281,10 @@ HttpResponse* Http_post(const char* url, const char* body, const char* content_t
 int Http_status(HttpResponse* resp);
 const char* Http_body(HttpResponse* resp);
 const char* Http_header(HttpResponse* resp, const char* name);
-void Http_free(HttpResponse* resp);
+// Http_free takes void* so it can tell an Http.get RESPONSE from an Http.accept
+// REQUEST at run time via the RC header magic - see net_advanced.c. It used to
+// take HttpResponse* and dereference a request string (#476).
+void Http_free(void* p);
 
 // TcpServer module
 typedef struct TcpServer TcpServer;
