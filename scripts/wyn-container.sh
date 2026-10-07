@@ -65,9 +65,19 @@ up)
     ;;
 sync)
     # /src is read-only, which is fine: fetching READS the host repo and writes only
-    # into the container's own clone. --hard because the clone is disposable scratch.
+    # into the container's own clone.
+    #
+    # THE RESET IS LOAD-BEARING. `checkout -B` alone does NOT discard local
+    # modifications to tracked files - it carries compatible ones forward - so a
+    # clone that had been edited in place stayed edited across a sync while
+    # reporting the new commit. That silently invalidated a mutation test: a nonce
+    # check deleted by hand survived the sync, and the gate run afterwards was
+    # reported as "green with the real fix" when it was green with the mutation
+    # still applied. The comment here used to claim `--hard` while the command did
+    # not do it. Untracked build output (wyn, runtime/) is deliberately kept - it is
+    # not what drifts, and cleaning it would force a full rebuild on every sync.
     B="${2:-dev}"
-    inside "git fetch -q /src/repos/wyn '$B' && git checkout -q -B '$B' FETCH_HEAD && git log --oneline -1"
+    inside "git fetch -q /src/repos/wyn '$B' && git checkout -q -f -B '$B' FETCH_HEAD && git reset -q --hard FETCH_HEAD; if git status --porcelain -uno | grep -q .; then echo 'WARNING: clone still dirty after sync' >&2; fi; git log --oneline -1"
     ;;
 build)   inside "rm -f wyn && make 2>&1 | tail -3; echo '--- warnings:'; true" ;;
 bdd)     if [ -n "${2:-}" ]; then inside "WYN_TEST_FILTER='$2' bash tests/run_bdd.sh | tail -3"
