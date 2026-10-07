@@ -7,7 +7,8 @@
 # re-run still cost 96.7 ms native vs 0.8 ms. The Wyn suite builds and runs thousands
 # of novel binaries, so the suite's wall clock was mostly Falcon, not the compiler.
 # Measured: run_bdd.sh is ~62s here against ~240s natively on a GOOD Falcon day.
-# See repos/internal-docs/MEASURE_FALCON_2026_10_07.md.
+# The full measurement, with its caveats, is recorded in the development notes
+# (tracked separately — this repository must not name private document paths).
 #
 # DESIGN, and the one rule that matters:
 #   The workspace is mounted READ-ONLY at /src, and the container builds in its own
@@ -49,7 +50,13 @@ up)
         docker rm -f "$NAME" >/dev/null 2>&1 || true
         # --restart unless-stopped so it comes back after a Docker or machine restart;
         # keeping it warm matters because the clone and the built artifacts persist.
-        docker run -d --name "$NAME" --platform linux/arm64 \
+        # --init is REQUIRED, not hygiene. Without an init as PID 1 nothing reaps
+        # orphans, so a child SIGKILLed via PR_SET_PDEATHSIG lingers as a zombie and
+        # `pgrep` still finds it: tests/errors/run_orphan_child_test.sh went
+        # "4 pass, 3 fail" with `sleep infinity` as PID 1 and "7 pass, 0 fail" with
+        # docker-init, on the same commit. That looked exactly like a Linux defect in
+        # the compiler and was a defect in the container.
+        docker run -d --name "$NAME" --init --platform linux/arm64 \
             -v "$HOST_WS":/src:ro -w /build --restart unless-stopped \
             "$IMAGE" sleep infinity >/dev/null
         docker exec "$NAME" bash -lc "mkdir -p /tmp/wb && git clone -q /src/repos/wyn $CLONE"
