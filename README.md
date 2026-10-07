@@ -58,8 +58,9 @@ print("${name.upper()}")     // WYN
 fn double(x: int) -> int => x * 2
 fn even(x: int) -> bool => x % 2 == 0
 
-// Pipe operator
-result = 5 |> double           // 10
+// Method chaining, or just nest the calls
+result = double(5)             // 10
+trimmed = "  wyn  ".trim().upper()   // "WYN"
 
 // Enums with data + destructuring match
 enum Shape { Circle(float), Point }
@@ -82,6 +83,7 @@ total = nums.reduce((a, b) => a + b, 0)
 squares = [x * x for x in 1..=5]
 
 // Spawn/await concurrency
+fn compute(n: int) -> int => n * n
 var f1 = spawn compute(1000)
 var f2 = spawn compute(2000)
 var r1 = await f1
@@ -100,7 +102,7 @@ fn divide(a: int, b: int) -> Result<int, string> {
 }
 
 // enum.to_string(), indexed for, string repeat, clean int? / Some
-print(Shape.Circle.to_string())  // "Circle"
+print(s.to_string())             // "Circle"
 for i, v in ["a", "b", "c"] { print(i.to_string() + ":" + v) }
 print("=" * 40)
 var x: int? = Some(42)
