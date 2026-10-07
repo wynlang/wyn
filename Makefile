@@ -681,6 +681,8 @@ test: wyn $(MBEDTLS_LIB) runtime/libwyn_rt.a
 	@WYN=./wyn bash scripts/check_readme.sh
 	@echo "=== Running packed-array leak gate (RSS bound) ==="
 	@WYN=./wyn bash tests/errors/run_array_leak_test.sh
+	@echo "=== Running --fast no-op gate ==="
+	@WYN=./wyn bash tests/errors/run_fast_flag_test.sh
 	@echo "=== Running HTTP server concurrent-load gate ==="
 	@WYN=./wyn bash tests/errors/run_http_server_load_test.sh
 	@echo "=== Running HTTP response-descriptor injection gate ==="
