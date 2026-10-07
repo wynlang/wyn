@@ -6124,7 +6124,23 @@ static int json_alloc_node() {
 
 static const char* json_skip_ws(const char* p) { while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++; return p; }
 
-static const char* json_parse_value(const char* p, int parent);
+// --- Nesting depth bound (#478) ---------------------------------------------
+// The parser recurses once per nesting level. With no bound, deeply nested input
+// exhausts the C stack and the process dies of SIGSEGV - reachable from untrusted
+// input wherever a program parses a request body or a downloaded document, which is
+// the advertised use case for the HTTP client and server. Confirmed at roughly 200 KB
+// of nested input.
+//
+// 200 levels is far above anything real (practical JSON rarely passes 30; serde_json
+// defaults to 128) and far below what the stack can take, so the bound rejects attacks
+// without rejecting documents.
+//
+// Exceeding it is NOT a crash and NOT a silent truncation: it sets json_parse_failed,
+// which the existing machinery at Json_parse already turns into an arena rollback and
+// a -1 handle, testable with `Json.is_valid(j)`. The depth limit needed no new failure
+// channel because the right one was already there.
+#define WYN_JSON_MAX_DEPTH 200
+static const char* json_parse_value(const char* p, int parent, int depth);
 
 static const char* json_parse_string_raw(const char* p, char** out) {
     if (*p != '"') { json_parse_failed = 1; return p; }
@@ -6191,7 +6207,10 @@ static const char* json_parse_string_raw(const char* p, char** out) {
     return p;
 }
 
-static const char* json_parse_value(const char* p, int parent) {
+static const char* json_parse_value(const char* p, int parent, int depth) {
+    // Checked BEFORE allocating a node, so a rejected document costs nothing beyond
+    // the nodes already parsed - which Json_parse then rolls back.
+    if (depth > WYN_JSON_MAX_DEPTH) { json_parse_failed = 1; return p; }
     p = json_skip_ws(p);
     int node = json_alloc_node();
     if (node < 0) return p;
@@ -6221,7 +6240,7 @@ static const char* json_parse_value(const char* p, int parent) {
             if (*p != ':') { json_parse_failed = 1; break; }
             p++;
             int before = json_node_count;
-            p = json_parse_value(p, node);
+            p = json_parse_value(p, node, depth + 1);
             if (before < json_node_count) {
                 json_nodes[before].key = key;
                 if (last_child >= 0) json_nodes[last_child].next_sibling = before;
@@ -6249,7 +6268,7 @@ static const char* json_parse_value(const char* p, int parent) {
             // Same progress guarantee as the object loop above.
             const char* iter_start = p;
             int before = json_node_count;
-            p = json_parse_value(p, node);
+            p = json_parse_value(p, node, depth + 1);
             if (before < json_node_count) {
                 if (last_child >= 0) json_nodes[last_child].next_sibling = before;
                 else json_nodes[node].first_child = before;
@@ -6299,7 +6318,7 @@ long long Json_parse(const char* text) {
     if (!*end) {
         json_parse_failed = 1;   // empty / whitespace-only input is not a document
     } else {
-        end = json_parse_value(text, -1);
+        end = json_parse_value(text, -1, 0);
         end = json_skip_ws(end);
         if (*end) json_parse_failed = 1;   // trailing content after the top-level value
     }
