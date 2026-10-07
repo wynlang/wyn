@@ -200,8 +200,8 @@ char* Http_accept(int server_fd);
 char* Http_method(const char* raw);
 char* Http_path(const char* raw);
 void Http_respond(long long client_fd, long long status, const char* content_type, const char* body);
-void Http_respond_json(int fd, int status, const char* json);
-void Http_close_client(int fd);
+void Http_respond_json(long long client_fd, long long status, const char* json);
+void Http_close_client(long long client_fd);
 void Http_close_server(int fd);
 // Client-side response accessors - net_advanced.c:225-230, same spelling as
 // wyn_runtime.h:279-280. HttpResponse is forward-declared above.
@@ -849,8 +849,8 @@ void File_close(long long handle);
 // Http, Json, etc. declared in module declarations block above
 int Http_route_match(const char* pattern, const char* path, WynHashMap* params);
 WynHashMap* Http_parse_request(const char* raw);
-int Http_ctx_fd(WynHashMap* ctx);
-void Http_respond_html(int fd, int status, const char* html);
+long long Http_ctx_fd(WynHashMap* ctx);
+void Http_respond_html(long long client_fd, long long status, const char* html);
 int Http_serve(int port);
 char* hashmap_keys_str(WynHashMap* map);
 WynArray hashmap_keys(WynHashMap* map);
@@ -1368,7 +1368,7 @@ HttpResponse* Http_post(const char* url, const char* body, const char* content_t
 char* Http_read_request(long long client_fd_ll);
 char* Http_req_body(const char* raw);
 const char* Http_header(HttpResponse* resp, const char* name);
-int Http_fd(const char* raw);
+long long Http_fd(const char* raw);
 long long Http_accept_fd(int server_fd);
 void Http_free(HttpResponse* resp);
 
