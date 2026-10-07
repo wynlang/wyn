@@ -675,6 +675,8 @@ test: wyn $(MBEDTLS_LIB) runtime/libwyn_rt.a
 	@WYN=./wyn bash tests/errors/run_len_cache_test.sh
 	@echo "=== Running Task.select diagnostic gate ==="
 	@WYN=./wyn bash tests/errors/run_task_select_diagnostic_test.sh
+	@echo "=== Running stdlib error-channel gate ==="
+	@WYN=./wyn bash tests/errors/run_error_channel_test.sh
 	@echo "=== Running README code-block gate (builds and runs every wyn block) ==="
 	@WYN=./wyn bash scripts/check_readme.sh
 	@echo "=== Running packed-array leak gate (RSS bound) ==="
