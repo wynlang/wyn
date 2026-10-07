@@ -254,9 +254,42 @@ const char* Http_header(HttpResponse* resp, const char* name) {
     return value;
 }
 
-// Free response
-void Http_free(HttpResponse* resp) {
-    if (!resp) return;
+// Release either an Http.get/post RESPONSE or an Http.accept REQUEST.
+//
+// THE BUG (#476): this took an HttpResponse* and immediately dereferenced it. The
+// checker registers Http_free with an arity and a return type but NO PARAMETER TYPE
+// (`{"Http_free", 1, builtin_void}`), so `Http.free(req)` - where req is the request
+// STRING from Http.accept - type-checked, compiled, and then read 8 bytes past the
+// start of a char* as a pointer and called free() on it. Measured: a server answered
+// its first request and died of SIGSEGV before printing anything after it, so it
+// served exactly one request. `wyn check` passed the program.
+//
+// (The issue reported this as "the documented way to release a request". It is not -
+// the only documentation for it is `Http.free(resp)` in the stdlib API reference,
+// which is correct usage, and no example, test or guide calls it on a request. It is
+// a plausible misuse that segfaulted rather than a documented one, which lowers the
+// severity but not the defect: a type confusion reachable from checked code.)
+//
+// THE FIX is to tell the two apart, which is possible and cheap. A request string is
+// allocated by wyn_rc_alloc, whose header carries TWO complementary 32-bit magics and
+// is bounds-checked against the tracked heap range - wyn_rc_is_heap is exactly that
+// test, and wyn_rc.c records that the double magic makes false positives
+// "astronomically unlikely". An HttpResponse* comes from plain malloc and has no such
+// header, so it fails the test.
+//
+// Releasing the string is all this does for a request: it does NOT close the
+// connection, because that is Http.close_client, and silently closing here would
+// break a handler that frees the request and then responds.
+void Http_free(void* p) {
+    if (!p) return;
+    extern int wyn_rc_is_heap(const void*);
+    extern void wyn_rc_release(const void*);
+    if (wyn_rc_is_heap(p)) {
+        // A reference-counted Wyn string: the request record from Http.accept.
+        wyn_rc_release(p);
+        return;
+    }
+    HttpResponse* resp = (HttpResponse*)p;
     free(resp->headers);
     free(resp->body);
     free(resp);

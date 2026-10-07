@@ -70,9 +70,10 @@ void init_checker() {
         "swap", "clamp_float", "lerp", "map_range",
         "bit_set", "bit_clear", "bit_toggle", "bit_check", "bit_count",
         "arr_sum", "arr_max", "arr_min", "arr_contains", "arr_find", "arr_reverse", "arr_sort", "arr_count", "arr_fill", "arr_all", "arr_join", "arr_map_double", "arr_map_square", "arr_filter_positive", "arr_filter_even", "arr_filter_greater_than_3", "arr_reduce_sum", "arr_reduce_product",
-        "file_exists", "file_size", "file_delete", "file_append", "file_copy", "last_error_get",
+        "file_exists", "file_size", "file_delete", "file_append", "file_copy",
         "file_move", "file_list_dir", "file_mkdir", "file_rmdir", "file_is_file", "file_is_dir",
-        // NOTE: file_read, file_write, sys_exec are registered separately with proper types
+        // NOTE: file_read, file_write, sys_exec and last_error_get are registered
+        // separately with proper types
         "random_int", "random_range", "random_float", "seed_random", "random_bool",
         "random_string", "random_hex", "random_uuid", "random_choice_int", "random_choice_str",
         "random_seed_auto",
@@ -177,6 +178,14 @@ void init_checker() {
             {"http_clear_headers", 0, builtin_void},
             {"http_status", 0, builtin_int},
             {"http_error", 0, builtin_string},
+            // NOT an HTTP function - it is the FILE module's error channel, and it
+            // shares this table only because the shape is identical (no parameters,
+            // one return type). It was in the untyped fall-through list above, so it
+            // type-checked as `int` while returning a `char*`: a user who found it got
+            // an integer, which is why it has never had a single caller anywhere in
+            // the repo, the site or the sample apps. Same defect class as #468 - a
+            // declared type disagreeing with the definition. (#477)
+            {"last_error_get", 0, builtin_string},
         };
         for (int i = 0; i < (int)(sizeof(http_fns)/sizeof(http_fns[0])); i++) {
             Type* ft = make_type(TYPE_FUNCTION);

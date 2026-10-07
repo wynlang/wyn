@@ -1,25 +1,59 @@
-// Simple HTTP Server - Demonstrates networking
+// Simple HTTP Server - accepts requests in a loop and answers them.
+//
+// The previous version of this file listened, slept for one second, closed the
+// socket and exited. It never called accept, and its own comment admitted as much
+// ("Real server would need accept() and proper HTTP parsing") - so the one artefact
+// a reader would copy to learn the feature did not demonstrate it (#476).
+//
+// Run it:   wyn run examples/29_http_server.wyn
+// Then:     curl http://localhost:8080/        ->  Hello from Wyn!
+//           curl http://localhost:8080/health  ->  ok
+//           curl http://localhost:8080/nope    ->  404
+//
+// PORT can override the port, which is what lets a test drive this file on a port
+// it negotiated rather than a fixed one.
 
 fn main() -> int {
-    print("Starting HTTP server on port 8080...\n")
+    var port = 8080
+    var from_env = Env.get("PORT")
+    if from_env != "" { port = from_env.to_int() }
 
-    var server = Net.listen(8080)
-    if server == -1 {
-        print("Error: Could not start server\n")
+    var server = Http.serve(port)
+    if server <= 0 {
+        print("Error: could not bind port ${port} (already in use?)\n")
         return 1
     }
+    print("Listening on http://localhost:${port}\n")
 
-    print("Server started! Visit http://localhost:8080\n")
-    print("Press Ctrl+C to stop\n\n")
+    while true {
+        // accept() blocks until a request arrives, then hands back one record
+        // holding the method, the path, the body and a handle for the response.
+        var req = Http.accept(server)
+        if req == "" { break }   // the listening socket failed - not a bad request
 
-    // Note: This is a minimal example
-    // Real server would need accept() and proper HTTP parsing
+        // Http.fd() is the accessor for the response handle. Prefer it over
+        // splitting the record by hand: it reads the final field from the right, so
+        // a path or body containing the record's separator cannot shift it.
+        var conn = Http.fd(req)
+        var path = Http.path(req)
 
-    // Keep server alive for a bit
-    Time.sleep(1000)
+        if path == "/" {
+            Http.respond(conn, 200, "text/plain", "Hello from Wyn!")
+        } else if path == "/health" {
+            Http.respond(conn, 200, "text/plain", "ok")
+        } else {
+            Http.respond(conn, 404, "text/plain", "404 not found")
+        }
 
-    Net.close(server)
-    print("Server stopped\n")
+        print("${Http.method(req)} ${path}\n")
 
+        // Hand the connection back, then release the request record. Without the
+        // close the process leaks one descriptor per request until it hits its
+        // limit; Http.free releases the record itself.
+        Http.close_client(conn)
+        Http.free(req)
+    }
+
+    Http.close_server(server)
     return 0
 }

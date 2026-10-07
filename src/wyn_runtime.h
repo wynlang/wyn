@@ -281,7 +281,10 @@ HttpResponse* Http_post(const char* url, const char* body, const char* content_t
 int Http_status(HttpResponse* resp);
 const char* Http_body(HttpResponse* resp);
 const char* Http_header(HttpResponse* resp, const char* name);
-void Http_free(HttpResponse* resp);
+// Http_free takes void* so it can tell an Http.get RESPONSE from an Http.accept
+// REQUEST at run time via the RC header magic - see net_advanced.c. It used to
+// take HttpResponse* and dereference a request string (#476).
+void Http_free(void* p);
 
 // TcpServer module
 typedef struct TcpServer TcpServer;
@@ -2125,10 +2128,28 @@ int http_last_status = 0;
 char http_last_error[256] = {0};
 char last_error[256] = {0};
 
+// Record WHY a File operation failed, with the OS reason attached.
+//
+// `last_error` already existed and was already written by file_read, file_write,
+// file_mkdir and file_rmdir - but by nothing else, and its getter last_error_get()
+// was registered with the wrong type so no program could read it. Both halves fixed
+// in #477: the registration, and this covering the rest of the module. The errno
+// reason is what makes it worth reading at all - "Cannot open file: x" does not
+// distinguish "absent" from "permission denied".
+static void wyn_file_err(const char* what, const char* path) {
+    snprintf(last_error, sizeof(last_error), "%s '%s': %s", what, path ? path : "(null)",
+             errno ? strerror(errno) : "unknown error");
+}
+
 char* http_request(const char* method, const char* url, const char* body) {
     char hostname[256], path[1024];
     int port = 80, is_https = 0;
     http_last_error[0] = 0;
+    // CLEARED WITH THE ERROR STRING, not left alone. Every early-return failure path
+    // below returns NULL without touching http_last_status, which is only assigned
+    // once a response arrives - so after a failed call http_status() reported the
+    // PREVIOUS request's status. The HTTPS path already reset it; plain HTTP did not.
+    http_last_status = 0;
     
     // Parse URL
     if(strncmp(url, "https://", 8) == 0) { url += 8; port = 443; is_https = 1; }
@@ -3237,8 +3258,9 @@ int gcd(int a, int b) { while(b) { int t = b; b = a % b; a = t; } return a; }
 int lcm(int a, int b) { return a * b / gcd(a, b); }
 char* file_read(const char* path) {
     last_error[0] = 0;
+    errno = 0;
     FILE* f = fopen(path, "r");
-    if(!f) { snprintf(last_error, 256, "Cannot open file: %s", path); return ""; }
+    if(!f) { wyn_file_err("Cannot read file", path); return ""; }
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -3251,8 +3273,9 @@ char* file_read(const char* path) {
 }
 WynArray file_list_dir(const char* path) {
     WynArray arr = array_new();
+    errno = 0;
     DIR* dir = opendir(path);
-    if (!dir) return arr;
+    if (!dir) { wyn_file_err("Cannot list directory", path); return arr; }
     struct dirent* entry;
     while ((entry = readdir(dir)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
@@ -3337,27 +3360,41 @@ char* Path_join(const char* a, const char* b) { return file_path_join(a, b); }
 int file_write(const char* path, const char* data) {
     last_error[0] = 0;
     FILE* f = fopen(path, "w");
-    if(!f) { snprintf(last_error, 256, "Cannot write file: %s", path); return 0; }
+    if(!f) { wyn_file_err("Cannot write file", path); return 0; }
     fputs(data, f);
     fclose(f);
     return 1;
 }
 int file_exists(const char* path) { FILE* f = fopen(path, "r"); if(f) { fclose(f); return 1; } return 0; }
-int file_delete(const char* path) { return remove(path) == 0; }
+int file_delete(const char* path) {
+    errno = 0;
+    if (remove(path) == 0) return 1;
+    wyn_file_err("Cannot delete file", path);
+    return 0;
+}
 int file_copy(const char* src, const char* dst) {
+    errno = 0;
     FILE* fsrc = fopen(src, "rb");
-    if(!fsrc) return 0;
+    if(!fsrc) { wyn_file_err("Cannot read source file", src); return 0; }
     FILE* fdst = fopen(dst, "wb");
-    if(!fdst) { fclose(fsrc); return 0; }
+    if(!fdst) { wyn_file_err("Cannot write destination file", dst); fclose(fsrc); return 0; }
     char buf[8192];
     size_t n;
     while((n = fread(buf, 1, sizeof(buf), fsrc)) > 0) {
-        if(fwrite(buf, 1, n, fdst) != n) { fclose(fsrc); fclose(fdst); return 0; }
+        if(fwrite(buf, 1, n, fdst) != n) {
+            wyn_file_err("Write failed partway through copy to", dst);
+            fclose(fsrc); fclose(fdst); return 0;
+        }
     }
     fclose(fsrc); fclose(fdst);
     return 1;
 }
-int file_move(const char* src, const char* dst) { return rename(src, dst) == 0; }
+int file_move(const char* src, const char* dst) {
+    errno = 0;
+    if (rename(src, dst) == 0) return 1;
+    wyn_file_err("Cannot move file", src);
+    return 0;
+}
 
 // Forward declarations for file functions
 int file_size(const char* path);
@@ -3481,8 +3518,9 @@ char* File_list_dir(const char* p) {
     return result;
 }
 int File_append(const char* p, const char* d) {
+    errno = 0;
     FILE* f = fopen(p, "a");
-    if (!f) return 0;
+    if (!f) { wyn_file_err("Cannot append to file", p); return 0; }
     fputs(d, f);
     fclose(f);
     return 1;
@@ -4422,8 +4460,9 @@ char* Regex_split(const char* s, const char* p) { return regex_split(s, p); }
 #endif
 
 int file_size(const char* path) {
+    errno = 0;
     FILE* f = fopen(path, "rb");
-    if(!f) return 0;
+    if(!f) { wyn_file_err("Cannot size file", path); return 0; }
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
     fclose(f);

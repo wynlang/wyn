@@ -675,6 +675,8 @@ test: wyn $(MBEDTLS_LIB) runtime/libwyn_rt.a
 	@WYN=./wyn bash tests/errors/run_len_cache_test.sh
 	@echo "=== Running Task.select diagnostic gate ==="
 	@WYN=./wyn bash tests/errors/run_task_select_diagnostic_test.sh
+	@echo "=== Running stdlib error-channel gate ==="
+	@WYN=./wyn bash tests/errors/run_error_channel_test.sh
 	@echo "=== Running JSON nesting-depth gate ==="
 	@WYN=./wyn bash tests/errors/run_json_depth_test.sh
 	@echo "=== Running README code-block gate (builds and runs every wyn block) ==="
@@ -685,6 +687,8 @@ test: wyn $(MBEDTLS_LIB) runtime/libwyn_rt.a
 	@WYN=./wyn bash tests/errors/run_fast_flag_test.sh
 	@echo "=== Running HTTP server concurrent-load gate ==="
 	@WYN=./wyn bash tests/errors/run_http_server_load_test.sh
+	@echo "=== Running HTTP two-request + example gate ==="
+	@WYN=./wyn bash tests/errors/run_http_two_requests_test.sh
 	@echo "=== Running HTTP response-descriptor injection gate ==="
 	@WYN=./wyn bash tests/errors/run_http_fd_injection_test.sh
 	@echo "=== Running test-port hygiene gate (no test may bind a fixed port) ==="
