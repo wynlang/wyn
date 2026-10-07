@@ -21,10 +21,16 @@
 void* wyn_rc_alloc(size_t size);
 void wyn_rc_retain(const void* ptr);
 void wyn_rc_release(const void* ptr);
-void wyn_rc_set_length(const void* ptr, unsigned int len);
-unsigned int wyn_rc_get_length(const void* ptr);
+// uint32_t and not `unsigned int`: wyn_rc.c:80-122 spells the length type
+// uint32_t, and the signature gate compares the TYPE TOKENS, not what they
+// happen to alias to on this host. The two agree on every platform this builds
+// for today, so the old spelling was harmless - but a gate that accepted
+// "different tokens that are probably the same type" is a gate that would also
+// accept `long` against `long long` (see wyn_time_now), which is not harmless.
+void wyn_rc_set_length(const void* ptr, uint32_t len);
+uint32_t wyn_rc_get_length(const void* ptr);
 #define WYN_RC_NOT_CACHEABLE 0xFFFFFFFFu
-unsigned int wyn_rc_length_probe(const void* ptr);
+uint32_t wyn_rc_length_probe(const void* ptr);
 
 // Abort-on-OOM allocators, verbatim from wyn_runtime.h:42-44. `static inline` in
 // both headers, so there is nothing in the archive to link - they must be
@@ -147,11 +153,16 @@ int future_is_ready(Future* f);
 struct Future* wyn_spawn_inline(TaskFuncWithReturn func, void* arg);
 void* future_get_consume(Future* f);
 
-// WebSocket module
-int Ws_connect(const char* url);
-int Ws_send(int sock, const char* msg);
-char* Ws_recv(int sock);
-void Ws_close(int sock);
+// WebSocket module: INTENTIONALLY NOT DECLARED HERE. Ws_connect / Ws_send /
+// Ws_recv / Ws_close are registered as checker builtins
+// (checker_builtins.c:1363-1365) and declared in wyn_runtime.h:306-309, but no
+// translation unit anywhere defines them - `nm runtime/libwyn_rt.a` has no `T`
+// for any of the four. A declaration here only moved the failure from the C
+// compiler to the linker: `ld: symbol(s) not found for architecture arm64`
+// instead of `call to undeclared function 'Ws_connect'`. The gate's nm arm
+// (tests/errors/run_slim_header_parity_test.sh) now rejects a declaration with
+// no defining symbol, so adding one back without an implementation reds CI.
+// Implementing them, or dropping the checker builtins, is a separate concern.
 
 // Socket module
 int Socket_connect(const char* host, int port);
@@ -167,18 +178,39 @@ void wyn_assert_eq_str(const char* a, const char* b);
 
 // === Module function declarations (for slim header builds) ===
 
-// Http
+// Http. Every signature below is copied from the DEFINITION, not from what the
+// server API looks like it ought to take - six of these used to be invented here
+// and the `cc` line's `-w -Wno-int-conversion` hid the consequences (#468):
+//
+//   Http_accept  was `int`, defined `char*`      -> a 64-bit pointer returned
+//                                                   through a 32-bit prototype
+//   Http_method  was `(int req)`, defined `(const char* raw)`  -> the request
+//   Http_path    same                               string truncated to 32 bits
+//   Http_body    was `char* (int)`, defined `const char* (HttpResponse*)`
+//   Http_status  was `int (int)`,   defined `int (HttpResponse*)`
+//   Http_respond was 3 params, defined 4 (content_type) -> `too many arguments
+//                to function call, expected 3, have 4`, i.e. NO four-argument
+//                Http_respond program could be built with --release at all,
+//                while the identical program ran fine in debug.
+//
+// `req` here is the raw request STRING that Http_accept returns (wyn_runtime.h
+// :3771, :3737-3738), which is why these take const char* and not a handle.
 int Http_listen(int port);
-int Http_accept(int server_fd);
-char* Http_method(int req);
-char* Http_path(int req);
-char* Http_body(int req);
-void Http_respond(int fd, int status, const char* body);
+char* Http_accept(int server_fd);
+char* Http_method(const char* raw);
+char* Http_path(const char* raw);
+void Http_respond(long long client_fd, long long status, const char* content_type, const char* body);
 void Http_respond_json(int fd, int status, const char* json);
-void Http_respond_with_header(int fd, int status, const char* content_type, const char* body);
 void Http_close_client(int fd);
 void Http_close_server(int fd);
-int Http_status(int req);
+// Client-side response accessors - net_advanced.c:225-230, same spelling as
+// wyn_runtime.h:279-280. HttpResponse is forward-declared above.
+int Http_status(HttpResponse* resp);
+const char* Http_body(HttpResponse* resp);
+// Http_respond_with_header: NOT declared. The checker advertises it
+// (checker_builtins.c:1360) but nothing defines it - no `T` in
+// runtime/libwyn_rt.a - so the declaration only turned a compile error into a
+// link error. Same class as the Ws_* block above.
 
 // Json - one node arena, one `long long` handle. Every signature here must match
 // wyn_runtime.h exactly; `Json_has` used to be declared `int` here against a
@@ -216,13 +248,18 @@ bool File_exists(const char* path);
 int File_delete(const char* path);
 char* File_cwd(void);
 
-// Db
+// Db. Db_exec returns `int` (wyn_runtime.h:5666 and the no-sqlite stub at
+// :5769), not `long long` - reading 64 bits out of a 32-bit return picks up
+// whatever was in the top half of the return register. The parameterised pair
+// takes a WynArray BY VALUE; declaring it `...` here put a by-value struct
+// through a variadic prototype, which is a different argument-passing
+// convention on arm64 and every other AAPCS target.
 long long Db_open(const char* path);
 void Db_close(long long db);
-long long Db_exec(long long db, const char* sql);
-long long Db_exec_p(long long db, const char* sql, ...);
+int Db_exec(long long db, const char* sql);
+int Db_exec_p(long long db, const char* sql, WynArray params);
 char* Db_query(long long db, const char* sql);
-char* Db_query_p(long long db, const char* sql, ...);
+char* Db_query_p(long long db, const char* sql, WynArray params);
 char* Db_query_one(long long db, const char* sql);
 
 // System
@@ -460,7 +497,12 @@ WynArray wyn_array_slice_range(WynArray arr, int start, int end);
 WynArray wyn_array_slice_from(WynArray arr, int start);
 char* array_join(WynArray arr, const char* sep);
 WynArray array_concat(WynArray arr1, WynArray arr2);
-WynRange range(int start, int end);
+// `range` itself is NOT declared: it appears in no other file in src/ except as
+// a checker builtin name (checker_builtins.c:80), and the archive has no
+// `T range`. `for i in range(0, 3)` is lowered to an inline
+// WynRange initialiser plus range_has_next/range_next, so nothing ever emits a
+// call to it - verified by running that loop under --release after the
+// declaration was removed.
 bool range_has_next(WynRange* r);
 int range_next(WynRange* r);
 int string_length(const char* str);
@@ -605,9 +647,19 @@ char* http_post(const char* url, const char* data);
 char* http_put(const char* url, const char* data);
 char* http_delete(const char* url);
 void http_set_header(const char* key, const char* val);
-void http_clear_headers();
-int http_status();
-char* http_error();
+// The bare-builtin aliases are `static inline` in wyn_runtime.h:2391-2393, so
+// there is NOTHING in runtime/libwyn_rt.a to link against - `nm` has no `T` for
+// any of the three. Declaring them here as ordinary functions made
+// `print(http_status())` build and run in debug and fail at LINK under
+// --release with `Undefined symbols: _http_status`. They must be DUPLICATED,
+// like wyn_malloc at the top of this file, not declared. The wyn_-prefixed
+// implementations they forward to are real archive symbols.
+int wyn_http_status(void);
+char* wyn_http_error(void);
+void wyn_http_clear_headers(void);
+static inline void http_clear_headers(void) { wyn_http_clear_headers(); }
+static inline int http_status(void) { return wyn_http_status(); }
+static inline char* http_error(void) { return wyn_http_error(); }
 char* last_error_get();
 char* url_encode(const char* str);
 char* url_decode(const char* str);
@@ -1367,7 +1419,6 @@ char* wyn_string_reverse(const char* str);
 char* wyn_string_to_lower(const char* str);
 char* wyn_string_to_upper(const char* str);
 char* wyn_string_trim(const char* str);
-char* wyn_time_format(long timestamp);
 char** wyn_string_split(const char* str, const char* delim, int* count);
 double wyn_array_average(int* arr, int len);
 double wyn_math_abs(double x);
@@ -1432,19 +1483,27 @@ int wyn_string_index_of(const char* str, const char* substr);
 int wyn_string_last_index_of(const char* str, const char* substr);
 int wyn_string_len(const char* str);
 int wyn_string_starts_with(const char* str, const char* prefix);
-int wyn_time_day(long timestamp);
-int wyn_time_hour(long timestamp);
-int wyn_time_minute(long timestamp);
-int wyn_time_month(long timestamp);
-int wyn_time_second(long timestamp);
-int wyn_time_year(long timestamp);
 int* wyn_array_concat(int* arr1, int len1, int* arr2, int len2, int* out_len);
 int* wyn_array_slice(int* arr, int start, int end, int* out_len);
 int* wyn_array_unique(int* arr, int len, int* out_len);
-long long wyn_time_now_micros();
 long long wyn_time_now_millis();
-long wyn_time_now();
-long wyn_time_parse(const char* str);
+// `long long`, matching stdlib_time.c:10. Both headers said `long`, which is
+// the same width as the definition on LP64 and HALF of it on Windows (LLP64),
+// where the top 32 bits of a millisecond epoch are the interesting ones. The
+// gate could not see it until the definition side learned to read the
+// RT_SRCS .c files - the declaration agreed with the OTHER declaration.
+long long wyn_time_now(void);
+// ABSENT ON PURPOSE - declared in wyn_runtime.h:562-574 and registered as
+// checker builtins (checker_builtins.c:110-114) but DEFINED NOWHERE; the only
+// three the archive actually has are wyn_time_now / wyn_time_now_millis /
+// wyn_time_sleep (stdlib_time.c):
+//   wyn_time_now_micros   wyn_time_format   wyn_time_parse
+//   wyn_time_year  wyn_time_month  wyn_time_day
+//   wyn_time_hour  wyn_time_minute wyn_time_second
+//   wyn_time_sleep_millis wyn_time_sleep_micros
+// A declaration bought nothing: the call failed either way, as a linker error
+// rather than a compiler one. The nm arm of the parity gate now rejects
+// re-adding one without an implementation.
 uint32_t wyn_crypto_hash32(const char* data, size_t len);
 uint64_t wyn_crypto_hash64(const char* data, size_t len);
 void wyn_array_fill(int* arr, int len, int value);
@@ -1456,8 +1515,6 @@ void wyn_crypto_sha256(const char* data, size_t len, char* output);
 void wyn_hashmap_free(int map);
 void wyn_hashmap_insert_int(int map, const char* key, int value);
 void wyn_time_sleep(int seconds);
-void wyn_time_sleep_micros(int micros);
-void wyn_time_sleep_millis(int millis);
 
 // Round two of the same omission, found only after the gate learned to enumerate
 // NAMESPACES as well as global symbols - `Base64.encode` is not a global symbol, so
@@ -1489,13 +1546,14 @@ long File_modified_time(const char* p);   // wyn_runtime.h
 char* File_path_join(const char* a, const char* b);   // wyn_runtime.h
 int File_remove_dir_all(const char* p);   // wyn_runtime.h
 int File_rmdir(const char* p);   // wyn_runtime.h
-void HashMap_clear(int map);   // wyn_runtime.h
 int HashMap_contains(int map, const char* key);   // wyn_runtime.h
 void HashMap_free(int map);   // wyn_runtime.h
 int HashMap_get(int map, const char* key);   // wyn_runtime.h
 void HashMap_insert(int map, const char* key, int value);   // wyn_runtime.h
 int HashMap_len(int map);   // wyn_runtime.h
-int HashMap_remove(int map, const char* key);   // wyn_runtime.h
+// HashMap_clear / HashMap_remove are NOT declared: wyn_runtime.h:519-520
+// declares them and nothing in the tree defines either one - no `T` in
+// runtime/libwyn_rt.a. See the nm arm of the slim-header parity gate.
 long long Math_checked_add(long long a, long long b);   // wyn_runtime.h
 long long Math_checked_mul(long long a, long long b);   // wyn_runtime.h
 long long Math_checked_sub(long long a, long long b);   // wyn_runtime.h

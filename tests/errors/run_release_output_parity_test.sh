@@ -57,6 +57,66 @@ parity(){
 
 echo "=== debug and --release must agree (slim-header parity, by behaviour) ==="
 
+# ------------------------------------------------- #468: slim declarations that
+# disagreed with their definitions. Each of these compiled and ran in debug (the
+# full header, definitions included, is pasted into the TU) and was broken only
+# under --release, where the hand-maintained slim header is the prototype.
+#
+# THE SERVER ARM IS A `parity` ARM AND NOT A "does it build" ARM, ON PURPOSE.
+# `wyn build --release` does NOT emit the slim header - it keeps wyn_runtime.h
+# (src/main.c:2488-2501 says so in as many words: "a green `wyn build --release`
+# proves nothing about it"). Only `wyn run --release` sets slim mode, which is what
+# `parity` uses. A `wyn build --release` arm was written here first and PASSED with
+# the three-parameter Http_respond declaration reinstated - it had never compiled
+# against the slim header at all.
+#
+# The server body is guarded by `wyn_time_now() < 0`, which is false at runtime and
+# which the C compiler cannot fold away (wyn_time_now is an external call), so the
+# whole block is COMPILED AND LINKED - prototypes checked, symbols resolved - while
+# the program still terminates instead of blocking in accept(). Verified by
+# mutation: with Http_respond's declaration reverted to three parameters, debug
+# still printed server-api-ok and --release failed to compile.
+parity "the whole Http server API compiles and links under --release (#468)" \
+  'fn main() {\n    if wyn_time_now() < 0 {\n        s = Http_listen(18791)\n        req = Http_accept(s)\n        print("${Http_method(req)} ${Http_path(req)}")\n        fd = Http_fd(req)\n        Http_respond(fd, 200, "text/plain", "hi")\n        Http_respond_json(fd, 200, "{}")\n        Http_close_client(fd)\n        Http_close_server(s)\n    }\n    print("server-api-ok")\n}' \
+  'server-api-ok'
+
+parity "Http_respond accepts its four arguments (content_type)" \
+  'fn main() {\n    Http_respond(-1, 200, "text/plain", "x")\n    print("respond-ok")\n}' \
+  'respond-ok'
+
+parity "Http_method takes the request STRING, not an int handle" \
+  'fn main() {\n    print(Http_method("GET|/a|body|7"))\n}' \
+  'GET'
+
+parity "Http_path takes the request STRING, not an int handle" \
+  'fn main() {\n    print(Http_path("GET|/a|body|7"))\n}' \
+  '/a'
+
+# http_status/http_error/http_clear_headers are `static inline` in wyn_runtime.h,
+# so there is no archive symbol: declaring them in the slim header as ordinary
+# functions made this exact program fail at LINK under --release with
+# `Undefined symbols: _http_status`, while debug printed 0.
+parity "http_status() links under --release (static inline alias, no archive symbol)" \
+  'fn main() {\n    print(http_status())\n}' \
+  '0'
+
+parity "http_error() links under --release" \
+  'fn main() {\n    e = http_error()\n    print("err-ok")\n}' \
+  'err-ok'
+
+# Db_exec is `int`; the slim header said `long long`, so the caller read 64 bits
+# out of a 32-bit return value.
+parity "Db_exec returns its int, not 64 bits of register" \
+  'fn main() {\n    print(Db_exec(0, "select 1"))\n}' \
+  '-1'
+
+# wyn_time_now was declared `long` in BOTH headers against a `long long`
+# definition - the same width on LP64, half of it on Windows.
+parity "wyn_time_now() is wide enough for a millisecond epoch" \
+  'fn main() {\n    print(wyn_time_now() > 1700000000)\n}' \
+  'true'
+
+
 # --------------------------------------------------- the silently-wrong one
 parity "print(map) renders the map, not its pointer" \
   'fn main() {\n    m = {"a": 1}\n    print(m)\n}' \

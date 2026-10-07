@@ -15,10 +15,12 @@
 void* wyn_rc_alloc(size_t size);
 void wyn_rc_retain(const void* ptr);
 void wyn_rc_release(const void* ptr);
-void wyn_rc_set_length(const void* ptr, unsigned int len);
-unsigned int wyn_rc_get_length(const void* ptr);
+// uint32_t, matching wyn_rc.c:80-122 token for token. arc_runtime.h above has
+// already pulled in <stdint.h>.
+void wyn_rc_set_length(const void* ptr, uint32_t len);
+uint32_t wyn_rc_get_length(const void* ptr);
 #define WYN_RC_NOT_CACHEABLE 0xFFFFFFFFu
-unsigned int wyn_rc_length_probe(const void* ptr);
+uint32_t wyn_rc_length_probe(const void* ptr);
 
 // Inline spawn for non-yielding functions (spawn_fast.c)
 struct Future;
@@ -556,8 +558,9 @@ int wyn_array_min(int* arr, int len);
 int wyn_array_max(int* arr, int len);
 double wyn_array_average(int* arr, int len);
 
-// Time module
-long wyn_time_now();
+// Time module. wyn_time_now returns `long long` (stdlib_time.c:10) - this
+// declaration said `long`, which is half the width on Windows/LLP64.
+long long wyn_time_now(void);
 long long wyn_time_now_millis();
 long long wyn_time_now_micros();
 void wyn_time_sleep(int seconds);
@@ -5767,6 +5770,17 @@ long long Db_open(const char* path) { (void)path; fprintf(stderr, "\033[31mError
 int Db_exec(long long h, const char* sql) { (void)h;(void)sql; return -1; }
 char* Db_query(long long h, const char* sql) { (void)h;(void)sql; return ""; }
 char* Db_query_one(long long h, const char* sql) { (void)h;(void)sql; return ""; }
+// The parameterised pair needs stubs here too. runtime/libwyn_rt.a is built with
+// NO -DWYN_USE_SQLITE (the Makefile's runtime rule passes it nowhere; main.c
+// adds it only to the PROGRAM's compile line, and only when the program mentions
+// Db.), so this #else branch is what the archive contains. It had no Db_exec_p /
+// Db_query_p, and --release takes every runtime symbol from the archive - so a
+// program using them compiled fine in debug (the full header is pasted into the
+// TU, sqlite branch and all) and died at LINK under --release with
+// `Undefined symbols: _Db_exec_p`. Seven of the nine Db entry points had a stub;
+// these two did not.
+int Db_exec_p(long long h, const char* sql, WynArray params) { (void)h;(void)sql;(void)params; return -1; }
+char* Db_query_p(long long h, const char* sql, WynArray params) { (void)h;(void)sql;(void)params; return ""; }
 long long Db_last_insert_id(long long h) { (void)h; return 0; }
 char* Db_error(long long h) { (void)h; return "sqlite not available"; }
 void Db_close(long long h) { (void)h; }

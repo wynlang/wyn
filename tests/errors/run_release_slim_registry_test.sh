@@ -87,10 +87,37 @@ else
 fi
 
 # --- arms 2+3: declared in the full header => must be declared in the slim one
-python3 - "$ROOT" "$TMP" "$CC_BIN" <<'PY' > "$TMP/probe.out" 2>&1
-import re, subprocess, sys
-root, tmp, cc = sys.argv[1], sys.argv[2], sys.argv[3]
+#
+# WITH ONE EXCLUSION, ADDED WITH #468: a registry symbol that NOTHING DEFINES. The
+# full header declares 17 functions that no translation unit implements -
+# Ws_connect/send/recv/close, eleven wyn_time_* accessors, HashMap_clear,
+# HashMap_remove - so `nm runtime/libwyn_rt.a` has no symbol for any of them. For
+# those, a slim-header declaration buys NOTHING: the program fails either way, as a
+# linker error instead of a compiler one. Demanding the declaration (which this gate
+# did) and demanding its absence (which arm 3 of run_slim_header_parity_test.sh now
+# does, because a declaration with no symbol is a release-only link failure) cannot
+# both be satisfied, and the parity gate is the one that is right. They are split
+# out into their own arm here rather than ignored: that arm asserts they have NO
+# implementation, so the day one gains an implementation it moves back into the gap
+# and this gate reds until the slim header declares it.
+NM_BIN="${NM:-nm}"
+if [ ! -f "$ROOT/runtime/libwyn_rt.a" ] || ! command -v "$NM_BIN" >/dev/null 2>&1; then
+    bad "cannot read runtime/libwyn_rt.a with '$NM_BIN' - arms 2+3 cannot tell a MISSING declaration from one that would name a function nothing defines. Run 'make runtime'."
+    echo ""; echo "release-slim-registry: $PASS pass, $FAIL fail"; exit 1
+fi
+python3 - "$ROOT" "$TMP" "$CC_BIN" "$NM_BIN" <<'PY' > "$TMP/probe.out" 2>&1
+import re, subprocess, sys, os
+root, tmp, cc, nm_bin = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 names = [l.strip() for l in open(tmp + "/registry.txt") if l.strip()]
+
+nm_out = subprocess.run([nm_bin, "-g", os.path.join(root, "runtime/libwyn_rt.a")],
+                        capture_output=True, text=True).stdout
+arch = set()
+for line in nm_out.splitlines():
+    m = re.match(r'^[0-9a-fA-F]*\s*([A-Za-z])\s+_?(\S+)$', line.strip())
+    if m and m.group(1) in 'TtDdBbSsCiRr':
+        arch.add(m.group(2))
+print("ARCH=%d" % len(arch))
 
 def probe(header, ns):
     src = '#include "%s"\nvoid* __wyn_probe[] = {\n' % header
@@ -115,12 +142,17 @@ def probe(header, ns):
 und_f, other_f = probe("wyn_runtime.h", names)
 real = [n for n in names if n not in und_f and n not in other_f]
 und_s, other_s = probe("wyn_runtime_slim.h", real)
-gap = sorted(und_s | other_s)
+gap_all = sorted(und_s | other_s)
+gap     = [g for g in gap_all if g in arch]          # real omissions
+noimpl  = [g for g in gap_all if g not in arch]      # nothing defines them at all
 print("REAL=%d" % len(real))
 print("NOTFUNC=%d" % len(und_f | other_f))
 print("GAP=%d" % len(gap))
+print("NOIMPL=%d" % len(noimpl))
 for g in gap:
     print("GAPNAME %s" % g)
+for g in noimpl:
+    print("NOIMPLNAME %s" % g)
 PY
 real=$(sed -n 's/^REAL=//p' "$TMP/probe.out" | head -1)
 gapn=$(sed -n 's/^GAP=//p' "$TMP/probe.out" | head -1)
@@ -138,6 +170,17 @@ else
         bad "$gapn registry symbols are MISSING from src/wyn_runtime_slim.h - each one is a"
         echo "          \`wyn run --release\` failure waiting for a user, reported to them as a typo:"
         sed -n 's/^GAPNAME /          /p' "$TMP/probe.out"
+    fi
+    # The split-out arm. An ASSERTION and not a note: these names must have no
+    # defining symbol. One that gains an implementation drops out of this list,
+    # lands in the gap above, and reds the arm before it until it is declared.
+    noimpl=$(sed -n 's/^NOIMPL=//p' "$TMP/probe.out" | head -1)
+    archn=$(sed -n 's/^ARCH=//p' "$TMP/probe.out" | head -1)
+    if [ -z "${archn:-}" ] || [ "${archn:-0}" -lt 800 ]; then
+        bad "nm read only ${archn:-0} symbols out of runtime/libwyn_rt.a (floor 800) - this split cannot be trusted and would excuse every real omission"
+    else
+        ok "$archn defining symbols read from runtime/libwyn_rt.a; ${noimpl:-0} registry symbols are undeclared in the slim header because NOTHING defines them (a declaration would turn a compile error into a link error, not fix it)"
+        sed -n 's/^NOIMPLNAME /          no implementation: /p' "$TMP/probe.out"
     fi
 fi
 
