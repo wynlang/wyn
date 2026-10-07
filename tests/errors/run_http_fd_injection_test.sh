@@ -122,7 +122,7 @@ fn main() -> int {
     if server <= 0 { return 7 }
     println("ready \${port}")
     var n = 0
-    while n < 60 {
+    while n < 200 {
         var conn = Http.accept_fd(server)
         if conn > 0 { spawn handle(conn) }
         n = n + 1
@@ -186,7 +186,7 @@ try:
 except Exception:
     print("SETUP-FAILED SETUP-FAILED")
     sys.exit(0)
-victim.settimeout(1.0)
+victim.settimeout(0.3)
 
 leaked_fd = []
 for cand in range(3, 21):
@@ -199,9 +199,17 @@ for cand in range(3, 21):
         pass
 
 leaked_tok = []
-# (nonce << 20) | fd shapes with the wrong nonce, plus one that is plainly out of
-# range. Each must resolve to -1 rather than to the fd in its low bits.
-for tok in (1048579, 1048580, 2097155, 4294967296, 1152921504606846977, 999999999999999999):
+# (nonce << 20) | fd shapes carrying the WRONG nonce. The low bits sweep the same
+# descriptor range as above, because the first version of this arm used a handful of
+# fixed values that happened to miss the victim's actual descriptor - so a build
+# with the nonce-table comparison deleted still passed it. Every candidate must
+# resolve to -1 rather than to the descriptor in its low bits.
+forged = []
+for cand in range(3, 21):
+    for nonce in (1, 4096):
+        forged.append((nonce << 20) | cand)
+forged += [4294967296, 1152921504606846977, 999999999999999999]
+for tok in forged:
     attempt(tok)
     try:
         d = victim.recv(4096)
