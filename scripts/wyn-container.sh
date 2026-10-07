@@ -38,9 +38,43 @@ IMAGE=gcc:13-bookworm          # aarch64, and already local. gcc/cc/make/perl/py
 # too high. Caught by invoking it both ways rather than by reading it.
 SELF=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$0")
 HOST_WS=${WYN_WS:-$(cd "$(dirname "$SELF")/../../.." && pwd)}
-CLONE=/build/wyn
+# --- LANES: one isolated clone per concurrent worker -------------------------
+#
+# WHY: `make` writes `wyn` at the repo root and `runtime/libwyn_rt.a` beside it, so two
+# workers sharing one clone overwrite each other's compiler mid-run - and the symptom is
+# not a build error, it is a test failure in whichever lane read the other's binary. The
+# project already has the same hazard recorded for two agents building one file in one
+# checkout (`wyn build` writes the generated C next to the source, and `wyn run` caches
+# `<file>.out`).
+#
+# WYN_LANE=<id> gives that worker its own clone at /build/lane-<id> and its own TMPDIR at
+# /tmp/wb-<id>. TMPDIR matters as much as the clone: run_bdd.sh builds each test in a
+# $TMPDIR sandbox and the C compiler's error file is per-process *within* that directory.
+#
+# Unset WYN_LANE keeps the original single clone at /build/wyn, so every existing
+# invocation behaves exactly as before.
+#
+# LANES ARE FOR `build` AND FILTERED GATES, NOT FOR `make test`. run_bdd.sh defaults to
+# ncpu*2 jobs and `make test` forks its own, so N lanes each running the full suite
+# oversubscribe the box - and an unbounded looping test multiplied across shards has
+# kernel-panicked this machine. Set WYN_TEST_JOBS yourself if you run anything parallel
+# inside a lane; `lanes` below reports what exists so a forgotten one is visible.
+LANE="${WYN_LANE:-}"
+if [ -n "$LANE" ]; then
+    CLONE="/build/lane-$LANE"
+    CTMP="/tmp/wb-$LANE"
+else
+    CLONE=/build/wyn
+    CTMP=/tmp/wb
+fi
 
-inside() { docker exec -e TMPDIR=/tmp/wb -e WYN_ROOT="$CLONE" -w "$CLONE" "$NAME" bash -lc "$1"; }
+inside() { docker exec -e TMPDIR="$CTMP" -e WYN_ROOT="$CLONE" -w "$CLONE" "$NAME" bash -lc "$1"; }
+
+# A lane's clone is created on demand rather than at container start, because lanes come
+# and go. Idempotent.
+ensure_clone() {
+    docker exec "$NAME" bash -lc "mkdir -p '$CTMP' && { [ -d '$CLONE/.git' ] || git clone -q /src/repos/wyn '$CLONE'; }"
+}
 
 case "${1:-status}" in
 up)
@@ -64,6 +98,7 @@ up)
     fi
     ;;
 sync)
+    ensure_clone
     # /src is read-only, which is fine: fetching READS the host repo and writes only
     # into the container's own clone.
     #
@@ -85,14 +120,36 @@ sync)
 # was noticed is that the failure happened to land inside the last 20 lines. A gate
 # that cannot report failure through its exit status is the same defect suite.sh had
 # three of. `build` was worse - it ended in `; true`, so it could never fail at all.
-build)   inside "set -o pipefail; rm -f wyn && make 2>&1 | tail -3" ;;
-bdd)     if [ -n "${2:-}" ]; then inside "set -o pipefail; WYN_TEST_FILTER='$2' bash tests/run_bdd.sh | tail -3"
+build)   ensure_clone; inside "set -o pipefail; rm -f wyn && make 2>&1 | tail -3" ;;
+bdd)     ensure_clone
+         if [ -n "${2:-}" ]; then inside "set -o pipefail; WYN_TEST_FILTER='$2' bash tests/run_bdd.sh | tail -3"
          else inside "set -o pipefail; bash tests/run_bdd.sh | tail -3"; fi ;;
-test)    inside "set -o pipefail; make test 2>&1 | tail -20" ;;
-sh)      shift; inside "$*" ;;
+test)    ensure_clone; inside "set -o pipefail; make test 2>&1 | tail -20" ;;
+sh)      ensure_clone; shift; inside "$*" ;;
 status)
     docker ps -a --filter "name=^${NAME}$" --format '  container: {{.Names}} {{.Status}} ({{.Image}})'
     inside "echo -n '  clone:     '; git log --oneline -1; echo -n '  dirty:     '; git status --short | wc -l; echo -n '  binary:    '; (file wyn 2>/dev/null | cut -d, -f1-2) || echo 'not built'" 2>/dev/null || echo "  (not running — ./wyn-container.sh up)"
     ;;
-*) echo "usage: $0 {up|sync [branch]|build|bdd [filter]|test|sh <cmd>|status}" >&2; exit 2 ;;
+lanes)
+    # What exists, at which commit, and whether it is dirty - so a lane left behind by a
+    # stopped worker is visible rather than quietly holding disk and a stale checkout.
+    docker exec "$NAME" bash -lc '
+      shopt -s nullglob
+      found=0
+      for d in /build/wyn /build/lane-*; do
+        [ -d "$d/.git" ] || continue
+        found=1
+        printf "  %-22s %s  dirty=%s\n" "$(basename "$d")" \
+          "$(git -C "$d" log --oneline -1 2>/dev/null | cut -c1-60)" \
+          "$(git -C "$d" status --porcelain -uno 2>/dev/null | wc -l | tr -d " ")"
+      done
+      [ "$found" = 1 ] || echo "  (no clones)"'
+    ;;
+lane-rm)
+    [ -n "${2:-}" ] || { echo "usage: $0 lane-rm <id>" >&2; exit 2; }
+    docker exec "$NAME" bash -lc "rm -rf '/build/lane-$2' '/tmp/wb-$2'" && echo "removed lane $2"
+    ;;
+*) echo "usage: $0 {up|sync [branch]|build|bdd [filter]|test|sh <cmd>|status|lanes|lane-rm <id>}" >&2
+   echo "       WYN_LANE=<id> gives an isolated clone at /build/lane-<id> (for build + filtered gates, NOT make test)" >&2
+   exit 2 ;;
 esac
