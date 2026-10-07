@@ -242,10 +242,13 @@ wyn/
 
 MIT — see [LICENSE](LICENSE).
 
-The shipped `wyn` binary statically links TinyCC (`libtcc`), which is LGPL-2.1, and
-bundles minicoro (Public Domain / MIT-0). License texts are distributed at
-`vendor/tcc/COPYING` and `vendor/minicoro/LICENSE`; the full list of third-party
-components is in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+The shipped `wyn` binary statically links minicoro (Public Domain / MIT-0). It
+redistributes — but does not link — TinyCC (LGPL-2.1), which Wyn invokes as a separate
+program, and Mbed TLS (Apache-2.0 or GPL-2.0-or-later), which is linked into the
+programs *you* compile when they use HTTPS. License texts ship at
+`vendor/minicoro/LICENSE`, `vendor/tcc/COPYING` and `vendor/mbedtls/LICENSE`; the full
+list, with the evidence for each relationship, is in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ---
 
