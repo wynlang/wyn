@@ -1,0 +1,27 @@
+// NEGATIVE CONTROL for the program-exit-status check (and for the EXPECT_EXIT
+// directive that overrides it). The runner must report FAIL for this file; the
+// self-test block inverts the verdict.
+//
+// This program prints EXACTLY the line its own EXPECT directive asks for, and
+// then exits 1. The output assertion is therefore fully SATISFIED, which is the
+// whole point: the only thing that can make the runner report FAIL is the exit
+// status. If the runner reports anything other than FAIL, the status check is
+// not running and the accept path is back to scoring "the right text appeared"
+// instead of "the program ran to completion".
+//
+// This control exists because that was the harness's actual behaviour. The run
+// step captured stdout+stderr and discarded $?, so a test that printed its
+// expected output and then panicked was reported with a tick. Measured before
+// the fix: a file carrying one EXPECT line, printing it, then `10 / 0` →
+// "panic ... division by zero", rc=1, verdict "PASS". Every accept-mode tally
+// the suite has printed was weaker than it looked.
+//
+// Keep this program trivially valid and keep the printed text byte-identical to
+// the EXPECT line. If the two ever drift apart, the runner would report FAIL for
+// the OUTPUT mismatch, the self-test would still pass, and this control would
+// have silently stopped testing the exit status — the "passes for the wrong
+// reason" shape. It must carry no EXPECT_EXIT of its own, since that would
+// legitimise the non-zero exit and turn the control into a no-op.
+// EXPECT: this program exits non-zero, so the runner must report FAIL
+print("this program exits non-zero, so the runner must report FAIL")
+exit(1)

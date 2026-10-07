@@ -25,6 +25,22 @@
 #                            Implies rejection mode on its own. A pattern that
 #                            also occurs in the test's own code is REJECTED up
 #                            front — see "SELF-MATCH" below.
+#   // EXPECT_EXIT: <n>      The compiled program's exit status must be exactly
+#                            <n>. DEFAULT IS 0 — every accept-mode test asserts
+#                            a clean exit whether or not it spells this out, so
+#                            this directive is only for a test that deliberately
+#                            exits non-zero. Accept mode only (a rejection test
+#                            never runs, so combining the two is reported as a
+#                            directive conflict).
+#
+# WHY EXPECT_EXIT EXISTS: until it did, the accept path captured the program's
+# stdout and threw its exit status away. A program that printed every expected
+# line and then PANICKED was scored PASS — measured: a 3-line test printing its
+# one EXPECT line and then dividing by zero (`panic ... division by zero`,
+# rc=1) was reported "✓". Every tally this suite has ever printed was therefore
+# asserting "the right text appeared somewhere in the output", not "the program
+# ran to completion". tests/bdd_selftest/expect_exit_must_be_enforced.wyn is the
+# negative control that keeps the status check from decaying back into that.
 #
 # These directives exist so that a rejection rule can be gated by a ~5 line
 # auto-discovered .wyn file instead of a bespoke tests/errors/run_*.sh (123 of
@@ -220,9 +236,15 @@ run_test() {
     want_fail=$(grep -c '^[[:space:]]*// EXPECT_FAIL:' "$file")
     want_check_fail=$(grep -c '^[[:space:]]*// EXPECT_CHECK_FAIL:' "$file")
     want_err=$(grep '^[[:space:]]*// EXPECT_ERR:' "$file" | sed 's|^.*// EXPECT_ERR:[[:space:]]*||')
+    # Expected process exit status, accept mode only. Anchored like the rejection
+    # directives, for the same reason (a directive named in prose used to become
+    # one). Absent => 0: the assertion is ON by default, so no existing test has
+    # to be edited to acquire it and no new test can forget it.
+    local want_exit_raw want_exit
+    want_exit_raw=$(grep '^[[:space:]]*// EXPECT_EXIT:' "$file" | tail -1 | sed 's|^.*// EXPECT_EXIT:[[:space:]]*||' | tr -d '[:space:]')
     if [ "$want_fail" -gt 0 ] || [ "$want_check_fail" -gt 0 ] || [ -n "$want_err" ]; then
-        if [ -n "$expected" ]; then
-            printf "FAIL\n    directive conflict: // EXPECT: cannot be combined with // EXPECT_FAIL: / // EXPECT_CHECK_FAIL: / // EXPECT_ERR:\n" \
+        if [ -n "$expected" ] || [ -n "$want_exit_raw" ]; then
+            printf "FAIL\n    directive conflict: // EXPECT: / // EXPECT_EXIT: cannot be combined with // EXPECT_FAIL: / // EXPECT_CHECK_FAIL: / // EXPECT_ERR:\n" \
                 > "$result_file"
             return
         fi
@@ -231,7 +253,33 @@ run_test() {
         run_rejection_test "$file" "$result_file" "$want_err" "$check_only"
         return
     fi
+    # Validate EXPECT_EXIT before it can silently mean something else. A typo'd
+    # or non-numeric value must be a loud FAIL, not a directive that quietly
+    # degrades to "0" (or to "any status"), which is how a gate goes vacuous.
+    want_exit=0
+    if [ -n "$want_exit_raw" ]; then
+        case "$want_exit_raw" in
+            ''|*[!0-9]*)
+                printf "FAIL\n    // EXPECT_EXIT: expects a decimal exit status 0-255, got '%s'\n" "$want_exit_raw" \
+                    > "$result_file"
+                return ;;
+        esac
+        if [ "$want_exit_raw" -gt 255 ]; then
+            printf "FAIL\n    // EXPECT_EXIT: expects a decimal exit status 0-255, got '%s'\n" "$want_exit_raw" \
+                > "$result_file"
+            return
+        fi
+        want_exit="$want_exit_raw"
+    fi
     if [ -z "$expected" ]; then
+        if [ -n "$want_exit_raw" ]; then
+            # EXPECT_EXIT on its own would otherwise fall into the SKIP below and
+            # assert nothing at all — exactly the silent-no-op shape this harness
+            # has been burned by. Say so instead.
+            printf "FAIL\n    // EXPECT_EXIT: requires at least one // EXPECT: line; on its own it would be skipped and assert nothing\n" \
+                > "$result_file"
+            return
+        fi
         echo "SKIP" > "$result_file"
         return
     fi
@@ -300,8 +348,13 @@ run_test() {
     # expected (the flush/timing flake) — never masks a non-empty wrong answer.
     local output=""
     local attempt=0
+    local run_rc=0
     while [ "$attempt" -lt 3 ]; do
         output=$(with_limits "$bin" 2>&1)
+        # Captured on the SAME line as the run. `output=$(...)` above is the last
+        # command whose status is still in $?, so this must stay adjacent to it —
+        # the filtering pipeline below would otherwise overwrite it with grep's.
+        run_rc=$?
         output=$(echo "$output" | grep -v "Building\|Built\|Compiled in\|Warning:")
         if [ -n "$output" ]; then
             break
@@ -324,6 +377,22 @@ run_test() {
         fi
         i=$((i + 1))
     done <<< "$expected"
+
+    # Step 5: the program must also have EXITED as expected. Printing the right
+    # text is not the same as running to completion: without this, a test whose
+    # program panicked, aborted or was killed by a signal after its last EXPECT
+    # line was scored PASS. 128+N means a signal (139 = SIGSEGV, 134 = SIGABRT),
+    # which with_limits' `perl ... alarm` also uses for a timeout kill, so it is
+    # named separately — "crashed" and "printed a wrong line" are different bugs
+    # and the message must not conflate them.
+    if [ "$run_rc" -ne "$want_exit" ]; then
+        failed=1
+        if [ "$run_rc" -ge 128 ]; then
+            errs="${errs}    program died on signal $((run_rc - 128)) (rc=$run_rc) after producing its output; expected exit $want_exit\n"
+        else
+            errs="${errs}    program exit status: expected $want_exit, got $run_rc\n"
+        fi
+    fi
 
     if [ "$failed" -eq 0 ]; then
         echo "PASS" > "$result_file"
@@ -461,9 +530,9 @@ done
 # been burned by. So COUNT what was discovered and fail if the count is short.
 # A FLOOR, not an equality: one control per directive/rule is the invariant, and
 # adding a directive plus its control must not red the suite. Raise it when you
-# add one. Current: EXPECT_FAIL, EXPECT_CHECK_FAIL, EXPECT_ERR, and the
-# EXPECT:-vs-rejection directive conflict.
-SELFTEST_FLOOR=4
+# add one. Current: EXPECT_FAIL, EXPECT_CHECK_FAIL, EXPECT_ERR, the
+# EXPECT:-vs-rejection directive conflict, and the program-exit-status check.
+SELFTEST_FLOOR=5
 echo ""
 echo "=== Harness self-test (negative controls) ==="
 selftest_n=$(ls tests/bdd_selftest/*.wyn 2>/dev/null | wc -l | tr -d ' ')
