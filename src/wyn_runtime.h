@@ -3554,6 +3554,114 @@ static void wyn_http_set_ka(int fd, int on) {
 static int wyn_http_get_ka(int fd) {
     return (fd >= 0 && fd < WYN_HTTP_KA_MAX) ? atomic_load(&wyn_http_ka[fd]) : 0;
 }
+
+// --- Request capability tokens -----------------------------------------------
+// A REMOTE CLIENT MUST NEVER BE ABLE TO NAME A FILE DESCRIPTOR.
+//
+// Http_accept / Http_read_request hand user code the string "METHOD|PATH|BODY|FD"
+// and the DOCUMENTED way to get the descriptor back out is
+//
+//     fd = req.split_at("|", 3).to_int()
+//
+// which appears in the book, three blog posts, four docs pages, two sample apps
+// and repos/web - so the string shape is public API and cannot move. The path and
+// body are attacker-controlled and were interpolated unescaped, so `GET /a|b|1`
+// shifted every later field and made that idiom yield 1, the server's own stdout.
+// Naming ANOTHER live connection's descriptor sends this response to a different
+// client. Unauthenticated, from the first line of the request.
+//
+// Escaping the fields is the wrong repair, because a request BODY may legitimately
+// contain '|' and must not be mangled to make a delimiter safe. So the DESCRIPTOR
+// LEAVES THE PAYLOAD: field 3 now carries an unguessable capability token, the real
+// descriptor lives only in this table, and every entry point that takes a descriptor
+// from user code resolves a token through it. A forged, stale or out-of-range token
+// resolves to -1 and the operation becomes a no-op - it can never land on fd 0, 1
+// or 2, and it can never name a connection the process did not hand out.
+//
+// Token layout: (nonce << WYN_HTTP_TOK_FDBITS) | fd, with a nonzero 42-bit nonce.
+// Minted at accept, retired at close, so a recycled fd NUMBER gets a fresh nonce and
+// a token from the previous connection on that number stops resolving - the same
+// hazard wyn_http_ka documents above, closed properly rather than by clearing.
+#define WYN_HTTP_TOK_FDBITS 20
+#define WYN_HTTP_TOK_FDMASK ((1ULL << WYN_HTTP_TOK_FDBITS) - 1ULL)
+#define WYN_HTTP_TOK_NONCEMASK 0x3FFFFFFFFFFULL   /* 42 bits */
+
+static _Atomic unsigned long long wyn_http_tok[WYN_HTTP_KA_MAX];
+
+static unsigned long long wyn_http_splitmix64(unsigned long long x) {
+    x += 0x9E3779B97F4A7C15ULL;
+    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    x = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
+    return x ^ (x >> 31);
+}
+
+// 64 unguessable bits. /dev/urandom is read ONCE and then stirred with a counter,
+// so minting a token costs no syscall per connection. Where there is no
+// /dev/urandom (Windows, or a sandbox without it) the fallback mixes values a
+// REMOTE attacker cannot observe - nanosecond clock, pid, an ASLR'd address -
+// which is weaker than a CSPRNG and is said so plainly rather than implied.
+// Deliberately NOT BCryptGenRandom: that would add -lbcrypt to every Windows link,
+// and main.c only links it when mbedTLS is present.
+static unsigned long long wyn_http_tok_bits(void) {
+    static _Atomic unsigned long long base = 0;
+    static _Atomic unsigned long long counter = 0;
+    unsigned long long b = atomic_load(&base);
+    if (b == 0) {
+        unsigned long long seed = 0;
+#ifndef _WIN32
+        FILE* f = fopen("/dev/urandom", "rb");
+        if (f) {
+            if (fread(&seed, sizeof(seed), 1, f) != 1) seed = 0;
+            fclose(f);
+        }
+#endif
+        if (seed == 0) {
+            struct timespec ts;
+            ts.tv_sec = 0; ts.tv_nsec = 0;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            unsigned long long pid;
+#ifdef _WIN32
+            pid = (unsigned long long)GetCurrentProcessId();
+#else
+            pid = (unsigned long long)getpid();
+#endif
+            seed = wyn_http_splitmix64((unsigned long long)ts.tv_nsec * 1000003ULL)
+                 ^ wyn_http_splitmix64((unsigned long long)ts.tv_sec ^ pid)
+                 ^ ((unsigned long long)(uintptr_t)&ts << 17);
+        }
+        if (seed == 0) seed = 0x9E3779B97F4A7C15ULL;
+        atomic_store(&base, seed);
+        b = seed;
+    }
+    return wyn_http_splitmix64(b ^ (atomic_fetch_add(&counter, 1) * 0x9E3779B97F4A7C15ULL));
+}
+
+// Mint a capability for a freshly accepted client fd, or -1 if the fd is outside
+// the table. A caller that gets -1 MUST close the connection: handing back a raw
+// descriptor instead would reopen exactly the hole this closes.
+static long long wyn_http_tok_mint(int fd) {
+    if (fd < 0 || fd >= WYN_HTTP_KA_MAX) return -1;
+    unsigned long long nonce = wyn_http_tok_bits() & WYN_HTTP_TOK_NONCEMASK;
+    if (nonce == 0) nonce = 1;
+    atomic_store(&wyn_http_tok[fd], nonce);
+    return (long long)((nonce << WYN_HTTP_TOK_FDBITS) | (unsigned long long)fd);
+}
+
+// Resolve a capability to its live descriptor, or -1. Never returns 0, 1 or 2 for
+// a value it did not itself mint.
+static int wyn_http_tok_fd(long long tok) {
+    if (tok <= 0) return -1;
+    unsigned long long u = (unsigned long long)tok;
+    int fd = (int)(u & WYN_HTTP_TOK_FDMASK);
+    unsigned long long nonce = u >> WYN_HTTP_TOK_FDBITS;
+    if (nonce == 0 || fd < 0 || fd >= WYN_HTTP_KA_MAX) return -1;
+    if (atomic_load(&wyn_http_tok[fd]) != nonce) return -1;
+    return fd;
+}
+
+static void wyn_http_tok_retire(int fd) {
+    if (fd >= 0 && fd < WYN_HTTP_KA_MAX) atomic_store(&wyn_http_tok[fd], 0);
+}
 // Parse the request head for connection semantics: HTTP/1.1 defaults to
 // keep-alive unless "Connection: close"; HTTP/1.0 defaults to close unless
 // "Connection: keep-alive". Case-insensitive scan of the header block only.
@@ -3605,7 +3713,12 @@ static void http_send_response(int client_fd, int status, const char* content_ty
 }
 
 void Http_respond(long long client_fd, long long status, const char* content_type, const char* body) {
-    int fd = (int)client_fd;
+    // client_fd is a CAPABILITY, not a descriptor. A forged or stale one resolves
+    // to -1 and this becomes a no-op; before, an injected `1` wrote the response to
+    // the server's own stdout and an injected live descriptor wrote it to someone
+    // else's connection.
+    int fd = wyn_http_tok_fd(client_fd);
+    if (fd < 0) return;
     http_send_response(fd, (int)status, content_type, body);
     // Close semantics (HTTP/1.0, or "Connection: close"): the response we just
     // sent advertised `Connection: close`, so the CLIENT is waiting for EOF to
@@ -3667,7 +3780,12 @@ int Http_route_match(const char* pattern, const char* path, WynHashMap* params) 
     return (*p == 0 && *u == 0) || (*p == 0 && *u == '/' && *(u+1) == 0);
 }
 
-// Parse request string "METHOD|PATH|BODY|FD" into a HashMap context
+// Parse request string "METHOD|PATH|BODY|TOKEN" into a HashMap context.
+//
+// The last field is taken from the RIGHT and the body runs up to it, for the same
+// reason _http_field does it: a body may legitimately contain '|', and scanning
+// left-to-right let it truncate the body and shift the token. The old code also
+// defaulted a missing final field to the string "0", i.e. the process's STDIN.
 WynHashMap* Http_parse_request(const char* raw) {
     WynHashMap* ctx = hashmap_new();
     if (!raw || !raw[0]) return ctx;
@@ -3677,8 +3795,8 @@ WynHashMap* Http_parse_request(const char* raw) {
     if (path) { *path = 0; path++; } else { path = ""; }
     char* body = strchr(path, '|');
     if (body) { *body = 0; body++; } else { body = ""; }
-    char* fd_str = strchr(body, '|');
-    if (fd_str) { *fd_str = 0; fd_str++; } else { fd_str = "0"; }
+    char* fd_str = strrchr(body, '|');
+    if (fd_str) { *fd_str = 0; fd_str++; } else { fd_str = ""; }
     hashmap_insert_string(ctx, strdup("method"), strdup(method));
     hashmap_insert_string(ctx, strdup("path"), strdup(path));
     hashmap_insert_string(ctx, strdup("body"), strdup(body));
@@ -3690,18 +3808,31 @@ WynHashMap* Http_parse_request(const char* raw) {
     return ctx;
 }
 
-int Http_ctx_fd(WynHashMap* ctx) {
-    const char* fd_str = hashmap_get_string(ctx, "fd");
-    return fd_str ? atoi(fd_str) : 0;
+// Returns the request's capability, or -1 - never 0. hashmap_get_string returns 0
+// rather than a sentinel on a miss, so the old `fd_str ? atoi(fd_str) : 0` handed
+// back the process's STDIN for a context with no fd at all.
+long long Http_ctx_fd(WynHashMap* ctx) {
+    const char* fd_str = ctx ? hashmap_get_string(ctx, "fd") : NULL;
+    if (!fd_str || !*fd_str) return -1;
+    char* endp = NULL;
+    long long tok = strtoll(fd_str, &endp, 10);
+    if (endp == fd_str) return -1;
+    return wyn_http_tok_fd(tok) >= 0 ? tok : -1;
 }
 
-void Http_respond_json(int fd, int status, const char* json) {
-    http_send_response(fd, status, "application/json", json);
+void Http_respond_json(long long client_fd, long long status, const char* json) {
+    int fd = wyn_http_tok_fd(client_fd);
+    if (fd < 0) return;
+    http_send_response(fd, (int)status, "application/json", json);
+    wyn_http_tok_retire(fd);
     close(fd);
 }
 
-void Http_respond_html(int fd, int status, const char* html) {
-    http_send_response(fd, status, "text/html", html);
+void Http_respond_html(long long client_fd, long long status, const char* html) {
+    int fd = wyn_http_tok_fd(client_fd);
+    if (fd < 0) return;
+    http_send_response(fd, (int)status, "text/html", html);
+    wyn_http_tok_retire(fd);
     close(fd);
 }
 
@@ -3720,19 +3851,36 @@ int Http_serve(int port) {
 }
 int Http_listen(int port) { return Http_serve(port); }
 
-// Parse fields from Http_accept result ("METHOD|PATH|BODY|FD")
+// Parse fields from Http_accept result ("METHOD|PATH|BODY|TOKEN").
+//
+// THE BODY IS NOT DELIMITED BY THE NEXT '|' - IT RUNS TO THE LAST ONE. A request
+// body may legitimately contain a pipe (JSON, CSV, a form field), and the old
+// left-to-right scan truncated the body there and shifted every field after it,
+// which is half of the injection in issue #467. The record has exactly four
+// fields, so the final one is unambiguous when parsed from the RIGHT, whatever the
+// body contains. METHOD and PATH are still scanned from the left.
+//
+// This makes the ENCODING unambiguous; it is not what makes it safe. Safety comes
+// from field 3 being a capability that wyn_http_tok_fd must authenticate, so even
+// a method or path crafted to contain a pipe cannot name a descriptor.
 static char* _http_field(const char* raw, int idx) {
-    if (!raw || !*raw) return "";
-    const char* p = raw;
-    for (int i = 0; i < idx; i++) {
-        const char* pipe = strchr(p, '|');
-        if (!pipe) return "";
-        p = pipe + 1;
+    const char* s = NULL;
+    const char* e = NULL;
+    if (raw && *raw) {
+        const char* p1 = strchr(raw, '|');
+        const char* p2 = p1 ? strchr(p1 + 1, '|') : NULL;
+        const char* pl = strrchr(raw, '|');
+        switch (idx) {
+            case 0:  s = raw;                e = p1; break;
+            case 1:  s = p1 ? p1 + 1 : NULL; e = p2; break;
+            case 2:  s = p2 ? p2 + 1 : NULL;
+                     e = (pl && s && pl >= s) ? pl : NULL; break;
+            default: s = (pl && p2 && pl >= p2) ? pl + 1 : NULL; break;
+        }
     }
-    const char* end = strchr(p, '|');
-    size_t len = end ? (size_t)(end - p) : strlen(p);
+    size_t len = s ? (e ? (size_t)(e - s) : strlen(s)) : 0;
     char* r = wyn_str_alloc(len + 1);
-    memcpy(r, p, len);
+    if (len) memcpy(r, s, len);
     r[len] = 0;
     wyn_rc_set_length(r, (unsigned int)len);
     return r;
@@ -3740,11 +3888,20 @@ static char* _http_field(const char* raw, int idx) {
 char* Http_method(const char* raw) { return _http_field(raw, 0); }
 char* Http_path(const char* raw)   { return _http_field(raw, 1); }
 char* Http_req_body(const char* raw) { return _http_field(raw, 2); }
-int Http_fd(const char* raw) {
-    const char* s = _http_field(raw, 3);
-    int fd = atoi(s);
-    wyn_rc_release(s);
-    return fd;
+// Returns the request's CAPABILITY (the value Http.respond expects), or -1 if the
+// record carries no token this process minted. Parses in place - the old version
+// allocated through _http_field and then wyn_rc_release'd a pointer that is a
+// string LITERAL on the not-found path.
+long long Http_fd(const char* raw) {
+    if (!raw || !*raw) return -1;
+    const char* p1 = strchr(raw, '|');
+    const char* p2 = p1 ? strchr(p1 + 1, '|') : NULL;
+    const char* pl = strrchr(raw, '|');
+    if (!p2 || !pl || pl < p2) return -1;
+    char* endp = NULL;
+    long long tok = strtoll(pl + 1, &endp, 10);
+    if (endp == pl + 1) return -1;
+    return wyn_http_tok_fd(tok) >= 0 ? tok : -1;
 }
 
 // A CONNECTION THAT YIELDS NO REQUEST IS NOT AN EVENT THE CALLER ASKED ABOUT.
@@ -3848,8 +4005,14 @@ char* Http_accept(int server_fd) {
     char* body_start = strstr(buf_copy, "\r\n\r\n");
     const char* body = body_start ? body_start + 4 : "";
     
+    // The descriptor does NOT go in the payload - a capability does. A connection
+    // whose fd is outside the capability table is closed rather than handed back
+    // raw, which would reopen the hole; a server with 4096 live fds is past this
+    // table's reach either way (wyn_http_ka has the same bound).
+    long long tok = wyn_http_tok_mint(client_fd);
+    if (tok < 0) { close(client_fd); continue; }
     char* result = wyn_str_alloc(16384);
-    snprintf(result, 16384, "%s|%s|%s|%d", method, path, body, client_fd);
+    snprintf(result, 16384, "%s|%s|%s|%lld", method, path, body, tok);
     return result;
   }
 }
@@ -3899,14 +4062,19 @@ long long Http_accept_fd(int server_fd) {
     // made respond skip the close for a client that never asked for KA).
     wyn_http_set_ka(client_fd, 0);
     wyn_http_nosigpipe(client_fd);
-    return client_fd;
+    // A CAPABILITY, not the descriptor: the value user code holds and passes to
+    // read_request / respond / close_client must be the same kind of thing the
+    // request string carries, or one of the two would still be a raw fd.
+    long long tok = wyn_http_tok_mint(client_fd);
+    if (tok < 0) { close(client_fd); return -1; }
+    return tok;
 }
 
 // Read + parse one request from an accepted fd → "METHOD|PATH|BODY|FD".
 // Inside a coroutine (the spawned handler) the read parks cooperatively; a
 // dead client costs its own coroutine a timeout, never the accept loop.
 char* Http_read_request(long long client_fd_ll) {
-    int client_fd = (int)client_fd_ll;
+    int client_fd = wyn_http_tok_fd(client_fd_ll);
     if (client_fd < 0) return "";
     // A previous respond() on this connection answered a close-semantics
     // request (HTTP/1.0 / Connection: close): flag value 2 = close pending.
@@ -3914,6 +4082,7 @@ char* Http_read_request(long long client_fd_ll) {
     // loop. (Fresh connections have flag 0 from accept and fall through.)
     if (client_fd < WYN_HTTP_KA_MAX && atomic_load(&wyn_http_ka[client_fd]) == 2) {
         wyn_http_set_ka(client_fd, 0);
+        wyn_http_tok_retire(client_fd);
         close(client_fd);
         return "";
     }
@@ -3944,7 +4113,12 @@ char* Http_read_request(long long client_fd_ll) {
 #endif
         n = (int)recv(client_fd, buf, sizeof(buf) - 1, 0);
     }
-    if (n <= 0) { wyn_http_set_ka(client_fd, 0); close(client_fd); return ""; }
+    if (n <= 0) {
+        wyn_http_set_ka(client_fd, 0);
+        wyn_http_tok_retire(client_fd);
+        close(client_fd);
+        return "";
+    }
     buf[n] = 0;
     wyn_http_set_ka(client_fd, wyn_http_request_wants_ka(buf));
     char buf_copy[8192];
@@ -3960,7 +4134,9 @@ char* Http_read_request(long long client_fd_ll) {
     char* body_start = strstr(buf_copy, "\r\n\r\n");
     const char* body = body_start ? body_start + 4 : "";
     char* result = wyn_str_alloc(16384);
-    snprintf(result, 16384, "%s|%s|%s|%d", method, path, body, client_fd);
+    // The SAME capability the caller passed in: a keep-alive handler loops on one
+    // connection, so re-minting here would invalidate the token it still holds.
+    snprintf(result, 16384, "%s|%s|%s|%lld", method, path, body, client_fd_ll);
     return result;
 }
 
@@ -3973,9 +4149,11 @@ char* Http_read_request(long long client_fd_ll) {
 //
 // Idempotent-ish and safe to call after respond(): clears the keep-alive slot
 // (so the recycled fd number starts clean) and closes.
-void Http_close_client(int fd) {
+void Http_close_client(long long client_fd) {
+    int fd = wyn_http_tok_fd(client_fd);
     if (fd < 0) return;
     wyn_http_set_ka(fd, 0);
+    wyn_http_tok_retire(fd);
     close(fd);
 }
 

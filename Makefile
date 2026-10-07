@@ -195,8 +195,20 @@ CORE_SRCS = src/main.c src/lexer.c src/parser.c src/checker.c src/codegen.c src/
 TU_INCLUDED_SRCS = src/codegen_expr.c src/codegen_stmt.c src/codegen_lambda.c src/codegen_program.c \
                    src/codegen_gpu.c src/checker_builtins.c
 
+# libtcc.a AND vendor/tcc/include ARE NOT LINK INPUTS, because nothing uses them.
+# `grep -rcoE '\btcc_[a-z_]+\(' src/` is 0 and libtcc.h is included nowhere:
+# src/tcc_backend.c runs `vendor/tcc/bin/tcc` as a child process via system(). The
+# archive was on this line regardless, and since no member was referenced the linker
+# discarded all of them - `nm wyn | grep -i tcc` showed only Wyn's own two symbols.
+#
+# That dead input was not harmless. It is where LICENSE's claim that the binary
+# "statically links TinyCC (libtcc)" came from, and that claim (a) is false, (b) made
+# GitHub unable to classify LICENSE at all, so the project displayed no licence, and
+# (c) produced a page of LGPL-2.1 §6 relinking analysis for a link that does not
+# exist. Removing the input makes the artefact unambiguous instead of documenting
+# around it.
 wyn$(EXE_EXT): $(CORE_SRCS) $(TU_INCLUDED_SRCS) $(wildcard src/*.h)
-	$(CC) $(CFLAGS) -I src -I vendor/tcc/include -I vendor/minicoro -o $@ $(CORE_SRCS) vendor/tcc/lib/libtcc.a $(PLATFORM_LIBS)
+	$(CC) $(CFLAGS) -I src -I vendor/minicoro -o $@ $(CORE_SRCS) $(PLATFORM_LIBS)
 
 # Platform-specific targets
 wyn-windows: PLATFORM_CFLAGS += -DWYN_PLATFORM_WINDOWS
@@ -663,10 +675,14 @@ test: wyn $(MBEDTLS_LIB) runtime/libwyn_rt.a
 	@WYN=./wyn bash tests/errors/run_len_cache_test.sh
 	@echo "=== Running Task.select diagnostic gate ==="
 	@WYN=./wyn bash tests/errors/run_task_select_diagnostic_test.sh
+	@echo "=== Running README code-block gate (builds and runs every wyn block) ==="
+	@WYN=./wyn bash scripts/check_readme.sh
 	@echo "=== Running --fast no-op gate ==="
 	@WYN=./wyn bash tests/errors/run_fast_flag_test.sh
 	@echo "=== Running HTTP server concurrent-load gate ==="
 	@WYN=./wyn bash tests/errors/run_http_server_load_test.sh
+	@echo "=== Running HTTP response-descriptor injection gate ==="
+	@WYN=./wyn bash tests/errors/run_http_fd_injection_test.sh
 	@echo "=== Running test-port hygiene gate (no test may bind a fixed port) ==="
 	@WYN=./wyn bash tests/errors/run_test_port_hygiene_test.sh
 	@echo "=== Running v1.21 ACCEPTANCE gate ==="
