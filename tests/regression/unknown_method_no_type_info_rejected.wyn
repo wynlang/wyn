@@ -1,0 +1,16 @@
+// #465, the OTHER arm of the same give-up point in codegen: when codegen cannot
+// name the receiver at all it printed a differently-worded diagnostic ("... (no
+// type info)") from the same `if`/`else` and likewise emitted nothing. A method
+// call on the result of a void function reaches it.
+//
+// Gated separately from the int/float/bool files because it is the `else` branch,
+// not the `if`: a fix applied to only one of the two would leave this one exiting
+// 0. Measured before the fix: `wyn check` exit 0, `wyn build` printed the error
+// and exit 0. See unknown_method_on_int_rejected.wyn for the full write-up.
+// EXPECT_FAIL:
+// EXPECT_ERR: (no type info)
+fn f() {
+    print(1)
+}
+
+f().nope_zzz()

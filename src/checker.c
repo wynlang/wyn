@@ -6360,6 +6360,15 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
             if (array_type && array_type->kind == TYPE_STRING) {
                 if (idx_type && idx_type->kind != TYPE_INT) {
                     fprintf(stderr, "Error: String index must be int\n");
+                    // #465, second site of the same defect shape: this printed the
+                    // error and returned, but set nothing, so `wyn check` answered
+                    // "✓ no errors" and exited 0 and the build exited 0 too.
+                    // Measured on `s = "hello"` + `print(s["x"])`: the string
+                    // pointer was reinterpreted as the index and the program died
+                    // with `panic: string index out of bounds: index 50190957`.
+                    // Every other report_unknown_method() caller in this file
+                    // already sets this flag; this one was the only miss.
+                    had_error = true;
                     return NULL;
                 }
                 expr->expr_type = builtin_string; // Return single-char string

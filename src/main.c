@@ -747,6 +747,10 @@ bool checker_had_error();
 void free_program(Program* prog);
 void codegen_c_header();
 void codegen_program(Program* prog);
+// #465: the third phase's had-error accessor, asked AFTER codegen_program() exactly
+// as checker_had_error() is asked after check_program(). Until this existed, codegen
+// could print "Error: ..." and the build carried on to a ✓ and exit 0.
+bool codegen_had_error(void);
 int create_new_project(const char* project_name);
 int create_new_project_with_template(const char* name, const char* template, const char* lib_target);
 
@@ -2508,6 +2512,15 @@ int main(int argc, char** argv) {
         codegen_c_header();
         codegen_program(prog);
         fclose(out_f);
+        // #465: codegen reported a user error (an unknown method it could not lower,
+        // so the call was emitted as nothing). Stop here instead of compiling and
+        // linking a binary that silently lacks the call. Same shape as the
+        // checker_had_error() gate above, one phase later.
+        if (codegen_had_error()) {
+            fprintf(stderr, "Compilation failed\n"); wynter_encourage();
+            free(source);
+            return 1;
+        }
 
         // Determine output binary name
         char bin_path[512];
@@ -3326,6 +3339,12 @@ int main(int argc, char** argv) {
         codegen_program(prog);
         fclose(out);
         free(source);
+        // #465: see the gate on the native build path. A cross-compile must not
+        // produce a target binary with a dropped call either.
+        if (codegen_had_error()) {
+            fprintf(stderr, "Compilation failed\n"); wynter_encourage();
+            return 1;
+        }
 
         // GPU backend wiring for the cross target: if codegen emitted dispatch
         // sites, build the per-target backend object and collect its extra
@@ -4297,7 +4316,15 @@ int main(int argc, char** argv) {
         codegen_c_header();
         codegen_program(prog);
         fclose(out);
-        
+        // #465: `wyn run` must not execute a program whose call codegen dropped. This
+        // returns BEFORE the cc invocation, so no `<file>.out` cache entry is written
+        // and the next run cannot be handed a stale binary for a program that failed.
+        if (codegen_had_error()) {
+            fprintf(stderr, "Compilation failed\n"); wynter_encourage();
+            free(source);
+            return 1;
+        }
+
         // Get WYN_ROOT or auto-detect (shared helper: env → exe dir → exe
         // parent, probing for src/wyn_runtime.h - covers the installed
         // ~/.wyn/bin layout). Keep the legacy cwd fallbacks after it.

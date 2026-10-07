@@ -1,0 +1,7 @@
+// #465, BOOL receiver. See unknown_method_on_int_rejected.wyn for the
+// measurement and for why this asserts the exit code rather than the message.
+// EXPECT_FAIL:
+// EXPECT_ERR: for type 'bool'
+x = true
+x.nope_zzz()
+print(x)

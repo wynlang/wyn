@@ -1,0 +1,27 @@
+// #465: an unknown method on an INT receiver was reported and then silently
+// DELETED, and the build exited 0 with a wrong answer.
+//
+// Measured on dev @ 3dd65450:
+//     x = 42 ; x.nope_zzz()
+//     wyn check  ->  "no errors"                                   exit 0
+//     wyn build  ->  "Error: Unknown method ..." then "✓ Built"    exit 0
+//     ./a.out    ->  ran with the call removed                     exit 0
+// The same program with a STRING or ARRAY receiver exited 1, because those two
+// receivers are rejected at check time (#426) while int/float/bool are not: the
+// checker keeps them lenient on purpose (TYPE_INT is its fallback type for
+// anything it could not resolve), so the question is only answerable in codegen -
+// and codegen had no way to fail the build. See src/codegen.c's codegen_error.
+//
+// THE ASSERTION IS THE EXIT CODE, and it has to be. The diagnostic text was
+// already printed before the fix, so an error-text-only gate (EXPECT_ERR alone)
+// would have passed on the broken compiler. EXPECT_FAIL is the arm that was red.
+//
+// Accept arm (a rule that rejects everything would also satisfy this file):
+// tests/regression/unknown_method_scalar_accepted.wyn.
+// Sibling receivers: unknown_method_on_float_rejected.wyn,
+// unknown_method_on_bool_rejected.wyn.
+// EXPECT_FAIL:
+// EXPECT_ERR: for type 'int'
+x = 42
+x.nope_zzz()
+print(x)

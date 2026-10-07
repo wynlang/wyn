@@ -1,0 +1,10 @@
+// #465, FLOAT receiver. One file per receiver type on purpose: the three share a
+// single fix but reach it through three different receiver_type strings in
+// codegen, and a merged file could only tell you that "something" regressed.
+// Rationale, measurements and why the exit code (not the message) is the
+// assertion: tests/regression/unknown_method_on_int_rejected.wyn.
+// EXPECT_FAIL:
+// EXPECT_ERR: for type 'float'
+x = 3.5
+x.nope_zzz()
+print(x)
