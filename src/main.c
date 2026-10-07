@@ -1400,7 +1400,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  \033[32mhelp\033[0m                    Show this help\n");
         
         fprintf(stderr, "\n\033[1mFlags:\033[0m\n");
-        fprintf(stderr, "  \033[33m--fast\033[0m                  Skip optimizations (fastest compile)\n");
+        fprintf(stderr, "  \033[33m--fast\033[0m                  No-op; -O0 is already the default (kept for compatibility)\n");
         fprintf(stderr, "  \033[33m--release\033[0m               Full optimizations (-O3)\n");
         fprintf(stderr, "  \033[33m--debug\033[0m                Keep .c and .out artifacts\n");
         
@@ -2068,7 +2068,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "  \033[32mversion\033[0m                 Show version\n");
         fprintf(stderr, "  \033[32mhelp\033[0m                    Show this help\n");
         fprintf(stderr, "\n\033[1mFlags:\033[0m\n");
-        fprintf(stderr, "  \033[33m--fast\033[0m                  Skip optimizations (fastest compile)\n");
+        fprintf(stderr, "  \033[33m--fast\033[0m                  No-op; -O0 is already the default (kept for compatibility)\n");
         fprintf(stderr, "  \033[33m--release\033[0m               Full optimizations (-O3)\n");
         fprintf(stderr, "  \033[33m--debug\033[0m                Keep .c and .out artifacts\n");
         fprintf(stderr, "\n\033[1mCross-compile targets:\033[0m\n");
