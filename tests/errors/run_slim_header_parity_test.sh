@@ -102,7 +102,11 @@ if ! command -v "$NM_BIN" >/dev/null 2>&1; then
   echo ""; echo "slim-header-parity: $PASS pass, $FAIL fail"; exit 1
 fi
 
-/usr/bin/env python3 - "$ROOT" "$NM_BIN" <<'PY'
+# Captured to a file, then echoed, so the arm count can be read back without a pipe
+# (a pipe would make $? belong to the reader, not to python).
+GATE_OUT=$(mktemp) || exit 2
+trap 'rm -f "$GATE_OUT"' EXIT
+/usr/bin/env python3 - "$ROOT" "$NM_BIN" > "$GATE_OUT" 2>&1 <<'PY'
 import re, sys, os, subprocess
 root, nm_bin = sys.argv[1], sys.argv[2]
 def rd(p):
@@ -438,6 +442,19 @@ for f_ in FAILS:
 sys.exit(1 if FAILS else 0)
 PY
 rc=$?
-if [ $rc -eq 0 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); fi
+cat "$GATE_OUT"
+
+# Count the ARMS, not the python invocation. The old tally printed "1 pass, 0 fail"
+# whether five arms ran or one, which is the exact shape this gate exists to catch:
+# a green number that cannot tell you what was checked. The python block prints one
+# "ok" per arm it completed, so counting those makes the tally self-describing, and
+# the floor below means a thinned run cannot report success.
+ARMS_OK=$(grep -c '^    ok    ' "$GATE_OUT" 2>/dev/null) || ARMS_OK=0
+if [ $rc -eq 0 ]; then PASS=$((PASS+ARMS_OK)); else FAIL=$((FAIL+1)); fi
+
+ARM_FLOOR=5
+if [ $rc -eq 0 ] && [ "$ARMS_OK" -lt "$ARM_FLOOR" ]; then
+  bad "only $ARMS_OK of $ARM_FLOOR arms reported a result - the gate ran short and its green is not a result"
+fi
 
 echo ""; echo "slim-header-parity: $PASS pass, $FAIL fail"; [ "$FAIL" -eq 0 ]
