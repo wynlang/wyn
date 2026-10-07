@@ -6,55 +6,60 @@
 #
 #     fd = req.split_at("|", 3).to_int()
 #
-# The path and the body are attacker-controlled and were interpolated UNESCAPED:
+# which repos/web/src/web.wyn:69 and docs/stdlib/web.md publish verbatim. The path
+# and the body are attacker-controlled and were interpolated UNESCAPED:
 #
 #     snprintf(result, 16384, "%s|%s|%s|%d", method, path, body, client_fd);
 #
-# so `GET /a|b|1 HTTP/1.0` shifted every later field and made that idiom yield 1 -
-# the server's own stdout. Naming another live connection's descriptor instead sends
-# this response to a DIFFERENT client. Unauthenticated, first line of the request.
+# so `GET /x|y|7 HTTP/1.0` shifted every later field and made that idiom yield 7 -
+# a descriptor the client chose. Naming ANOTHER LIVE CONNECTION's descriptor sends
+# this response to a different client: one client can be served another's data, or
+# have content injected into its stream. Unauthenticated, first line of the request.
 #
 # THE FIX. The descriptor leaves the payload. Field 3 carries an unguessable
 # capability token; the descriptor lives only in a runtime table, and respond /
 # read_request / close_client resolve a token through it. A forged, stale or
-# out-of-range token resolves to -1 and the call is a no-op. The final field is also
-# parsed from the RIGHT, so a body containing '|' can no longer shift it - a body
-# legitimately may contain one and must not be mangled to make a delimiter safe.
+# out-of-range token resolves to -1 and the call is a no-op.
+#
+# THE OBSERVABLE IS ON THE VICTIM, NOT IN A LOG. The first version of this gate
+# asserted that an injected `1` did not put the response in the server's own stdout.
+# That arm could never fail: the harness redirects stdout to a FILE, and
+# http_send_response uses send(), which returns ENOTSOCK on a regular file. It
+# passed with the authentication deleted - a vacuous control, the exact failure the
+# project has recorded before. So the arm that matters now opens a VICTIM socket,
+# leaves it parked, and asserts the victim never receives a byte it did not ask for.
+# Both ends are real sockets, so send() succeeds and the bug is reachable; verified
+# by deleting the nonce check and watching this arm go red.
 #
 # TWO SERVERS, because the two properties have different subjects.
 #
-# Server A is written in the PUBLISHED idiom above. Cases:
-#   1  it still serves a normal request                            (compatibility)
-#   2  `GET /a|b|1` does not write the response to the server's own stdout
-#   3  nor does any small descriptor an attacker might name (0,2,3,4,5)
-#   4  a forged high-numbered token is refused
-#   5  the server survives all of it and still answers a real request
+# Server A is the CONCURRENT published shape - accept_fd + spawn, with the
+# descriptor taken out of the request string, which is what repos/web does. Cases:
+#   1  it still serves an ordinary request                          (compatibility)
+#   2  a parked victim connection receives nothing while an attacker walks
+#      candidate descriptors 3..20                                  (the hijack)
+#   3  nor while an attacker offers structurally valid-looking forged tokens
+#   4  the server survives all of it and still serves
 #
-# Case 1 is load-bearing, not a courtesy: the whole design rests on the published
-# string shape continuing to work, so a fix that silently broke it would be caught
-# here rather than by a reader of the blog.
+# Case 1 is load-bearing, not a courtesy: the design rests on the published string
+# shape continuing to work, so a fix that silently broke it is caught here rather
+# than by a reader of the blog.
 #
 # Server B uses `Http.fd(req)` instead of splitting the string. Cases:
-#   6  a path containing '|' is served correctly
-#   7  a body containing '|' is served AND reaches the handler intact
+#   5  a path containing '|' is served correctly
+#   6  a body containing '|' is served AND reaches the handler intact
 #
-# Server B exists because `Http.fd` resolves the final field from the RIGHT, so it
-# is robust against extra pipes anywhere earlier in the record, and `split_at` is
-# not - a request whose path or body contains a pipe shifts the index-3 field and
-# feeds `.to_int()` something non-numeric. That is a SEPARATE pre-existing defect
-# (it panics the published server today, tracked on its own) and this gate does not
-# assert it away; what it does assert is that the accessor is a correct escape
-# hatch from it, which is the fix a reader can apply today.
+# Server B exists because `Http.fd` resolves the record's final field from the RIGHT
+# and so is robust against extra pipes anywhere earlier, while `split_at` is not: a
+# path or body containing a pipe shifts the index-3 field and feeds `.to_int()`
+# something non-numeric, which panics the published server. That is a SEPARATE
+# pre-existing defect - it reproduces without this change - and this gate does not
+# assert it away. What it asserts is that the accessor is a correct escape hatch,
+# which is the fix a reader can apply today.
 #
-# THE OBSERVABLE for cases 2/3/5 is the server's OWN STDOUT. If an injected
-# descriptor is honoured, the response goes there, so the log acquires an
-# "HTTP/1.1 200" line that a correct server never prints. That is a positive
-# observable rather than an absence - the log is checked for a marker the BUG
-# produces, not for the absence of one the fix produces.
-#
-# Every wait is bounded (perl alarm; stock macOS has no `timeout`) and the server is
-# killed on every exit path - a stray server has kernel-panicked this box twice.
-# The port is NEGOTIATED, never hard-coded: tests/errors/run_test_port_hygiene_test.sh
+# Every wait is bounded (perl alarm; stock macOS has no `timeout`) and both servers
+# are killed on every exit path - a stray server has kernel-panicked this box twice.
+# Ports are NEGOTIATED, never hard-coded: tests/errors/run_test_port_hygiene_test.sh
 # gates that, and a fixed port turns a sibling `make test` into a false red.
 set -uo pipefail
 set +m 2>/dev/null
@@ -62,17 +67,13 @@ set +m 2>/dev/null
 WYN="${WYN:-./wyn}"
 case "$WYN" in /*) ;; *) WYN="$(pwd)/$WYN" ;; esac
 TMP=$(mktemp -d)
-SRV_SRC="$TMP/srv.wyn"
-SRV_BIN="$TMP/srv.out"
-SRV_PID=""
-SRV_LOG="$TMP/srv.log"
-B_BIN="$TMP/srvb.out"
-B_PID=""
+A_SRC="$TMP/srva.wyn"; A_BIN="$TMP/srva.out"; A_LOG="$TMP/srva.log"; A_PID=""
+B_SRC="$TMP/srvb.wyn"; B_BIN="$TMP/srvb.out"; B_LOG="$TMP/srvb.log"; B_PID=""
 
 cleanup() {
-    [ -n "$SRV_PID" ] && kill -9 "$SRV_PID" 2>/dev/null
+    [ -n "$A_PID" ] && kill -9 "$A_PID" 2>/dev/null
     [ -n "$B_PID" ] && kill -9 "$B_PID" 2>/dev/null
-    pkill -9 -f "^$SRV_BIN" 2>/dev/null
+    pkill -9 -f "^$A_BIN" 2>/dev/null
     pkill -9 -f "^$B_BIN" 2>/dev/null
     rm -rf "$TMP"
 }
@@ -84,7 +85,7 @@ bad(){  echo "  FAIL  $1"; FAIL=$((FAIL+1)); }
 echo "=== HTTP response-descriptor injection gate (#467) ==="
 
 # The server reports the port it actually bound; the harness reads it back rather
-# than assuming. 300 x 0.1s, so a slow build cannot race the first request.
+# than assuming. 300 x 0.1s, so a slow start cannot race the first request.
 read_reported_port() {
     local i p
     for i in $(seq 1 300); do
@@ -95,12 +96,19 @@ read_reported_port() {
     return 1
 }
 
-# Deliberately the PUBLISHED pattern, pipe-split and all: it is what the book,
-# three blog posts, four docs pages and two sample apps tell a reader to write, so
-# it is the shape under test. `Http.req_body` is used for the body because that is
-# the accessor that knows the record's field boundaries.
 PORT_BASE=$(( 21000 + (RANDOM % 2000) ))
-cat > "$SRV_SRC" <<EOF
+
+# Server A: the concurrent published shape. The handler deliberately takes the
+# descriptor from the REQUEST STRING - that is the vulnerable idiom under test, and
+# it is what repos/web/src/web.wyn:69 publishes. It must stay naive.
+cat > "$A_SRC" <<EOF
+fn handle(conn: int) {
+    var req = Http.read_request(conn)
+    if req == "" { return }
+    var fd = req.split_at("|", 3).to_int()
+    Http.respond(fd, 200, "text/plain", "PAYLOAD-OK")
+}
+
 fn main() -> int {
     var port = $PORT_BASE
     var server = -1
@@ -114,115 +122,130 @@ fn main() -> int {
     if server <= 0 { return 7 }
     println("ready \${port}")
     var n = 0
-    while n < 20 {
-        var req = Http.accept(server)
-        var fd = req.split_at("|", 3).to_int()
-        var b = Http.req_body(req)
-        println("REQ path=[\${Http.path(req)}] body=[\${b}]")
-        Http.respond(fd, 200, "text/plain", "PAYLOAD-OK")
-        Http.close_client(fd)
+    while n < 60 {
+        var conn = Http.accept_fd(server)
+        if conn > 0 { spawn handle(conn) }
         n = n + 1
     }
     return 0
 }
 EOF
 
-if ! perl -e 'alarm(120); exec @ARGV' -- "$WYN" build "$SRV_SRC" -o "$SRV_BIN" > "$TMP/build.log" 2>&1; then
-    bad "server builds from the documented pattern"
-    sed -n '1,25p' "$TMP/build.log"
-    echo ""
-    echo "http-fd-injection: $PASS pass, $FAIL fail"
-    exit 1
+if ! perl -e 'alarm(150); exec @ARGV' -- "$WYN" build "$A_SRC" -o "$A_BIN" > "$TMP/builda.log" 2>&1; then
+    bad "concurrent published server builds"
+    sed -n '1,25p' "$TMP/builda.log"
+    echo ""; echo "http-fd-injection: $PASS pass, $FAIL fail"; exit 1
 fi
-ok "server builds from the documented pattern"
+ok "concurrent published server builds"
 
-"$SRV_BIN" > "$SRV_LOG" 2>&1 &
-SRV_PID=$!
-disown "$SRV_PID" 2>/dev/null
-PORT=$(read_reported_port "$SRV_LOG" ready) || PORT=""
-if [ -z "$PORT" ]; then
-    bad "server negotiates a port (walked 200 from $PORT_BASE, none bound)"
-    sed -n '1,20p' "$SRV_LOG"
-    echo ""
-    echo "http-fd-injection: $PASS pass, $FAIL fail"
-    exit 1
+"$A_BIN" > "$A_LOG" 2>&1 &
+A_PID=$!
+disown "$A_PID" 2>/dev/null
+APORT=$(read_reported_port "$A_LOG" ready) || APORT=""
+if [ -z "$APORT" ]; then
+    bad "server A negotiates a port (walked 200 from $PORT_BASE, none bound)"
+    sed -n '1,20p' "$A_LOG"
+    echo ""; echo "http-fd-injection: $PASS pass, $FAIL fail"; exit 1
 fi
 
-# --- 1. the documented idiom still serves a normal request --------------------
-body=$(perl -e 'alarm(10); exec @ARGV' -- curl -s -m 5 "http://127.0.0.1:$PORT/hello" 2>/dev/null)
-if [ "$body" = "PAYLOAD-OK" ]; then ok "the documented split_at(\"|\",3) idiom still serves a request"
-else bad "the documented split_at(\"|\",3) idiom still serves a request (got [$body])"; fi
+# --- 1. the documented idiom still serves an ordinary request ------------------
+body=$(perl -e 'alarm(15); exec @ARGV' -- curl -s -m 10 "http://127.0.0.1:$APORT/hello" 2>/dev/null)
+if [ "$body" = "PAYLOAD-OK" ]; then ok "the published split_at(\"|\",3) idiom still serves a request"
+else bad "the published split_at(\"|\",3) idiom still serves a request (got [$body])"; fi
 
-# --- 2/3. an injected descriptor must not be honoured -------------------------
-# Raw sockets: curl would percent-encode the '|' and the injection would never
-# reach the parser. The request target is sent verbatim, which is the attack.
-inject() {
-    python3 - "$PORT" "$1" <<'PY' >/dev/null 2>&1
+# --- 2/3. a parked victim must never receive someone else's response -----------
+# The victim connects and sends NOTHING, so its handler parks in read_request and
+# its descriptor stays open and un-shutdown. The attacker then offers candidate
+# descriptors; if any is honoured, the attacker's response lands on the victim's
+# socket. The victim polls after each attempt with a short timeout.
+#
+# Both the candidate sweep (3..20, which covers every descriptor a freshly started
+# server can have handed out) and the forged-token set are driven from one script,
+# because they share the victim: opening a second one would change the descriptor
+# numbering the first arm depends on.
+hijack=$(python3 - "$APORT" <<'PY' 2>/dev/null
 import socket, sys
-try:
-    s = socket.create_connection(('127.0.0.1', int(sys.argv[1])), timeout=3)
-    s.sendall(("GET " + sys.argv[2] + " HTTP/1.0\r\nHost: x\r\n\r\n").encode())
-    s.settimeout(3)
+port = int(sys.argv[1])
+
+def attempt(target):
     try:
-        while s.recv(4096):
+        a = socket.create_connection(('127.0.0.1', port), timeout=5)
+        a.sendall(("GET /x|y|%s HTTP/1.0\r\nHost: x\r\n\r\n" % target).encode())
+        a.settimeout(2)
+        try:
+            while a.recv(4096):
+                pass
+        except Exception:
             pass
+        a.close()
     except Exception:
         pass
-    s.close()
+
+try:
+    victim = socket.create_connection(('127.0.0.1', port), timeout=5)
+except Exception:
+    print("SETUP-FAILED SETUP-FAILED")
+    sys.exit(0)
+victim.settimeout(1.0)
+
+leaked_fd = []
+for cand in range(3, 21):
+    attempt(cand)
+    try:
+        d = victim.recv(4096)
+        if d:
+            leaked_fd.append(cand)
+    except Exception:
+        pass
+
+leaked_tok = []
+# (nonce << 20) | fd shapes with the wrong nonce, plus one that is plainly out of
+# range. Each must resolve to -1 rather than to the fd in its low bits.
+for tok in (1048579, 1048580, 2097155, 4294967296, 1152921504606846977, 999999999999999999):
+    attempt(tok)
+    try:
+        d = victim.recv(4096)
+        if d:
+            leaked_tok.append(tok)
+    except Exception:
+        pass
+
+try:
+    victim.close()
 except Exception:
     pass
+r1 = ("LEAKFD:" + ",".join(str(x) for x in leaked_fd)) if leaked_fd else "CLEAN-FD"
+r2 = ("LEAKTOK:" + ",".join(str(x) for x in leaked_tok)) if leaked_tok else "CLEAN-TOK"
+print(r1, r2)
 PY
-}
-
-inject '/a|b|1'
-sleep 0.4
-if grep -q 'HTTP/1.1' "$SRV_LOG"; then
-    bad "GET /a|b|1 wrote the response to the server's own stdout [$(grep -m1 'HTTP/1.1' "$SRV_LOG")]"
+)
+h_fd=$(printf '%s' "$hijack" | awk '{print $1}')
+h_tok=$(printf '%s' "$hijack" | awk '{print $2}')
+if [ "$h_fd" = "SETUP-FAILED" ] || [ -z "$h_fd" ]; then
+    bad "victim connection could be established (harness setup) [$hijack]"
+elif [ "$h_fd" = "CLEAN-FD" ]; then
+    ok "a parked victim receives nothing while descriptors 3..20 are injected"
 else
-    ok "GET /a|b|1 does not write the response to the server's own stdout"
+    bad "a parked victim received another client's response [$h_fd]"
+fi
+if [ "$h_tok" = "CLEAN-TOK" ]; then
+    ok "a parked victim receives nothing while forged tokens are injected"
+elif [ -n "$h_tok" ] && [ "$h_tok" != "SETUP-FAILED" ]; then
+    bad "a forged capability token was honoured [$h_tok]"
 fi
 
-for n in 0 2 3 4 5; do
-    inject "/x|y|$n"
-done
-sleep 0.5
-if grep -q 'HTTP/1.1' "$SRV_LOG"; then
-    bad "an injected small descriptor was honoured [$(grep -m1 'HTTP/1.1' "$SRV_LOG")]"
+# --- 4. the server survived all of it -----------------------------------------
+if ! kill -0 "$A_PID" 2>/dev/null; then
+    bad "server A survived the injection attempts"
+    sed -n '1,25p' "$A_LOG"
 else
-    ok "no injected small descriptor (0,2,3,4,5) is honoured"
+    body=$(perl -e 'alarm(15); exec @ARGV' -- curl -s -m 10 "http://127.0.0.1:$APORT/after" 2>/dev/null)
+    if [ "$body" = "PAYLOAD-OK" ]; then ok "server A still answers a real request afterwards"
+    else bad "server A still answers a real request afterwards (got [$body])"; fi
 fi
-
-# --- 5. a forged high-numbered token is refused -------------------------------
-# A token is (nonce << 20) | fd. Guessing one means guessing a 42-bit nonce; these
-# are structurally valid-looking values with the wrong nonce, which must resolve to
-# -1 rather than to the fd in their low bits.
-for t in 1048577 4294967296 1152921504606846977; do
-    inject "/z|w|$t"
-done
-sleep 0.5
-if grep -q 'HTTP/1.1' "$SRV_LOG"; then
-    bad "a forged capability token was honoured [$(grep -m1 'HTTP/1.1' "$SRV_LOG")]"
-else
-    ok "a forged capability token is refused"
-fi
-
-# --- 5. the server survived all of it ----------------------------------------
-if ! kill -0 "$SRV_PID" 2>/dev/null; then
-    bad "server survived the injection attempts"
-    sed -n '1,25p' "$SRV_LOG"
-else
-    body=$(perl -e 'alarm(10); exec @ARGV' -- curl -s -m 5 "http://127.0.0.1:$PORT/after" 2>/dev/null)
-    if [ "$body" = "PAYLOAD-OK" ]; then ok "server still answers a real request afterwards"
-    else bad "server still answers a real request afterwards (got [$body])"; fi
-fi
-kill -9 "$SRV_PID" 2>/dev/null; SRV_PID=""
+kill -9 "$A_PID" 2>/dev/null; A_PID=""
 
 # --- Server B: Http.fd(req) is robust where split_at is not -------------------
-# Http.fd parses the record's final field from the RIGHT, so extra pipes in the
-# path or body cannot shift it. This is the accessor a reader should use, and these
-# two arms are what make that a claim rather than an assertion.
-B_SRC="$TMP/srvb.wyn"
-B_LOG="$TMP/srvb.log"
 B_BASE=$(( PORT_BASE + 300 ))
 cat > "$B_SRC" <<EOF
 fn main() -> int {
@@ -249,7 +272,7 @@ fn main() -> int {
     return 0
 }
 EOF
-if ! perl -e 'alarm(120); exec @ARGV' -- "$WYN" build "$B_SRC" -o "$B_BIN" > "$TMP/buildb.log" 2>&1; then
+if ! perl -e 'alarm(150); exec @ARGV' -- "$WYN" build "$B_SRC" -o "$B_BIN" > "$TMP/buildb.log" 2>&1; then
     bad "accessor-based server builds"
     sed -n '1,25p' "$TMP/buildb.log"
 else
@@ -261,7 +284,7 @@ else
         bad "accessor-based server negotiates a port (walked 200 from $B_BASE, none bound)"
         sed -n '1,20p' "$B_LOG"
     else
-        # A path full of pipes, sent raw so it is not percent-encoded away.
+        # Sent raw: curl would percent-encode the '|' and the case would evaporate.
         got=$(python3 - "$BPORT" <<'PY' 2>/dev/null
 import socket, sys
 try:
@@ -271,7 +294,8 @@ try:
     buf = b""
     while True:
         c = s.recv(4096)
-        if not c: break
+        if not c:
+            break
         buf += c
     s.close()
     sys.stdout.write(buf.decode('latin-1').split("\r\n\r\n", 1)[-1])
@@ -282,7 +306,7 @@ PY
         if [ "$got" = "B-OK" ]; then ok "Http.fd: a path containing '|' is served correctly"
         else bad "Http.fd: a path containing '|' is served correctly (got [$got])"; fi
 
-        rbody=$(perl -e 'alarm(10); exec @ARGV' -- curl -s -m 5 -X POST --data-binary 'a|b|1' \
+        rbody=$(perl -e 'alarm(15); exec @ARGV' -- curl -s -m 10 -X POST --data-binary 'a|b|1' \
                 -H 'Content-Type: text/plain' "http://127.0.0.1:$BPORT/post" 2>/dev/null)
         if [ "$rbody" = "B-OK" ]; then ok "Http.fd: a body containing '|' is served"
         else bad "Http.fd: a body containing '|' is served (got [$rbody])"; fi
