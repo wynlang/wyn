@@ -266,7 +266,7 @@ static void emit_function_with_prefix(Stmt* fn_stmt, const char* prefix) {
     { extern void reset_int_array_vars(void); reset_int_array_vars(); }
     { extern void reset_str_array_vars(void); reset_str_array_vars(); }
     { extern void reset_sb_vars(void); reset_sb_vars(); }
-    { extern void reset_array_scope(void); reset_array_scope(); } { extern void reset_hashmap_scope(void); reset_hashmap_scope(); } { extern void reset_closure_scope(void); reset_closure_scope(); }
+    { extern void reset_array_scope(void); reset_array_scope(); } { extern void reset_packed_array_scope(void); reset_packed_array_scope(); } { extern void reset_hashmap_scope(void); reset_hashmap_scope(); } { extern void reset_closure_scope(void); reset_closure_scope(); }
     for (int i = 0; i < fn_stmt->fn.param_count; i++) {
         char param_name[256]; token_to_cstr(param_name, sizeof(param_name), fn_stmt->fn.params[i]);
         bool is_mut = fn_stmt->fn.param_mutable && fn_stmt->fn.param_mutable[i];
@@ -2492,6 +2492,15 @@ void codegen_stmt(Stmt* stmt) {
                     extern void register_array_scope_var(const char*);
                     register_array_scope_var(var_name);
                 }
+                // A local that is STILL packed here provably cannot escape its
+                // function - the int-array veto removes every representation-mixing
+                // use, and that set is exactly the set of escape routes. See the
+                // table in codegen.c above register_packed_array_scope_var. So it is
+                // safe to free at scope exit without escape analysis (#466).
+                if (strcmp(c_type, "WynIntArray") == 0) {
+                    extern void register_packed_array_scope_var(const char*);
+                    register_packed_array_scope_var(var_name);
+                }
                 if (strcmp(c_type, "WynHashMap*") == 0) {
                     extern void register_hashmap_scope_var(const char*);
                     register_hashmap_scope_var(var_name);
@@ -2705,6 +2714,22 @@ void codegen_stmt(Stmt* stmt) {
                     codegen_expr(get_defer(_d)); emit(";\n");
                 }
             }
+            // #466: packed int-array locals are released on EVERY exit path. A return
+            // leaves all enclosing scopes at once and control never reaches their
+            // pops, so this releases all live ones.
+            //
+            // THE RELEASE MUST FOLLOW THE RETURN EXPRESSION, not precede it: the
+            // reported repro is `return a[3]`, which reads the array it is about to
+            // free. So when the return has a value, the value goes through a
+            // statement-expression temp typed by current_fn_c_ret_type - the same
+            // shape the retain-on-return path below already uses. When there is no
+            // packed array live, _pa_live is 0 and every branch below emits exactly
+            // what it emitted before, byte for byte; that is what keeps the golden
+            // snapshots unchanged.
+            extern int packed_array_live_count(void);
+            extern void emit_packed_array_releases_all(void);
+            extern const char* current_fn_c_ret_type;
+            int _pa_live = packed_array_live_count();
             // RC: a local string moved into a RETURNED enum-variant constructor
             // (e.g. `return E.A(local)`) is stored raw in the enum payload and
             // escapes with it; releasing it before the return would leave the
@@ -2757,12 +2782,15 @@ void codegen_stmt(Stmt* stmt) {
             if (in_async_function) {
                 emit("*temp = ");
                 codegen_expr(stmt->ret.value);
-                emit("; goto async_return;\n");
+                emit("; ");
+                if (_pa_live) emit_packed_array_releases_all();
+                emit("goto async_return;\n");
             } else if (!stmt->ret.value) {
                 // Bare `return;`. If the emitted C function is non-void (e.g.
                 // `long long wyn_main()` for an inferred-void main), a valueless
                 // return is a C error - emit `return 0;` instead.
                 extern bool current_fn_c_nonvoid;
+                if (_pa_live) emit_packed_array_releases_all();
                 emit(current_fn_c_nonvoid ? "return 0;\n" : "return;\n");
             } else if (stmt->ret.value->type == EXPR_CALL &&
                        stmt->ret.value->call.callee->type == EXPR_IDENT &&
@@ -2774,6 +2802,7 @@ void codegen_stmt(Stmt* stmt) {
                 // iOS-shim pattern `fn main() { return wyn_ios_main(0, 0) }`).
                 codegen_expr(stmt->ret.value);
                 emit(";\n");
+                if (_pa_live) { emit("    "); emit_packed_array_releases_all(); emit("\n"); }
                 extern bool current_fn_c_nonvoid;
                 emit(current_fn_c_nonvoid ? "    return 0;\n" : "    return;\n");
             } else {
@@ -2790,12 +2819,17 @@ void codegen_stmt(Stmt* stmt) {
                     if (stmt->ret.value->type == EXPR_IDENT &&
                         stmt->ret.value->token.length == 4 &&
                         memcmp(stmt->ret.value->token.start, "none", 4) == 0) {
+                        if (_pa_live) emit_packed_array_releases_all();
                         emit("return %s_None();\n", current_fn_return_kind);
                     } else {
                         // `return x` → emit <Family>_Some(x)
-                        emit("return %s_Some(", current_fn_return_kind);
+                        if (_pa_live) emit("return ({ %s __pret = ", current_fn_c_ret_type);
+                        else          emit("return ");
+                        emit("%s_Some(", current_fn_return_kind);
                         codegen_expr(stmt->ret.value);
-                        emit(");\n");
+                        emit(")");
+                        if (_pa_live) { emit("; "); emit_packed_array_releases_all(); emit("__pret; })"); }
+                        emit(";\n");
                     }
                 } else {
                     // Retain-on-return (#32): a string-returning function returns
@@ -2815,7 +2849,15 @@ void codegen_stmt(Stmt* stmt) {
                         // effects, e.g. an index), retain, then return it.
                         emit("return ({ const char* __rret = ");
                         codegen_expr(stmt->ret.value);
-                        emit("; wyn_rc_retain(__rret); __rret; });\n");
+                        emit("; wyn_rc_retain(__rret); ");
+                        if (_pa_live) emit_packed_array_releases_all();
+                        emit("__rret; });\n");
+                    } else if (_pa_live) {
+                        emit("return ({ %s __pret = ", current_fn_c_ret_type);
+                        codegen_expr(stmt->ret.value);
+                        emit("; ");
+                        emit_packed_array_releases_all();
+                        emit("__pret; });\n");
                     } else {
                         emit("return ");
                         codegen_expr(stmt->ret.value);
@@ -2826,6 +2868,7 @@ void codegen_stmt(Stmt* stmt) {
             break;
         case STMT_BREAK:
             { extern void emit_block_string_releases(void); emit_block_string_releases(); }
+            { extern void emit_block_packed_array_releases(void); emit_block_packed_array_releases(); }
             emit("break;\n");
             break;
         case STMT_DEFER:
@@ -2833,6 +2876,7 @@ void codegen_stmt(Stmt* stmt) {
             break;
         case STMT_CONTINUE:
             { extern void emit_block_string_releases(void); emit_block_string_releases(); }
+            { extern void emit_block_packed_array_releases(void); emit_block_packed_array_releases(); }
             emit("continue;\n");
             break;
         case STMT_SPAWN: {
@@ -2930,11 +2974,13 @@ void codegen_stmt(Stmt* stmt) {
                 extern void pop_string_scope_and_release(void);
                 extern void push_array_scope(void);
                 extern void pop_array_scope_and_release(void);
+                extern void push_packed_array_scope(void);
+                extern void pop_packed_array_scope_and_release(void);
                 extern void push_hashmap_scope(void);
                 extern void pop_hashmap_scope_and_release(void);
                 extern void push_closure_scope(void);
                 extern void pop_closure_scope_and_release(void);
-                if (_is_inner_block) { push_string_scope(); push_array_scope(); push_hashmap_scope(); push_closure_scope(); }
+                if (_is_inner_block) { push_string_scope(); push_array_scope(); push_packed_array_scope(); push_hashmap_scope(); push_closure_scope(); }
                 
                 // Save shadow state for vars declared in inner blocks
                 extern int get_current_shadow(const char*);
@@ -2964,7 +3010,21 @@ void codegen_stmt(Stmt* stmt) {
                 current_block_stmts = _saved_stmts; current_block_count = _saved_count; current_stmt_idx = _saved_idx;
                 
                 // String cleanup first (needs macros still defined)
-                if (_is_inner_block) { pop_string_scope_and_release(); pop_array_scope_and_release(); pop_hashmap_scope_and_release(); pop_closure_scope_and_release(); }
+                if (_is_inner_block) {
+                    pop_string_scope_and_release(); pop_array_scope_and_release();
+                    // A block whose last statement is a `return` has already released
+                    // every live packed array at that return; emitting here too would
+                    // be dead code in the generated C.
+                    {
+                        extern void pop_packed_array_scope_silent(void);
+                        bool _pa_ends_ret = (stmt->block.count > 0 &&
+                                             stmt->block.stmts[stmt->block.count - 1] &&
+                                             stmt->block.stmts[stmt->block.count - 1]->type == STMT_RETURN);
+                        if (_pa_ends_ret) pop_packed_array_scope_silent();
+                        else pop_packed_array_scope_and_release();
+                    }
+                    pop_hashmap_scope_and_release(); pop_closure_scope_and_release();
+                }
                 
                 // Then restore shadow state for shadowed variables
                 if (_is_inner_block) {
@@ -3490,7 +3550,7 @@ void codegen_stmt(Stmt* stmt) {
     { extern void reset_int_array_vars(void); reset_int_array_vars(); }
             { extern void reset_str_array_vars(void); reset_str_array_vars(); }
             { extern void reset_sb_vars(void); reset_sb_vars(); }
-            { extern void reset_array_scope(void); reset_array_scope(); } { extern void reset_hashmap_scope(void); reset_hashmap_scope(); } { extern void reset_closure_scope(void); reset_closure_scope(); }
+            { extern void reset_array_scope(void); reset_array_scope(); } { extern void reset_packed_array_scope(void); reset_packed_array_scope(); } { extern void reset_hashmap_scope(void); reset_hashmap_scope(); } { extern void reset_closure_scope(void); reset_closure_scope(); }
             for (int i = 0; i < stmt->fn.param_count; i++) {
                 char pname[256]; token_to_cstr(pname, sizeof(pname), stmt->fn.params[i]);
                 bool is_mut_p = stmt->fn.param_mutable && stmt->fn.param_mutable[i];
@@ -3521,11 +3581,18 @@ void codegen_stmt(Stmt* stmt) {
             // `char*`), so STMT_RETURN can retain a borrowed return value (#32).
             extern bool current_fn_returns_string;
             bool prev_fn_returns_string = current_fn_returns_string;
+            // The C return type of this function, recorded from the SAME _rt_eff the
+            // signature is emitted from so the two cannot disagree. STMT_RETURN needs
+            // it to declare the statement-expression temp that lets a packed int array
+            // be released AFTER the return expression is evaluated (#466).
+            extern const char* current_fn_c_ret_type;
+            const char* prev_fn_c_ret_type = current_fn_c_ret_type;
             {
                 const char* _rt_eff = (return_type_buf[0] != '\0') ? return_type_buf : return_type;
                 current_fn_c_nonvoid = (strcmp(_rt_eff, "void") != 0);
                 current_fn_returns_string =
                     (strcmp(_rt_eff, "const char*") == 0 || strcmp(_rt_eff, "char*") == 0);
+                current_fn_c_ret_type = _rt_eff;
             }
             if (stmt->fn.return_type && stmt->fn.return_type->type == EXPR_CALL &&
                 stmt->fn.return_type->call.callee->type == EXPR_IDENT) {
@@ -3650,6 +3717,7 @@ void codegen_stmt(Stmt* stmt) {
                 pop_scope(); current_fn_return_kind = prev_fn_return_kind;
                 current_fn_c_nonvoid = prev_fn_c_nonvoid;
                 current_fn_returns_string = prev_fn_returns_string;
+                current_fn_c_ret_type = prev_fn_c_ret_type;
                 emit("}\n\n"); break;
             }
             // TCO: detect tail-recursive calls and convert to goto loop
@@ -3727,6 +3795,26 @@ void codegen_stmt(Stmt* stmt) {
                         emit("    "); codegen_expr(get_defer(_d)); emit(";\n");
                     }
                 }
+                // #466: release this function's packed int-array locals on the
+                // FALL-THROUGH path. Every `return` already released them (see
+                // STMT_RETURN), so this is only for a body that ends without one -
+                // guarded on exactly that, so no unreachable free is emitted after a
+                // trailing return.
+                {
+                    extern int packed_array_live_count(void);
+                    extern void emit_packed_array_releases_all(void);
+                    bool _ends_in_return = false;
+                    if (stmt->fn.body && stmt->fn.body->type == STMT_BLOCK &&
+                        stmt->fn.body->block.count > 0) {
+                        Stmt* _last = stmt->fn.body->block.stmts[stmt->fn.body->block.count - 1];
+                        if (_last && _last->type == STMT_RETURN) _ends_in_return = true;
+                    }
+                    if (!_ends_in_return && packed_array_live_count() > 0) {
+                        emit("    ");
+                        emit_packed_array_releases_all();
+                        emit("\n");
+                    }
+                }
                 // Auto-insert return 0 at end of main if not already there
                 bool is_main = (stmt->fn.name.length == 4 && 
                                memcmp(stmt->fn.name.start, "main", 4) == 0);
@@ -3747,6 +3835,7 @@ void codegen_stmt(Stmt* stmt) {
             current_fn_return_kind = prev_fn_return_kind;
             current_fn_c_nonvoid = prev_fn_c_nonvoid;
             current_fn_returns_string = prev_fn_returns_string;
+            current_fn_c_ret_type = prev_fn_c_ret_type;
             codegen_fn_returns_array = _prev_fn_returns_array;
             emit("}\n\n");
             break;

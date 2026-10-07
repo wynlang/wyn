@@ -1000,6 +1000,21 @@ long long int_array_get(WynIntArray a, int i) {
 int int_array_len(WynIntArray a) { return a.count; }
 static int _int_array_cmp(const void* a, const void* b) { long long x = *(const long long*)a, y = *(const long long*)b; return (x > y) - (x < y); }
 void int_array_sort(WynIntArray* a) { if (a->count > 1) qsort(a->data, a->count, sizeof(long long), _int_array_cmp); }
+// Release a packed int array's backing store. No element pass is needed or wanted:
+// the elements are long longs, not reference-counted values, which is half of why
+// the packed representation is the one that can be freed safely.
+//
+// Idempotent: data is nulled and the counts zeroed, so a second call is a no-op
+// rather than a double free. That matters because codegen emits this at every exit
+// from the declaring scope, and a `return` inside a loop inside that scope can reach
+// more than one emission point.
+void int_array_free(WynIntArray* a) {
+    if (!a) return;
+    free(a->data);
+    a->data = NULL;
+    a->count = 0;
+    a->capacity = 0;
+}
 
 void array_push(WynArray* arr, long long value) {
     WYN_ARR_WRITE_ENTER(arr);

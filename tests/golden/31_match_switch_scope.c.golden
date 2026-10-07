@@ -16,7 +16,7 @@ __attribute__((hot)) static inline long long pick(long long n) {
 WynIntArray a = ({ WynIntArray __arr_0 = int_array_new(); __arr_0; });
     int_array_push(&(a), (long long)(3));
     int_array_push(&(a), (long long)(4));
-    return (int_array_get(a, 0) + int_array_get(a, 1));
+    return ({ long long __pret = (int_array_get(a, 0) + int_array_get(a, 1)); int_array_free(&a); __pret; });
  break; }
         case 1: {    /* 31_match_switch_scope.wyn:27 */ 
 #line 27 "31_match_switch_scope.wyn"
@@ -26,7 +26,7 @@ return 1;
 #line 29 "31_match_switch_scope.wyn"
 WynIntArray z = ({ WynIntArray __arr_1 = int_array_new(); __arr_1; });
     int_array_push(&(z), (long long)(-1));
-    return int_array_get(z, 0);
+    return ({ long long __pret = int_array_get(z, 0); int_array_free(&z); __pret; });
  break; }
     }
 }
