@@ -58,8 +58,9 @@ print("${name.upper()}")     // WYN
 fn double(x: int) -> int => x * 2
 fn even(x: int) -> bool => x % 2 == 0
 
-// Pipe operator
-result = 5 |> double           // 10
+// Method chaining, or just nest the calls
+result = double(5)             // 10
+trimmed = "  wyn  ".trim().upper()   // "WYN"
 
 // Enums with data + destructuring match
 enum Shape { Circle(float), Point }
@@ -82,6 +83,7 @@ total = nums.reduce((a, b) => a + b, 0)
 squares = [x * x for x in 1..=5]
 
 // Spawn/await concurrency
+fn compute(n: int) -> int => n * n
 var f1 = spawn compute(1000)
 var f2 = spawn compute(2000)
 var r1 = await f1
@@ -100,7 +102,7 @@ fn divide(a: int, b: int) -> Result<int, string> {
 }
 
 // enum.to_string(), indexed for, string repeat, clean int? / Some
-print(Shape.Circle.to_string())  // "Circle"
+print(s.to_string())             // "Circle"
 for i, v in ["a", "b", "c"] { print(i.to_string() + ":" + v) }
 print("=" * 40)
 var x: int? = Some(42)
@@ -242,10 +244,13 @@ wyn/
 
 MIT — see [LICENSE](LICENSE).
 
-The shipped `wyn` binary statically links TinyCC (`libtcc`), which is LGPL-2.1, and
-bundles minicoro (Public Domain / MIT-0). License texts are distributed at
-`vendor/tcc/COPYING` and `vendor/minicoro/LICENSE`; the full list of third-party
-components is in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+The shipped `wyn` binary statically links minicoro (Public Domain / MIT-0). It
+redistributes — but does not link — TinyCC (LGPL-2.1), which Wyn invokes as a separate
+program, and Mbed TLS (Apache-2.0 or GPL-2.0-or-later), which is linked into the
+programs *you* compile when they use HTTPS. License texts ship at
+`vendor/minicoro/LICENSE`, `vendor/tcc/COPYING` and `vendor/mbedtls/LICENSE`; the full
+list, with the evidence for each relationship, is in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ---
 
