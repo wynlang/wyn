@@ -663,6 +663,8 @@ test: wyn $(MBEDTLS_LIB) runtime/libwyn_rt.a
 	@WYN=./wyn bash tests/errors/run_len_cache_test.sh
 	@echo "=== Running Task.select diagnostic gate ==="
 	@WYN=./wyn bash tests/errors/run_task_select_diagnostic_test.sh
+	@echo "=== Running --fast no-op gate ==="
+	@WYN=./wyn bash tests/errors/run_fast_flag_test.sh
 	@echo "=== Running HTTP server concurrent-load gate ==="
 	@WYN=./wyn bash tests/errors/run_http_server_load_test.sh
 	@echo "=== Running test-port hygiene gate (no test may bind a fixed port) ==="
