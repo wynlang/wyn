@@ -1,0 +1,9 @@
+// #465 ACCEPT arm for string_index_non_int_rejected.wyn. Making that rule fail
+// the build could equally have been achieved by rejecting every string index, so
+// a valid int subscript must still compile and return the single character.
+// A variable subscript as well as a literal one: the rule is keyed on the index
+// EXPRESSION's checked type, not on the literal node kind.
+// EXPECT: e-l
+s = "hello"
+i = 3
+print("${s[1]}-${s[i]}")

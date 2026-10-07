@@ -1,0 +1,17 @@
+// #465 ACCEPT arm. The three *_rejected.wyn siblings only assert that a bad
+// method call fails the build, so "reject every method call on a scalar" would
+// satisfy all three. This file is what stops that: a REAL method on each of the
+// three receivers the fix touches must still compile, run and print.
+//
+// One method per receiver, chosen from a different part of each type's dispatch
+// table so the file is not just testing `to_string` three times:
+//   int   .abs()      -> int_abs
+//   float .sqrt()     -> float_sqrt
+//   bool  .to_int()   -> bool_to_int
+// and one chained call, because a method on a method RESULT is the shape that
+// reaches codegen with a receiver the checker never named.
+// EXPECT: 42|2|1|7
+i = -42
+f = 4.0
+b = true
+print("${i.abs()}|${f.sqrt().to_int()}|${b.to_int()}|${7.max(3)}")

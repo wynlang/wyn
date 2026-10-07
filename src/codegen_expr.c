@@ -4872,9 +4872,33 @@ static void codegen_expr_inner(Expr* expr) {
                 } else if (strcmp(receiver_type, "string") == 0) {
                     fprintf(stderr, "Hint: Available string methods: .len(), .upper(), .lower(), .trim(), .contains(substr)\n");
                 }
+                // #465: NOTHING WAS EMITTED FOR THIS CALL, so the build must fail.
+                //
+                // Every arm above that can lower the call has already `break`ed out
+                // (including the array arm's len/join/slice/reverse/push/pop/filter/map
+                // cases a few lines up, which print the error line and then emit real
+                // code). Reaching HERE means the diagnostic above is the whole of
+                // codegen's answer and the call is about to be silently DROPPED.
+                //
+                // Measured before: `x = 42` + `x.nope()` printed "Unknown method
+                // 'nope' for type 'int'", then `✓ Built`, then exit 0, and the program
+                // ran with the call deleted. A string or array receiver has been
+                // rejected at CHECK time since #426, so only the receivers the checker
+                // keeps lenient (int / float / bool, i.e. its fallback type) still
+                // reached this point - which is why the same user error failed the
+                // build for `"s".nope()` and did not for `42.nope()`.
+                //
+                // A diagnostic that does not fail the build makes `wyn build` and
+                // `wyn run` useless as gates: a green harness stops being evidence
+                // that anything ran.
+                codegen_note_error();
             } else {
                 fprintf(stderr, "Error: Unknown method '%.*s' (no type info)\n", 
                         method.length, method.start);
+                // Same give-up point, reached when codegen could not name the receiver
+                // at all. It emits nothing either, so it fails the build for the same
+                // reason - not a second rule, the same one.
+                codegen_note_error();
             }
             method_done:
             if (_mc_chain_wrap && _mc_id >= 0) {

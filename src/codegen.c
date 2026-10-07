@@ -2335,9 +2335,32 @@ static Scope* scopes = NULL;
 static int scope_depth = 0;
 static int scope_cap = 0;
 
+// #465: the codegen phase's half of the parser_had_error() / checker_had_error()
+// pair. It is the SAME mechanism as those two - a phase sets a flag, main.c asks
+// after the phase returns and stops - extended to the one phase that had no way
+// to say "I failed". It is deliberately not a new reporting channel: the message
+// is still printed where it always was, and this only records that it happened.
+//
+// Why the flag is needed at all, i.e. why codegen's unknown-method diagnostic
+// could not simply move into the checker where it would already fail the build:
+// TYPE_INT is the checker's fallback type for any expression it cannot resolve,
+// so "unknown method on an int receiver" is not a usable CHECK-time rule - it
+// would reject `StringBuilder.new().append()`, `3.times(f)` and 1,038
+// `Test.assert_*` calls. That measurement is recorded in full at
+// reject_option_method_on_scalar() in src/checker.c, and it is the reason that
+// rule is keyed on the METHOD name instead of on the receiver. codegen is the
+// first place that knows enough (it refines an int receiver to "stringbuilder",
+// "array", "float" or "string" of its own accord), so it is the only place the
+// question can be answered - and therefore the place that must be able to fail.
+static bool codegen_error = false;
+
+void codegen_note_error(void) { codegen_error = true; }
+bool codegen_had_error(void) { return codegen_error; }
+
 void init_codegen(FILE* output) {
     out = output;
     scope_depth = 0;
+    codegen_error = false;
 }
 
 static void push_scope() {

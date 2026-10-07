@@ -471,6 +471,10 @@ test: wyn $(MBEDTLS_LIB)
 	@WYN=./wyn bash tests/errors/run_unknown_method_test.sh
 	@echo "=== Running unknown-collection-method test (map/set fail the build, #426) ==="
 	@WYN=./wyn bash tests/errors/run_unknown_collection_method_test.sh
+# The .wyn regression tests for #465 cover `wyn build`, because run_bdd.sh only ever
+# invokes `$WYN build`. This covers the `wyn run` enforcement site, which had none.
+	@echo "=== Running codegen-fails-the-build test (wyn run path, #465) ==="
+	@WYN=./wyn bash tests/errors/run_codegen_fails_the_build_test.sh
 	@echo "=== Running Result-as-a-parameter test (#424) ==="
 	@WYN=./wyn bash tests/errors/run_result_param_test.sh
 	@echo "=== Running argument-type test (wrong-typed argument is rejected, #425) ==="

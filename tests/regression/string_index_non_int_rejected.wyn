@@ -1,0 +1,22 @@
+// #465, second site of the same defect shape, found while auditing it: the
+// checker's non-int-string-index rule printed its error and then set nothing, so
+// `wyn check` answered "✓ no errors", exit 0, and the build exited 0 too.
+// Measured on dev @ 3dd65450 with `s = "hello"` + `print(s["x"])`: the string
+// pointer was reinterpreted as the subscript and the program died at runtime
+// with `panic: string index out of bounds: index 50190957, length 5`.
+//
+// This one CAN be a check-phase assertion - the rule already lives in the
+// checker, it just did not fail - so the stricter directive is used. A plain
+// EXPECT_FAIL would also have been satisfied, before the fix, by that runtime
+// panic reaching a non-zero exit through an entirely different route.
+//
+// The expected text below is the compiler's own wording and is deliberately NOT
+// repeated anywhere else in this file: run_bdd.sh rejects an EXPECT_ERR pattern
+// that occurs in the test's own source, because the diagnostic echoes the source
+// window back and the pattern would then match itself.
+//
+// Accept arm: tests/regression/string_index_int_accepted.wyn.
+// EXPECT_CHECK_FAIL:
+// EXPECT_ERR: String index must be int
+s = "hello"
+print(s["x"])
