@@ -579,6 +579,17 @@ static const char* current_fn_return_kind = NULL;
 // emit, saved/restored across nested function codegen.
 static bool current_fn_c_nonvoid = false;
 
+// The C return type of the function currently being emitted, e.g. "long long",
+// "const char*", "double". Set alongside current_fn_c_nonvoid from the same
+// `_rt_eff` the signature is emitted from, so it cannot disagree with it.
+//
+// Needed because releasing a packed int array at `return` must happen AFTER the
+// return expression is evaluated - the reported repro is literally `return a[3]` -
+// so the value goes through a statement-expression temp, and a temp needs a type.
+// Same shape as the retain-on-return path above it, which already does
+// `return ({ const char* __rret = <expr>; ... })`.
+const char* current_fn_c_ret_type = "long long";
+
 // Track the Option/Result family of the current assignment target (the declared
 // type of a `var x: T? = Some(..)` / `var r: ResultString = Ok(..)`), so a
 // Some/None/Ok/Err initializer lowers to the exact family the annotation names -
@@ -1193,6 +1204,103 @@ void register_array_scope_var(const char* name) {
     array_scope_names[array_scope_count++] = strdup(name);
 }
 void reset_array_scope(void) { array_scope_count = 0; array_scope_top = 0; }
+
+// --- Packed int-array scope tracking (#466) ---------------------------------
+//
+// A `[int]` local that kept the packed WynIntArray representation was NEVER freed:
+// 50,000 calls to a function declaring one cost 9.7 MB RSS and 500,000 cost 71.7 MB,
+// linear in the call count, while the homepage says memory is "freed at scope exit".
+// `array_free` exists for the generic WynArray and is emitted only for INNER blocks
+// (pop_array_scope_and_release, gated on _is_inner_block); there was no packed free
+// function at all, and the function body is not an inner block.
+//
+// WHY THE PACKED REPRESENTATION IS THE ONE THAT CAN BE FREED WITHOUT ESCAPE ANALYSIS,
+// which is the whole basis of this change: the int-array VETO pre-pass
+// (codegen_lambda.c veto_scan_expr/veto_scan_stmt) already removes a variable from the
+// packed representation if it is used in ANY way WynIntArray cannot express - and that
+// set is exactly the set of ways a local could escape its function:
+//
+//   return xs            STMT_RETURN  -> vetoed ("yields it as a WynArray to the caller")
+//   ys = xs / var ys = xs EXPR_ASSIGN / STMT_VAR -> vetoed (whole-array copy)
+//   f(xs)                EXPR_CALL    -> vetoed (hands WynIntArray to a WynArray param)
+//   (x) => ... xs ...    EXPR_LAMBDA  -> vetoed (every ident the body mentions)
+//   [xs, ...] / (xs, ..) EXPR_ARRAY/TUPLE -> vetoed
+//   xs[i] = v            EXPR_INDEX_ASSIGN -> vetoed
+//   xs.map/filter/...    EXPR_METHOD_CALL -> vetoed (only push/len/sort/get survive)
+//
+// So a variable that is STILL packed by the time we get here provably cannot outlive
+// its declaring scope: it is only ever pushed to, indexed, measured, sorted in place,
+// or iterated. Its elements are long longs, not reference-counted values, so there is
+// no element pass to get wrong either. That is why this does not need the escape
+// analysis the generic WynArray case would - and why this change is deliberately
+// limited to the packed representation. The generic case can be RETURNED, so it needs
+// the ownership work the string path has, and is not attempted here.
+static char** packed_array_scope_names = NULL;
+static int packed_array_scope_count = 0;
+static int packed_array_scope_cap = 0;
+static int* packed_array_scope_stack = NULL;
+static int packed_array_scope_top = 0;
+static int packed_array_scope_stack_cap = 0;
+
+void push_packed_array_scope(void) {
+    WYN_ENSURE_CAP(packed_array_scope_stack, packed_array_scope_top, packed_array_scope_stack_cap);
+    packed_array_scope_stack[packed_array_scope_top++] = packed_array_scope_count;
+}
+void pop_packed_array_scope_and_release(void) {
+    if (packed_array_scope_top <= 0) return;
+    int saved = packed_array_scope_stack[--packed_array_scope_top];
+    extern FILE* codegen_get_output(void);
+    FILE* out = codegen_get_output();
+    if (out) {
+        for (int i = saved; i < packed_array_scope_count; i++)
+            fprintf(out, "int_array_free(&%s); ", packed_array_scope_names[i]);
+    }
+    packed_array_scope_count = saved;
+}
+void register_packed_array_scope_var(const char* name) {
+    for (int i = 0; i < packed_array_scope_count; i++)
+        if (strcmp(packed_array_scope_names[i], name) == 0) return;
+    WYN_ENSURE_CAP(packed_array_scope_names, packed_array_scope_count, packed_array_scope_cap);
+    packed_array_scope_names[packed_array_scope_count++] = strdup(name);
+}
+// How many packed arrays are live in the current function. STMT_RETURN consults this
+// FIRST and emits nothing at all when it is 0, so every program that declares no
+// packed array keeps byte-identical output - which is what lets the golden snapshots
+// stay unchanged.
+int packed_array_live_count(void) { return packed_array_scope_count; }
+// Every live packed array, without popping: a `return` leaves all enclosing scopes at
+// once, so it must release all of them, and control never reaches their pops.
+void emit_packed_array_releases_all(void) {
+    extern FILE* codegen_get_output(void);
+    FILE* out = codegen_get_output();
+    if (!out) return;
+    for (int i = 0; i < packed_array_scope_count; i++)
+        fprintf(out, "int_array_free(&%s); ", packed_array_scope_names[i]);
+}
+// `break` / `continue` leave the innermost block WITHOUT reaching its pop, so they
+// must release what that block declared - and ONLY what it declared: releasing an
+// outer scope's array here would free something still live after the loop. Same
+// watermark rule as emit_block_string_releases above.
+// Pop WITHOUT emitting. Used when the block's last statement is a `return`: that
+// return already released every live packed array, so emitting here as well would put
+// provably dead code into the generated C for every match arm and if-branch that ends
+// in a return. (It would be harmless at run time - int_array_free is idempotent by
+// design - but the generated C is reviewed, which is what the golden snapshots are
+// for, so dead stores do not belong in it.)
+void pop_packed_array_scope_silent(void) {
+    if (packed_array_scope_top <= 0) return;
+    packed_array_scope_count = packed_array_scope_stack[--packed_array_scope_top];
+}
+void emit_block_packed_array_releases(void) {
+    if (packed_array_scope_top <= 0) return;
+    int saved = packed_array_scope_stack[packed_array_scope_top - 1];
+    extern FILE* codegen_get_output(void);
+    FILE* out = codegen_get_output();
+    if (!out) return;
+    for (int i = saved; i < packed_array_scope_count; i++)
+        fprintf(out, "int_array_free(&%s); ", packed_array_scope_names[i]);
+}
+void reset_packed_array_scope(void) { packed_array_scope_count = 0; packed_array_scope_top = 0; }
 
 // HashMap scope tracking (growable)
 static char** hashmap_scope_names = NULL;

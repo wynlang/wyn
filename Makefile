@@ -677,6 +677,8 @@ test: wyn $(MBEDTLS_LIB) runtime/libwyn_rt.a
 	@WYN=./wyn bash tests/errors/run_task_select_diagnostic_test.sh
 	@echo "=== Running README code-block gate (builds and runs every wyn block) ==="
 	@WYN=./wyn bash scripts/check_readme.sh
+	@echo "=== Running packed-array leak gate (RSS bound) ==="
+	@WYN=./wyn bash tests/errors/run_array_leak_test.sh
 	@echo "=== Running --fast no-op gate ==="
 	@WYN=./wyn bash tests/errors/run_fast_flag_test.sh
 	@echo "=== Running HTTP server concurrent-load gate ==="
