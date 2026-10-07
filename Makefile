@@ -357,7 +357,11 @@ check-fast: wyn
 	@echo ""
 	@echo "check-fast passed. This is NOT 'make test' - run that before pushing."
 
-test: wyn $(MBEDTLS_LIB)
+# runtime/libwyn_rt.a is a PREREQUISITE and not an assumption: arm 3 of
+# tests/errors/run_slim_header_parity_test.sh reads the archive with nm, and that
+# gate FAILS rather than skips when the archive is absent. Depending on it here is
+# what keeps "make test on a fresh clone" from reporting a vacuous arm.
+test: wyn $(MBEDTLS_LIB) runtime/libwyn_rt.a
 	@# FIRST, because it costs under a second and because scripts/ is the one
 	@# directory in this repo that no gate watched. The measurement harness
 	@# (scripts/suite.sh, scripts/sweep_*.py) rotted while it lived outside any
