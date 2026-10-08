@@ -48,6 +48,14 @@
 # Server B uses `Http.fd(req)` instead of splitting the string. Cases:
 #   5  a path containing '|' is served correctly
 #   6  a body containing '|' is served AND reaches the handler intact
+#   7  `Http.body(req)` answers with that same intact body        (issue #507)
+#
+# Case 7 is here because the accessors are what #486 tells readers to migrate TO, so a
+# broken one is a hole in that advice rather than a separate curiosity. `Http.body` is the
+# name a reader reaches for, and it resolved to the client-side RESPONSE accessor
+# (`Http_body(HttpResponse*)`), dereferencing the request STRING: SIGSEGV on the FIRST
+# request of any shape, no pipe needed. It is asserted on the same request as case 6 so it
+# cannot pass on a different one.
 #
 # Server B exists because `Http.fd` resolves the record's final field from the RIGHT
 # and so is robust against extra pipes anywhere earlier, while `split_at` is not: a
@@ -273,6 +281,11 @@ fn main() -> int {
         var req = Http.accept(server)
         var fd = Http.fd(req)
         println("B body=[\${Http.req_body(req)}]")
+        // #507: Http.body is the spelling a reader reaches for on a request, and it
+        // used to resolve to the client RESPONSE accessor and dereference this string
+        // as an HttpResponse* - SIGSEGV on the FIRST request, of any shape. Printed
+        // beside req_body so the two are asserted to agree rather than separately.
+        println("B altbody=[\${Http.body(req)}]")
         Http.respond(fd, 200, "text/plain", "B-OK")
         Http.close_client(fd)
         n = n + 1
@@ -322,6 +335,16 @@ PY
             ok "Http.req_body: a body containing '|' reaches the handler intact"
         else
             bad "Http.req_body: a body containing '|' reaches the handler intact [$(grep -m1 'B body=' "$B_LOG" || echo 'no B body= line')]"
+        fi
+        # #507. Asserted on the SAME request as the line above, so this arm cannot pass
+        # by the server having survived a different one: Http.body must answer with the
+        # same intact body Http.req_body did. Before the fix the server took SIGSEGV
+        # here on its first request, so this arm and the two above all went red - which
+        # is the shape to expect when mutating the fix out.
+        if grep -q 'B altbody=\[a|b|1\]' "$B_LOG"; then
+            ok "Http.body on a REQUEST returns the body, not a dereferenced struct (#507)"
+        else
+            bad "Http.body on a REQUEST returns the body, not a dereferenced struct (#507) [$(grep -m1 'B altbody=' "$B_LOG" || echo 'no B altbody= line - server likely crashed')]"
         fi
     fi
 fi
