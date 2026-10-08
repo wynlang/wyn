@@ -268,6 +268,16 @@ static const MethodSignature method_signatures[] = {
     // in one place; an incomplete list is what let #426's rule reject working code.
     {"map", "set_float", "void", "string, float"},
     {"map", "set_bool", "void", "string, bool"},
+    // #449: the GETTER half of the same story, plus the insert_* aliases. The receiver
+    // had the whole four-name `set_*` family and only two of four `get_*`, so
+    // `m.get_bool(k)` was rejected while `HashMap.get_bool(m, k)` worked - one operation,
+    // two answers depending on spelling. Registered here AND lowered in codegen_expr.c's
+    // single live map chain; an incomplete list in either place is invisible, which is
+    // what #426 and this issue both are.
+    {"map", "get_bool", "bool", "string"},
+    {"map", "get_float", "float", "string"},
+    {"map", "insert_bool", "void", "string, bool"},
+    {"map", "insert_float", "void", "string, float"},
     {"map", "stringify", "string", ""},
     {"map", "remove", "void", "string"},
     // (a second {"map","contains","bool",1} row lived here and was DEAD - lookup is

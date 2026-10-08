@@ -4509,6 +4509,43 @@ static void codegen_expr_inner(Expr* expr) {
                     emit(", "); codegen_expr(expr->method_call.args[0]);
                     emit(")"); break;
                 }
+                // get_bool / get_float / insert_bool / insert_float: the four names the
+                // RECEIVER spelling was missing while the whole `set_*` family and the
+                // namespace spelling had them (#449). All four runtime functions already
+                // existed - `hashmap_get_bool`, `hashmap_get_float`,
+                // `hashmap_insert_bool`, `hashmap_insert_float` are in codegen.c's known
+                // list - so this is a missing branch, not a missing lowering.
+                //
+                // There is exactly ONE place to add them now. Until #501 this file had a
+                // SECOND, unreachable copy of this chain, and that dead copy was the
+                // obvious-looking home for these four: they would have compiled, reviewed
+                // cleanly and done nothing.
+                if (strcmp(method_name, "get_bool") == 0 && expr->method_call.arg_count == 1) {
+                    emit("hashmap_get_bool(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", "); codegen_expr(expr->method_call.args[0]);
+                    emit(")"); break;
+                }
+                if (strcmp(method_name, "get_float") == 0 && expr->method_call.arg_count == 1) {
+                    emit("hashmap_get_float(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", "); codegen_expr(expr->method_call.args[0]);
+                    emit(")"); break;
+                }
+                if (strcmp(method_name, "insert_bool") == 0 && expr->method_call.arg_count == 2) {
+                    emit("hashmap_insert_bool(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", "); codegen_expr(expr->method_call.args[0]);
+                    emit(", "); codegen_expr(expr->method_call.args[1]);
+                    emit(")"); break;
+                }
+                if (strcmp(method_name, "insert_float") == 0 && expr->method_call.arg_count == 2) {
+                    emit("hashmap_insert_float(");
+                    codegen_expr(expr->method_call.object);
+                    emit(", "); codegen_expr(expr->method_call.args[0]);
+                    emit(", "); codegen_expr(expr->method_call.args[1]);
+                    emit(")"); break;
+                }
                 if (strcmp(method_name, "stringify") == 0 && expr->method_call.arg_count == 0) {
                     emit("json_stringify(");
                     codegen_expr(expr->method_call.object);
