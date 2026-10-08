@@ -1,0 +1,49 @@
+// Regression (#505): a type-mismatch error named a HARDCODED instantiation of the two
+// builtin collections, so it printed element types the program never wrote.
+//
+// THE DEFECT
+//
+//   var s: HashSet<int> = 5         ->  Expected: set (HashSet<string>)
+//   var m: HashMap<string, string> = 5  ->  Expected: map (HashMap<string, int>)
+//
+// Both parentheticals name a concrete element type taken from a string literal in
+// get_detailed_type_description() (src/error.c). That function is handed the type NAME
+// only - type_to_string() returns "map"/"set" - and never the Type*, so it cannot know
+// what the annotation said. The element types it printed were invented.
+//
+// The set literal was CORRECT when it was written (V-35): the runtime set was
+// string-keyed and the checker refused any other element type, so a string-element set
+// was the only set that existed. #391 gave the type a real element type, which made the
+// claim false without touching that line.
+//
+// THE FIX names the parameterised SHAPE instead, which is what the same function has
+// always done for the optional and result types two lines below. All four are consistent
+// now rather than two naming shapes and two naming invented instantiations.
+//
+// NOT DONE HERE, and deliberately: printing the REAL element types. That needs
+// type_to_string() to render a parameterised spelling, which means a caller-supplied
+// buffer instead of the string literals it returns today - and the checker calls it
+// TWICE IN A ROW to build the "Expected" and "Got" strings, so one shared static buffer
+// would let the second call clobber the first and print the same type on both sides.
+// That is exactly the symptom #447 was reported for, so it is not a safe drive-by.
+//
+// WHY THE ASSERTED STRINGS ARE NOT SPELLED ANYWHERE ELSE IN THIS FILE: the runner
+// rejects, up front, any expected pattern that also occurs in the test's own
+// non-directive lines, because the diagnostic renderer echoes a WINDOW of surrounding
+// source and a comment quoting the pattern would match itself. So the two shapes under
+// test appear ONLY on the two directive lines below -- the prose above says "a
+// string-element set" and "the parameterised shape" for that reason, not by accident.
+//
+// EXPECT_CHECK_FAIL:
+// EXPECT_ERR: HashSet<T>
+// EXPECT_ERR: HashMap<K, V>
+
+fn main() {
+    // An int initialiser against each collection annotation: the KINDS differ, so this
+    // is an ordinary mismatch that reaches the message path under test. The annotations
+    // deliberately name element types that are NOT the ones the old literals hardcoded,
+    // which is what made the invented text visible.
+    var s: HashSet<int> = 5
+    var m: HashMap<string, string> = 5
+    print("${s} ${m}")
+}

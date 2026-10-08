@@ -198,12 +198,29 @@ static const char* get_detailed_type_description(const char* type_name) {
     if (strcmp(type_name, "string") == 0) return "text string";
     if (strcmp(type_name, "bool") == 0) return "boolean (true/false)";
     if (strcmp(type_name, "array") == 0) return "array/list";
-    if (strcmp(type_name, "map") == 0) return "HashMap<string, int>";
-    // V-35: `HashSet<string>`, not `HashSet<int>`. The runtime set is string-keyed
-    // (hashset_add takes a `const char*`) and the checker now refuses any other
-    // element type, so `HashSet<int>` named a thing the language does not have - and
-    // said it about sets whose elements are plainly strings.
-    if (strcmp(type_name, "set") == 0) return "HashSet<string>";
+    // #505: the SHAPE, not a made-up instantiation. These two used to name one
+    // concrete spelling - `HashMap<string, int>` and `HashSet<string>` - which this
+    // function cannot possibly know: it is handed the type NAME only (`type_to_string()`
+    // returns "map"/"set"), never the `Type*`, so the element types it printed were
+    // literals. `var s: HashSet<int> = 5` reported "Expected: set (HashSet<string>)",
+    // naming an element type the program had not written, and
+    // `var m: HashMap<string, string> = 5` reported `HashMap<string, int>`.
+    //
+    // The `set` literal was CORRECT when written (V-35): the runtime set was
+    // string-keyed and the checker refused any other element type, so `HashSet<string>`
+    // was the only set that existed. #391 gave HashSet a real element type, which made
+    // the claim false without touching this line.
+    //
+    // `Option<T>` and `Result<T, E>` below have always been spelled as shapes for this
+    // exact reason, so this makes the four consistent rather than inventing a style. A
+    // parenthetical that names the real element types is possible but is NOT a change
+    // here: it needs `type_to_string()` to render a parameterised spelling, which means
+    // a caller-supplied buffer rather than the string literals it returns today - and
+    // the checker calls it twice in a row to build the "Expected" and "Got" strings, so
+    // one shared static buffer would make the second call clobber the first and print
+    // the same type on both sides. That is precisely the symptom #447 was reported for.
+    if (strcmp(type_name, "map") == 0) return "HashMap<K, V>";
+    if (strcmp(type_name, "set") == 0) return "HashSet<T>";
     if (strcmp(type_name, "optional") == 0) return "Option<T>";
     if (strcmp(type_name, "result") == 0) return "Result<T, E>";
     return type_name;
