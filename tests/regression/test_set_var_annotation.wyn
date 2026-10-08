@@ -1,0 +1,110 @@
+// Regression (#447): `var s: HashSet<T> = ...` was rejected in EVERY form, and the
+// error printed the SAME type on both sides.
+//
+// THE DEFECT
+//
+//   var s: HashSet<string> = {:"a"}
+//   -> Type mismatch at line 2:0
+//        Expected: set (HashSet<string>)
+//        Got:      set (HashSet<string>)
+//
+// Two identical types reported as a mismatch, so the message could not be acted on.
+//
+// ROOT CAUSE, and why it is a one-line omission rather than a missing feature:
+// types_equal() in checker.c answers same-kind compounds with a single coarse
+// `return true` -- the case label list TYPE_ARRAY / TYPE_STRUCT / TYPE_ENUM / TYPE_MAP /
+// TYPE_OPTIONAL / TYPE_UNION / TYPE_JSON, documented there as "just compare kinds".
+// TYPE_SET was never added to that list, so two sets fell through to `default: return
+// false` and a declaration compared its annotation against its own initialiser's type
+// and lost. The switch carried a `default:`, which is what kept -Wall's -Wswitch from
+// ever naming the omission; the list is exhaustive now so the next TypeKind cannot be
+// forgotten the same way.
+//
+// WHY ONLY THE VARIABLE POSITION FAILED. The annotation resolver has carried the
+// element type since #391, and the parameter and return positions never reach this
+// comparison -- they install the resolved type as the symbol's type and are done. The
+// variable declaration is the one position that compares annotation against initialiser,
+// so it is the one position the omission could reach. HashMap in the identical position
+// always worked because TYPE_MAP is in the list, which is what made this a wiring gap.
+//
+// SCOPE, deliberately not widened: TYPE_RESULT, TYPE_GENERIC and TYPE_CHANNEL are also
+// absent from the "equal" list and are now spelled out as `return false` to keep the
+// switch exhaustive WITHOUT changing their behaviour. No program was found that reaches
+// this comparison with two of those on both sides -- a `Result<T,E>` or `Option<T>`
+// annotation resolves to a monomorphised struct family and compares as TYPE_STRUCT -- and
+// widening a type rule with no failing program to prove it is how a false ACCEPT lands.
+//
+// NOT ASSERTED, because it is the established behaviour of this comparison rather than a
+// gap in this fix: an element-type CONFLICT (`var s: HashSet<int> = {:"a"}`) is accepted,
+// exactly as `var m: HashMap<string, int> = {"a": "x"}` and `var a: [int] = ["x"]` are
+// accepted today. This comparison is coarse by design -- the narrow element-type rules
+// live in reject_set_elem_mismatch()/reject_set_algebra_mismatch() -- so asserting a
+// rejection here would be asserting a language change that was never made.
+//
+// EXPECT: annotated string set: 2 true
+// EXPECT: annotated int set: 2 true
+// EXPECT: annotated empty set: 0 false
+// EXPECT: annotated via HashSet.new(): 1 true
+// EXPECT: bare HashSet annotation: 1 true
+// EXPECT: annotated set iterates its element type: a|b|
+// EXPECT: annotated set passed to a HashSet param: true false
+// EXPECT: inferred set still works: 1 true
+// EXPECT: annotated map still works: 1
+// EXPECT: annotated array still works: 2
+
+fn has(s: HashSet, k: string) -> bool { return HashSet.contains(s, k) }
+
+fn main() {
+    // The reported case. `.len()` AND a membership read, because a set that merely
+    // type-checks and then holds nothing would still print a length.
+    var s: HashSet<string> = {:"a", "b"}
+    print("annotated string set: ${s.len()} ${s.contains("a")}")
+
+    // The most telling row in the report: the annotation named int, and the message
+    // still said HashSet<string> on both sides -- so the annotation's element type was
+    // not reaching the comparison at all. An int set must also BUILD, since a declared
+    // int element type selects the int-flavoured runtime calls.
+    var n: HashSet<int> = {:1, 2}
+    print("annotated int set: ${n.len()} ${n.contains(1)}")
+
+    // An empty initialiser has no element type of its own, so this arm pins that the
+    // annotation alone is enough.
+    var e: HashSet<string> = {:}
+    print("annotated empty set: ${e.len()} ${e.contains("a")}")
+
+    // A constructor call rather than a literal: a different initialiser type, same
+    // comparison.
+    var c: HashSet<string> = HashSet.new()
+    HashSet.add(c, "x")
+    print("annotated via HashSet.new(): ${c.len()} ${c.contains("x")}")
+
+    // Bare `HashSet` with no type argument stays OPEN, and an open set must compare
+    // equal to the constructor's set too -- this form was rejected as well.
+    var b: HashSet = HashSet.new()
+    HashSet.add(b, "y")
+    print("bare HashSet annotation: ${b.len()} ${b.contains("y")}")
+
+    // The declared element type has to survive into the loop binding, or the fix would
+    // have made the program check while leaving the type it carries wrong.
+    var out = ""
+    for x in s {
+        out = out + x + "|"
+    }
+    print("annotated set iterates its element type: ${out}")
+
+    // An annotated local handed to a HashSet parameter: the position that already
+    // worked must still agree with the position just fixed.
+    print("annotated set passed to a HashSet param: ${has(s, "a")} ${has(s, "zz")}")
+
+    // The control from the report: inference never reached the comparison, so it always
+    // worked. Pinned so a fix here cannot regress it.
+    var i = {:"z"}
+    print("inferred set still works: ${i.len()} ${i.contains("z")}")
+
+    // The two neighbouring annotations that were already in the "equal" list. A change
+    // to that list is exactly the change that could disturb them.
+    var m: HashMap<string, int> = {"k": 1}
+    print("annotated map still works: ${m["k"]}")
+    var a: [int] = [1, 2]
+    print("annotated array still works: ${a.len()}")
+}
