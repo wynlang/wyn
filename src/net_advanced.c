@@ -226,9 +226,62 @@ int Http_status(HttpResponse* resp) {
     return resp ? resp->status_code : 0;
 }
 
-// Get response body
-const char* Http_body(HttpResponse* resp) {
-    return resp ? resp->body : "";
+// The body of either an Http.get/post RESPONSE or an Http.accept REQUEST.
+//
+// THE BUG (#507): this took an HttpResponse* and dereferenced it, while the Wyn name
+// `Http.body` is the only spelling a reader reaches for on a request. The checker
+// registers Http_body with an arity and a return type but NO PARAMETER TYPE
+// (`{"Http_body", 1, builtin_string}`, checker_builtins.c), so `Http.body(req)` - where
+// req is the request STRING from Http.accept - type-checked, compiled to a direct
+// `Http_body(req)`, and then read bytes from inside the string's own storage and
+// returned them as a char*. Measured: SIGSEGV on the FIRST request, of any shape - no
+// pipe in the body needed, unlike #486 - with the client getting no response at all.
+//
+// This is #476 again, one function over: that fix made Http_free take void* and tell the
+// two apart, and recorded the reasoning at wyn_runtime.h:284-287. Http_body is the same
+// signature shape against the same two argument kinds and was missed. #468 had earlier
+// corrected this function's *prototype* to match the response definition, which is
+// precisely what left the request spelling pointing at it.
+//
+// THE DISCRIMINATOR is the same one, for the same reason: a request record is allocated
+// by wyn_rc_alloc, whose header carries two complementary 32-bit magics and is
+// bounds-checked against the tracked heap range (wyn_rc_is_heap is exactly that test,
+// and wyn_rc.c records that the double magic makes false positives "astronomically
+// unlikely"). An HttpResponse* comes from plain malloc and has no such header.
+//
+// MIXED OWNERSHIP IS SOUND, and is not new here: the request path returns a fresh
+// rc-allocated field while the response path returns a pointer borrowed from the
+// response struct, and wyn_rc_release no-ops on a non-rc pointer (wyn_rc.c:138) - which
+// is already what lets Http_method/Http_path (rc-allocated) and this function's old
+// borrowed return coexist in one program.
+//
+// WHICH BRANCH WYN ACTUALLY TAKES, measured rather than assumed: always the rc one. No
+// Wyn expression produces an HttpResponse* - `Http.get` lowers to the LOWERCASE
+// http_get() (wyn_runtime.h:2391), which returns the response BODY as a plain string
+// (verified: a 16-byte body came back as exactly those 16 bytes, no status line). So the
+// HttpResponse* branch below is reachable only from C consumers of libwyn_rt.a, and is
+// kept for them rather than deleted on a guess.
+//
+// That also means a non-record string (an Http.get result, which has no pipes) answers
+// "" here rather than crashing. Wrong-but-safe, and not a regression: it previously
+// dereferenced that string as a struct. It is NOT silently papered over - the
+// HttpResponse* accessors being unreachable from Wyn while the API reference still
+// publishes `Http.body(resp)` and `Http.status(resp)` is filed separately, because fixing
+// it is a public-API decision and not this crash.
+//
+// Http_req_body stays as the explicit spelling; it is the function this now delegates to,
+// so the two cannot drift.
+const char* Http_body(void* p) {
+    if (!p) return "";
+    extern int wyn_rc_is_heap(const void*);
+    extern char* Http_req_body(const char*);
+    if (wyn_rc_is_heap(p)) {
+        // A reference-counted Wyn string: the request record from Http.accept. Field 2
+        // is parsed right-anchored, so a body containing '|' comes back intact.
+        return Http_req_body((const char*)p);
+    }
+    HttpResponse* resp = (HttpResponse*)p;
+    return resp->body ? resp->body : "";
 }
 
 // Get response header

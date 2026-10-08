@@ -206,7 +206,12 @@ void Http_close_server(int fd);
 // Client-side response accessors - net_advanced.c:225-230, same spelling as
 // wyn_runtime.h:279-280. HttpResponse is forward-declared above.
 int Http_status(HttpResponse* resp);
-const char* Http_body(HttpResponse* resp);
+// Http_body is void*, not HttpResponse*: `Http.body` is also the spelling a reader
+// reaches for on an Http.accept REQUEST, and taking HttpResponse* meant it dereferenced
+// the request STRING and crashed on the first request (#507). It discriminates the two at
+// run time on the RC header magic, exactly as Http_free does. Must stay in step with
+// wyn_runtime.h - the slim header's parity gate is what enforces that.
+const char* Http_body(void* p);
 // Http_respond_with_header: NOT declared. The checker advertises it
 // (checker_builtins.c:1360) but nothing defines it - no `T` in
 // runtime/libwyn_rt.a - so the declaration only turned a compile error into a
