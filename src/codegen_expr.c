@@ -4522,12 +4522,6 @@ static void codegen_expr_inner(Expr* expr) {
                     emit(", "); codegen_expr(expr->method_call.args[1]);
                     emit(")"); break;
                 }
-                if (strcmp(method_name, "get_int") == 0 && expr->method_call.arg_count == 1) {
-                    emit("hashmap_get_int(");
-                    codegen_expr(expr->method_call.object);
-                    emit(", "); codegen_expr(expr->method_call.args[0]);
-                    emit(")"); break;
-                }
                 if (strcmp(method_name, "keys") == 0 && expr->method_call.arg_count == 0) {
                     emit("hashmap_keys(");
                     codegen_expr(expr->method_call.object);
@@ -4780,46 +4774,6 @@ static void codegen_expr_inner(Expr* expr) {
                 char method_name[256]; token_to_cstr(method_name, sizeof(method_name), method);
                 
                 // HashMap instance methods
-                if (strcmp(receiver_type, "map") == 0) {
-                    if (strcmp(method_name, "keys") == 0) {
-                        emit("hashmap_keys("); codegen_expr(expr->method_call.object); emit(")"); break;
-                    }
-                    if (strcmp(method_name, "len") == 0) {
-                        emit("hashmap_len("); codegen_expr(expr->method_call.object); emit(")"); break;
-                    }
-                    if (strcmp(method_name, "contains") == 0) {
-                        emit("hashmap_has("); codegen_expr(expr->method_call.object);
-                        emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
-                    }
-                    if (strcmp(method_name, "get") == 0) {
-                        emit("hashmap_get_string("); codegen_expr(expr->method_call.object);
-                        emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
-                    }
-                    if (strcmp(method_name, "get_int") == 0) {
-                        emit("hashmap_get_int("); codegen_expr(expr->method_call.object);
-                        emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
-                    }
-                    if (strcmp(method_name, "insert_int") == 0) {
-                        emit("hashmap_insert_int("); codegen_expr(expr->method_call.object);
-                        emit(", "); codegen_expr(expr->method_call.args[0]);
-                        emit(", "); codegen_expr(expr->method_call.args[1]); emit(")"); break;
-                    }
-                    if (strcmp(method_name, "insert_string") == 0) {
-                        emit("hashmap_insert_string("); codegen_expr(expr->method_call.object);
-                        emit(", "); codegen_expr(expr->method_call.args[0]);
-                        emit(", "); codegen_expr(expr->method_call.args[1]); emit(")"); break;
-                    }
-                    if (strcmp(method_name, "remove") == 0) {
-                        emit("hashmap_remove("); codegen_expr(expr->method_call.object);
-                        emit(", "); codegen_expr(expr->method_call.args[0]); emit(")"); break;
-                    }
-                    if (strcmp(method_name, "clear") == 0) {
-                        emit("hashmap_clear("); codegen_expr(expr->method_call.object); emit(")"); break;
-                    }
-                    if (strcmp(method_name, "values") == 0) {
-                        emit("hashmap_values("); codegen_expr(expr->method_call.object); emit(")"); break;
-                    }
-                }
                 
                 // StringBuilder dispatch
                 if (strcmp(receiver_type, "stringbuilder") == 0) {
