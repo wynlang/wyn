@@ -2,12 +2,12 @@
 # A REMOTE CLIENT MUST NOT BE ABLE TO NAME A FILE DESCRIPTOR.
 #
 # THE BUG (issue #467). Http_accept / Http_read_request hand user code the string
-# "METHOD|PATH|BODY|FD" and the documented way to get the descriptor out is
+# "METHOD|PATH|BODY|FD" and the way to get the descriptor out was
 #
 #     fd = req.split_at("|", 3).to_int()
 #
-# which repos/web/src/web.wyn:69 and docs/stdlib/web.md publish verbatim. The path
-# and the body are attacker-controlled and were interpolated UNESCAPED:
+# which the `web` package and the stdlib docs published verbatim. The path and the
+# body are attacker-controlled and were interpolated UNESCAPED:
 #
 #     snprintf(result, 16384, "%s|%s|%s|%d", method, path, body, client_fd);
 #
@@ -33,8 +33,12 @@
 #
 # TWO SERVERS, because the two properties have different subjects.
 #
-# Server A is the CONCURRENT published shape - accept_fd + spawn, with the
-# descriptor taken out of the request string, which is what repos/web does. Cases:
+# Server A is the CONCURRENT shape - accept_fd + spawn, with the descriptor taken
+# out of the request string by index. It is the shape the `web` package and the docs
+# USED to publish; since #486 they publish the accessors instead, so server A is kept
+# as a BACKWARD-COMPATIBILITY subject, not as a model to copy. Splitting by index
+# still must not let a client name a descriptor, because programs written against the
+# old docs exist. Cases:
 #   1  it still serves an ordinary request                          (compatibility)
 #   2  a parked victim connection receives nothing while an attacker walks
 #      candidate descriptors 3..20                                  (the hijack)
@@ -60,10 +64,11 @@
 # Server B exists because `Http.fd` resolves the record's final field from the RIGHT
 # and so is robust against extra pipes anywhere earlier, while `split_at` is not: a
 # path or body containing a pipe shifts the index-3 field and feeds `.to_int()`
-# something non-numeric, which panics the published server. That is a SEPARATE
-# pre-existing defect - it reproduces without this change - and this gate does not
-# assert it away. What it asserts is that the accessor is a correct escape hatch,
-# which is the fix a reader can apply today.
+# something non-numeric, which panicked the server. That was issue #486, and it is
+# now RESOLVED by migration rather than by a compiler change: the `web` package, the
+# four web sample apps and every published snippet read the record through these
+# accessors, so server B is the shape the docs now publish and server A is only the
+# compatibility subject. Case 1 therefore no longer certifies a recommended idiom.
 #
 # Every wait is bounded (perl alarm; stock macOS has no `timeout`) and both servers
 # are killed on every exit path - a stray server has kernel-panicked this box twice.
@@ -158,8 +163,8 @@ fi
 
 # --- 1. the documented idiom still serves an ordinary request ------------------
 body=$(perl -e 'alarm(15); exec @ARGV' -- curl -s -m 10 "http://127.0.0.1:$APORT/hello" 2>/dev/null)
-if [ "$body" = "PAYLOAD-OK" ]; then ok "the published split_at(\"|\",3) idiom still serves a request"
-else bad "the published split_at(\"|\",3) idiom still serves a request (got [$body])"; fi
+if [ "$body" = "PAYLOAD-OK" ]; then ok "the legacy split_at(\"|\",3) idiom still serves a request"
+else bad "the legacy split_at(\"|\",3) idiom still serves a request (got [$body])"; fi
 
 # --- 2/3. a parked victim must never receive someone else's response -----------
 # The victim connects and sends NOTHING, so its handler parks in read_request and
