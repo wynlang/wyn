@@ -1,0 +1,51 @@
+// THE MAP RECEIVER'S TYPED ACCESSOR FAMILY MUST BE COMPLETE (#449).
+//
+// The receiver spelling had the whole four-name `set_*` family and only TWO of four
+// `get_*`. So one operation gave two answers depending on how it was spelled:
+//
+//     HashMap.get_bool(m, "a")   worked
+//     m.get_bool("a")            Error: map has no method 'get_bool'
+//                                  Did you mean: .set_bool()?
+//
+// The near-miss suggester offering `.set_bool()` for `.get_bool()` is what gives it
+// away: the setter was registered and the getter was not.
+//
+// The family is registered in TWO places - the receiver type rows in types.c and the
+// lowering in codegen_expr.c's map chain - and an incomplete list in either one is
+// invisible: the checker rejects a name codegen could lower, or codegen has no branch
+// for a name the checker accepts. #426 was the same defect on the `set_*` half. Until
+// #501 there was also a SECOND, unreachable copy of that chain, so the obvious place
+// to add these four did nothing at all.
+//
+// Every value here is asserted, not just the absence of an error: a missing branch
+// would be a build failure, but a branch wired to the WRONG runtime function would
+// compile and answer wrongly, and only the values catch that.
+//
+// EXPECT: get_bool a=true b=false
+// EXPECT: get_float p=1.5 q=2.5
+// EXPECT: counts 2 2
+// EXPECT: namespace agrees true 1.5
+// EXPECT: int and string siblings 7 hi
+
+fn main() {
+    // get_bool / insert_bool
+    var m = {"a": true}
+    m.insert_bool("b", false)
+    println("get_bool a=${m.get_bool("a")} b=${m.get_bool("b")}")
+
+    // get_float / insert_float
+    var f = {"p": 1.5}
+    f.insert_float("q", 2.5)
+    println("get_float p=${f.get_float("p")} q=${f.get_float("q")}")
+
+    // the inserts actually landed, rather than being accepted and dropped
+    println("counts ${m.len()} ${f.len()}")
+
+    // the two spellings of one read must agree - that disagreement IS the issue
+    println("namespace agrees ${HashMap.get_bool(m, "a")} ${HashMap.get_float(f, "p")}")
+
+    // the two names that already worked, so a change here cannot quietly break them
+    var i = {"n": 7}
+    var s = {"k": "hi"}
+    println("int and string siblings ${i.get_int("n")} ${s.get_string("k")}")
+}
