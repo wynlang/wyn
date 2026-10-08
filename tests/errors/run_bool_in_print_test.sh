@@ -122,6 +122,17 @@ ROWS=(
   'ns_col_set_contains_n|HashSet::contains(hs, "zz")|false'
   'ns_dot_map_has|HashMap.has(hm, "k")|true'
   'ns_col_map_has|HashMap::has(hm, "k")|true'
+  # --- READING A BOOL OUT OF A MAP (#448). Three spellings of one read, which rendered
+  #     three different ways: the receiver `.get()` gave true, while the namespace
+  #     `HashMap.get_bool` and the index read `bm["t"]` both gave 1. The namespace half
+  #     was the worse of the two because it survived binding to a local - there was no
+  #     workaround - and this file had NO arm for either, which is how both shipped. All
+  #     three are here now so a regression in any one of them is reported by name.
+  'map_bool_receiver_get|bm.get("t")|true'
+  'map_bool_ns_get_bool|HashMap.get_bool(bm, "t")|true'
+  'map_bool_ns_get_bool_f|HashMap.get_bool(bm, "f")|false'
+  'map_bool_index_read|bm["t"]|true'
+  'map_bool_index_read_f|bm["f"]|false'
   # --- File.exists / File.is_dir / File.is_file. These reach the runtime through
   #     File_exists / File_is_dir / File_is_file, which the slim header declared `int`
   #     while the archive defines them `bool` - so unlike the `.exists()` METHOD rows
@@ -158,7 +169,8 @@ fn main() {
     var hs = HashSet.new()
     HashSet.add(hs, "a")
     var hm = HashMap.new()
-    HashMap.set_int(hm, "k", 1)'
+    HashMap.set_int(hm, "k", 1)
+    var bm = {"t": true, "f": false}'
 
 # --- generate the four programs and their expected output -------------------
 gen() {   # gen <form> <wyn-out> <expected-out> [skip-label-regex]

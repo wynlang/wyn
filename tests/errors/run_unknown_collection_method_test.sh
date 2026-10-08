@@ -196,9 +196,15 @@ accept "HashSet.add namespace spelling" \
 # (the call must not be REJECTED) without asserting a fix that does not exist; filed
 # separately. If this line ever starts failing with `false`, that gap was fixed and this
 # expectation should be updated rather than investigated.
-accept "HashMap.get_bool namespace spelling (prints 0 - separate pre-existing gap)" \
+#
+# THAT HAPPENED (#448). HashMap.get_bool was registered with an int return type, so the
+# namespace spelling rendered 1 where the receiver spelling rendered true; registering
+# HashMap_get_bool as bool fixed it and this arm started failing with `false`, exactly as
+# predicted above. The expectation is now `false` and this arm asserts the CORRECT value
+# rather than recording a defect.
+accept "HashMap.get_bool namespace spelling renders a bool" \
   'fn main() {\n    m = {"a": true}\n    HashMap.set_bool(m, "b", false)\n    print("${HashMap.get_bool(m, "b")}")\n}' \
-  '0'
+  'false'
 
 accept "HashMap.set/get namespace spelling" \
   'fn main() {\n    m = HashMap.new()\n    HashMap.set(m, "k", 5)\n    print("${HashMap.get(m, "k")} ${HashMap.len(m)}")\n}' \

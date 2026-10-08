@@ -666,7 +666,14 @@ static const char* cg_array_elem_helper(Expr* e) {
 int cg_expr_is_bool_typed(Expr* expr) {
     if (!expr) return 0;
     if (!expr->expr_type || expr->expr_type->kind != TYPE_BOOL) return 0;
-    return expr->type == EXPR_CALL || expr->type == EXPR_METHOD_CALL;
+    // EXPR_INDEX is here for `m["k"]` on a bool-valued map, which printed 1 while the
+    // receiver spelling `m.get("k")` printed true - two renderings of one read (#448).
+    // Codegen already picks hashmap_index_bool for it, so the value type was known; only
+    // this cast was missing. Gated on expr_type being TYPE_BOOL exactly as the call
+    // shapes are, so an int or string index read is untouched, and the cast changes the
+    // C type rather than the value, leaving truthiness in an `if` alone.
+    return expr->type == EXPR_CALL || expr->type == EXPR_METHOD_CALL ||
+           expr->type == EXPR_INDEX;
 }
 
 static void codegen_expr_inner(Expr* expr);

@@ -25,8 +25,11 @@
 // EXPECT: mt str=v
 // EXPECT: ns flt=1.5
 // EXPECT: mt flt=1.5
-// EXPECT: ns bool=1
-// EXPECT: mt bool=1
+// EXPECT: ns bool=true
+// EXPECT: mt bool=true
+// (These two pinned `1` until #448: HashMap.get_bool was registered with an int
+//  return type, so the namespace spelling rendered 1 where the receiver spelling
+//  rendered true. Updated with the fix, not loosened.)
 // EXPECT: insert int=7
 // EXPECT: plain set=v
 // EXPECT: len=4

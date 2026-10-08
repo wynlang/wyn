@@ -87,7 +87,12 @@ void init_checker() {
         "https_get", "https_post",
         "hashmap_new", "hashmap_insert", "hashmap_get", "hashmap_has", "hashmap_remove", "hashmap_free",
         "hashmap_insert_int", "hashmap_insert_float", "hashmap_insert_string", "hashmap_insert_bool",
-        "hashmap_get_int", "hashmap_get_float", "hashmap_get_string", "hashmap_get_bool",
+        // hashmap_get_bool / hashmap_get_float are NOT here - they are registered with
+        // their real return types below (#448). Leaving them in this blanket list typed
+        // them `int`, so `HashMap.get_bool(m, k)` yielded 1 instead of true even when
+        // bound to a local - the same two-types-for-one-call defect already fixed for
+        // Json_get_bool, whose note is beside it.
+        "hashmap_get_int", "hashmap_get_string",
         "wyn_hashmap_new", "wyn_hashmap_insert_int", "wyn_hashmap_get_int", "wyn_hashmap_has", "wyn_hashmap_len", "wyn_hashmap_free",
         "hashset_new", "hashset_add", "hashset_contains", "hashset_remove", "hashset_free",
         "set_len", "set_is_empty", "set_clear", "set_union", "set_intersection", "set_difference", "set_is_subset", "set_is_superset",
@@ -1399,6 +1404,29 @@ void init_checker() {
         // namespace spelling still printed `1`. Json.has stays int in BOTH tables on
         // purpose - see the note beside it in types.c.
         {"Json_get_bool", 2, builtin_bool},
+        // The HashMap typed getters, for the same reason and in the same table.
+        // `HashMap.get_bool(m, k)` is a NAMESPACE call that lowers through the
+        // `hashmap_` prefix to the runtime symbol, so the lowercase name is what must
+        // carry the return type. Typed `int` by the blanket list near the top of this
+        // file, it yielded 1 rather than true - and unlike the `m["k"]` index read, the
+        // wrongness SURVIVED binding to a local, so there was no workaround (#448).
+        //
+        // This table and not the http_fns one: that table types every parameter as
+        // `string`, which would reject a map as argument 0. This table sets
+        // is_variadic and leaves params permissive, so it fixes the return type
+        // without inventing a rule that rejects working code - the failure mode a
+        // differential sweep already caught once on this exact call.
+        // BOTH SPELLINGS. The checker resolves a namespace call `HashMap.get_bool(m,k)`
+        // to the symbol `HashMap_get_bool` (checker.c builds `<Module>_<func>`), while
+        // CODEGEN lowers it to the runtime symbol `hashmap_get_bool` via the prefix
+        // table in types.c. Registering only the lowercase name typed the runtime
+        // symbol and left the call itself int - the generated C gained no (bool) cast
+        // and still printed 1. Json_get_bool above is namespace-spelled for exactly
+        // this reason; that is the half I got wrong first.
+        {"HashMap_get_bool", 2, builtin_bool},
+        {"HashMap_get_float", 2, builtin_float},
+        {"hashmap_get_bool", 2, builtin_bool},
+        {"hashmap_get_float", 2, builtin_float},
         {"Json_get_array", 2, builtin_int},
         {"Json_get_object", 2, builtin_int},
         {"File_glob", 1, builtin_string},
