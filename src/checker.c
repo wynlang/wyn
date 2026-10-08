@@ -11395,14 +11395,36 @@ bool types_equal(Type* a, Type* b) {
         case TYPE_STRUCT:
         case TYPE_ENUM:
         case TYPE_MAP:
+        // #447: TYPE_SET was missing from this list, so two IDENTICAL sets compared
+        // UNEQUAL and `var s: HashSet<T> = ...` was rejected in every form - reporting
+        // the same type on both sides, because they really were the same type. Every
+        // other annotation position installs the resolved type as the symbol's type and
+        // never reaches here; the variable declaration is the only position that compares
+        // annotation against initialiser, which is why a HashSet PARAMETER and a HashSet
+        // RETURN type always worked while the declaration the user reaches for first did
+        // not. HashMap in the identical position worked because TYPE_MAP is listed.
+        case TYPE_SET:
         case TYPE_OPTIONAL:
         case TYPE_UNION:
         case TYPE_JSON:
             // For now, just compare kinds - more detailed comparison can be added later
             return true;
-        default:
+        // Spelled out rather than left to a `default:`, which is what kept the omission
+        // above invisible: a `default:` answers for every kind nobody listed, so -Wall's
+        // -Wswitch had nothing to report. With the switch exhaustive, adding a TypeKind
+        // is a warning here instead of a silently-false comparison.
+        //
+        // These three keep TODAY's answer rather than joining the list above. No program
+        // was found that reaches this comparison with the same one of them on both sides -
+        // a `Result<T,E>` or `Option<T>` annotation resolves to a monomorphised struct
+        // family and compares as TYPE_STRUCT - and widening a type rule with no failing
+        // program to prove it is how a false ACCEPT lands.
+        case TYPE_RESULT:
+        case TYPE_GENERIC:
+        case TYPE_CHANNEL:
             return false;
     }
+    return false;
 }
 
 const char* type_to_string(Type* type) {

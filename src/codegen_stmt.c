@@ -906,6 +906,33 @@ void codegen_stmt(Stmt* stmt) {
                         c_type = "bool";
                     } else if (type_name.length == 4 && memcmp(type_name.start, "char", 4) == 0) {
                         c_type = "char";
+                    } else if (wyn_collection_c_type(type_name)) {
+                        // #447: the BUILTIN COLLECTIONS, at the one position that still
+                        // omitted them - a VARIABLE whose annotation has no type argument.
+                        // `wyn_collection_c_type`'s own comment predicted this: a name not
+                        // listed here reaches the user-struct fallback below and is emitted
+                        // VERBATIM as a C type name, so
+                        //
+                        //     var m: HashMap = HashMap.new()
+                        //
+                        // emitted `HashMap m = hashmap_new();` and died as "unknown type
+                        // name 'HashMap'; did you mean 'WynHashMap'?" - after passing
+                        // `wyn check` cleanly, which is the one thing the v1.21 soundness
+                        // rule forbids.
+                        //
+                        // The GENERIC spelling of the same declaration (`HashMap<K, V>`,
+                        // `HashSet<T>`) is a different AST shape - EXPR_CALL, handled
+                        // further up - and that branch has always mapped these. So the two
+                        // spellings of one declaration disagreed, and only the bare one was
+                        // broken. Parameters, returns and struct fields (#304) already
+                        // route through this helper; this was the last position left, and
+                        // routing it through the same helper is what keeps them agreeing by
+                        // construction rather than by coincidence.
+                        //
+                        // Pre-existing for `HashMap`, and surfaced for `HashSet` by the
+                        // checker half of #447: until that landed, a bare `HashSet`
+                        // annotation was rejected before codegen ever saw it.
+                        c_type = wyn_collection_c_type(type_name);
                     } else {
                         // Custom struct/enum type - use the type name as-is
                         static char custom_type_buf[256]; token_to_cstr(custom_type_buf, sizeof(custom_type_buf), type_name);
