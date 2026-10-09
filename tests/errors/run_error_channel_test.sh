@@ -21,6 +21,21 @@
 #    a response arrives, so after a failed call it reported the PREVIOUS request's
 #    status. The HTTPS path already reset it; plain HTTP did not.
 #
+# 4. THE CHANNEL IS READABLE UNDER THE NAME A READER WOULD GUESS, and says "" rather
+#    than NULL when nothing failed. Both halves were wrong:
+#
+#    `File.error()` did not exist - the only spelling was `last_error_get()`, which is
+#    why point 1 above could be true and the channel still have zero callers. Being
+#    able to read a reason is not the same as being able to find it.
+#
+#    And both channels returned a NULL char* when there was no error, which printf
+#    renders as the literal text `(null)`. So on the SUCCESS path a user saw `(null)`,
+#    the obvious test `if File.error() != ""` was false exactly when the call had
+#    worked, and `%s` on a null pointer is undefined behaviour besides - glibc and
+#    macOS happen to print `(null)`; a platform that does not would crash on success.
+#    api-reference.md had already published `""`, so the docs were describing code that
+#    did not exist.
+#
 # Arm 3 needs a request that FAILS without a response. It uses a port nothing is
 # listening on, obtained from the kernel and then released, so the connection is
 # refused rather than timing out - no network access and no fixed port.
@@ -167,6 +182,18 @@ else
 fn main() {
     var a = Http.get("http://127.0.0.1:$LIVE/")
     println("s1=\${http_status()}")
+    // The error value on the SUCCESS path. This used to be a NULL char*, which printf
+    // rendered as the literal text "(null)" - so \`Http.error() != ""\` was false
+    // exactly when the request had worked, and %s on a null pointer is undefined
+    // behaviour besides. "" is the contract now.
+    //
+    // NO APOSTROPHES IN THIS HEREDOC. It is UNQUOTED (<<EOF, because it interpolates
+    // the port) and it sits inside $( ), and bash 3.2 - which is what macOS ships -
+    // does not skip an unquoted heredoc body when it scans a command substitution for
+    // quotes. One apostrophe here and the whole script dies with "unexpected EOF while
+    // looking for matching" on a line 200 lines further down. Linux bash 5 parses it
+    // fine, so CI fails on the two macOS legs only.
+    println("ok_err=[\${Http.error()}]")
     // Nothing is listening here: connection refused, so there is no status at all.
     var b = Http.get("http://127.0.0.1:$DEAD/")
     println("s2=\${http_status()} elen=\${http_error().len()}")
@@ -191,8 +218,73 @@ EOF
         else
             bad "http_error() records a reason for the failure (got elen=[$elen])"
         fi
+        okerr=$(printf '%s' "$out" | sed -n 's/^ok_err=\[\(.*\)\]$/\1/p')
+        if [ "$okerr" = "" ]; then
+            ok "Http.error() is EMPTY after a successful request, not \"(null)\""
+        else
+            bad "Http.error() is empty after a successful request (got [$okerr])"
+        fi
     fi
     kill -9 "$PYSRV" 2>/dev/null
+fi
+
+# --- 4. File.error() - the channel under the name a reader of the File docs guesses --
+# The channel itself has existed for a while, but only as `last_error_get()`, and the
+# header of this gate records the consequence: ZERO callers in the repo, the site or the
+# sample apps. Being able to read it is not the same as being able to FIND it.
+out=$(run_wyn fileerr <<'EOF'
+fn main() {
+    var c = File.read("/definitely/not/here/wyn-missing.txt")
+    // The idiom the docs now publish. It only works if "" means no-error.
+    if File.error() != "" {
+        println("fail=${File.error()}")
+    } else {
+        println("fail=NONE-REPORTED")
+    }
+    File.write("/tmp/wyn-errchan-ok.txt", "hello")
+    var d = File.read("/tmp/wyn-errchan-ok.txt")
+    println("ok=${d} okerr=[${File.error()}]")
+}
+EOF
+)
+if [ "$out" = "__BUILD_FAILED__" ]; then
+    bad "File.error() is reachable from Wyn"
+    grep -iE 'error' "$TMP/fileerr.build" | head -3 | sed 's/^/          /'
+else
+    ok "File.error() is reachable from Wyn"
+    if printf '%s' "$out" | grep -qiE '^fail=.*(no such file|cannot find|not found)'; then
+        ok "File.error() reports why a failed File.read failed"
+    else
+        bad "File.error() reports why a failed File.read failed (got [$(printf '%s' "$out" | grep '^fail=' | head -1)])"
+    fi
+    # The success path. This is the arm that fails if the channel goes back to NULL:
+    # `okerr=[(null)]` rather than `okerr=[]`, and the `!= ""` test above inverts.
+    if printf '%s' "$out" | grep -q '^ok=hello okerr=\[\]$'; then
+        ok "File.error() is EMPTY after a successful File.read, not \"(null)\""
+    else
+        bad "File.error() is empty after a successful read (got [$(printf '%s' "$out" | grep '^ok=' | head -1)])"
+    fi
+    # By value, across the whole output: "(null)" is the exact text the old NULL return
+    # produced, and it is what a user would have had to compare against.
+    if printf '%s' "$out" | grep -q '(null)'; then
+        bad "no error channel renders as the literal \"(null)\""
+    else
+        ok "no error channel renders as the literal \"(null)\""
+    fi
+fi
+
+# File.error takes NO argument. It is registered with reg_fn rather than the permissive
+# builtin table, so the arity is checked; the table sets is_variadic and would accept
+# `File.error(path)` and then emit a call C cannot type.
+cat > "$TMP/arity.wyn" <<'EOF'
+fn main() {
+    println(File.error("/some/path"))
+}
+EOF
+if TMPDIR="$TMP" perl -e 'alarm(60); exec @ARGV' -- "$WYN" check "$TMP/arity.wyn" > "$TMP/arity.log" 2>&1; then
+    bad "File.error(path) is rejected - it takes no argument (it type-checked)"
+else
+    ok "File.error(path) is rejected - it takes no argument"
 fi
 
 echo ""
