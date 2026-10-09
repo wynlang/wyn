@@ -182,10 +182,17 @@ else
 fn main() {
     var a = Http.get("http://127.0.0.1:$LIVE/")
     println("s1=\${http_status()}")
-    // The SUCCESS path's error value. This used to be a NULL char*, which printf
+    // The error value on the SUCCESS path. This used to be a NULL char*, which printf
     // rendered as the literal text "(null)" - so \`Http.error() != ""\` was false
     // exactly when the request had worked, and %s on a null pointer is undefined
     // behaviour besides. "" is the contract now.
+    //
+    // NO APOSTROPHES IN THIS HEREDOC. It is UNQUOTED (<<EOF, because it interpolates
+    // the port) and it sits inside $( ), and bash 3.2 - which is what macOS ships -
+    // does not skip an unquoted heredoc body when it scans a command substitution for
+    // quotes. One apostrophe here and the whole script dies with "unexpected EOF while
+    // looking for matching" on a line 200 lines further down. Linux bash 5 parses it
+    // fine, so CI fails on the two macOS legs only.
     println("ok_err=[\${Http.error()}]")
     // Nothing is listening here: connection refused, so there is no status at all.
     var b = Http.get("http://127.0.0.1:$DEAD/")
