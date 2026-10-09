@@ -883,6 +883,133 @@ static EnumStmt* find_enum_for_bare_variant(Token variant, int* out_vi) {
     return NULL;
 }
 
+// #489: a PAYLOAD-CARRYING variant named WITHOUT arguments is that variant's
+// constructor function, not a value of the enum - and every spelling of it used to pass
+// `wyn check`:
+//
+//   enum Shape { Circle(float), Point }
+//   Shape.Circle            check OK -> build error, "passing 'Shape (double)' to
+//                                      parameter of incompatible type 'Shape'"
+//   Shape::Circle           check OK -> BUILDS, and `Shape::Circle.to_string()` printed
+//                                      4346888: the constructor's ADDRESS as a decimal,
+//                                      at exit 0. The worst of the three.
+//   Circle (bare)           check OK -> build error, "'Circle' undeclared"
+//
+// `wyn check` passing on a program that cannot build is the one contract `check` exists
+// to provide, and README.md published `print(Shape.Circle.to_string())` as a feature.
+// The `::` spelling is the same shape as the `none` ident bug recorded in case EXPR_IDENT
+// below, which printed `WynOptional* none(void)`'s address as 4302194004.
+//
+// ONE function, called from the two places a variant name can be typed as a value - the
+// qualified EXPR_FIELD_ACCESS path and the EXPR_IDENT path that both the `::` and the
+// bare spellings fold into - so the message and the rule have one copy rather than one
+// per spelling. Constructor CALLS never arrive here: `Shape.Circle(1.0)`,
+// `Shape::Circle(1.0)` and bare `Circle(1.0)` are each resolved inside case EXPR_CALL,
+// which looks the constructor symbol up itself and returns without check_expr-ing its
+// callee. A payload-FREE variant stays a legal value, which is why this tests
+// variant_type_counts rather than rejecting bare variant names.
+//
+// DEDUPED ON THE TOKEN'S SOURCE POINTER. Some positions are check_expr'd twice (the
+// receiver of a method call is), and nothing in this checker dedupes diagnostics, so the
+// first version of this rule printed the same error twice for one occurrence. Two passes
+// over one node see the SAME `variant_name.start` pointer, while two different
+// occurrences cannot, which makes the pointer an exact key rather than a heuristic.
+// `sep` is the spelling the AUTHOR used - "." , "::" or "" for a bare variant name - and
+// the message is rendered in it. Quoting `Shape.Circle` at someone who wrote
+// `Shape::Circle`, or at someone who wrote bare `Circle`, hands them a second edit to
+// work out; the namespace suggester in this file carries the same parameter for the same
+// reason, after telling a `Time::millis()` author to write `DateTime.millis()`.
+static bool reject_payload_variant_as_value(Token enum_name, Token variant_name,
+                                            EnumStmt* ed, int vi, const char* sep) {
+    if (!ed || !ed->variant_type_counts || vi < 0 || vi >= ed->variant_count) return false;
+    int np = ed->variant_type_counts[vi];
+    if (np <= 0) return false;
+    if (!sep) sep = ".";
+
+    static const char* reported[256];
+    static int reported_n = 0;
+    for (int i = 0; i < reported_n; i++)
+        if (reported[i] == variant_name.start) return true;   // same occurrence, already said
+    if (reported_n < (int)(sizeof(reported) / sizeof(reported[0])))
+        reported[reported_n++] = variant_name.start;
+
+    // The name as the author wrote it: "Shape.Circle", "Shape::Circle", or bare "Circle".
+    char shown[192];
+    if (*sep)
+        snprintf(shown, sizeof(shown), "%.*s%s%.*s", enum_name.length, enum_name.start, sep,
+                 variant_name.length, variant_name.start);
+    else
+        snprintf(shown, sizeof(shown), "%.*s", variant_name.length, variant_name.start);
+
+    // Spell the payload types when they are plain names, so the message shows the call
+    // the author actually wants rather than just an arity.
+    char sig[224]; size_t o = 0;
+    o += (size_t)snprintf(sig + o, sizeof(sig) - o, "%s(", shown);
+    for (int k = 0; k < np && o < sizeof(sig) - 8; k++) {
+        Expr* t = (ed->variant_types && ed->variant_types[vi]) ? ed->variant_types[vi][k] : NULL;
+        const char* sep = k ? ", " : "";
+        if (t && t->type == EXPR_IDENT)
+            o += (size_t)snprintf(sig + o, sizeof(sig) - o, "%s%.*s", sep,
+                                  t->token.length, t->token.start);
+        else
+            o += (size_t)snprintf(sig + o, sizeof(sig) - o, "%s...", sep);
+    }
+    snprintf(sig + o, sizeof(sig) - o, ")");
+
+    char head[320], help[480];
+    snprintf(head, sizeof(head),
+             "'%s' carries a payload, so it is a constructor and not a value", shown);
+    snprintf(help, sizeof(help),
+             "'%.*s' is declared with %d value%s, so naming it on its own does not make a "
+             "'%.*s' - call it to build one. A variant with no payload is a value and can "
+             "be written bare.",
+             variant_name.length, variant_name.start, np, np == 1 ? "" : "s",
+             enum_name.length, enum_name.start);
+    report_unknown_method(variant_name.line, head, sig, help);
+    had_error = true;
+    return true;
+}
+
+// #489, the EXPR_IDENT spellings. The parser folds `Shape::Circle` into ONE identifier
+// whose text is "Shape::Circle", and a bare `Circle` is an identifier too, so both reach
+// the checker as a name rather than as a member access. Resolves the name to its enum and
+// variant index, or returns NULL.
+//
+// THE ENUM'S OWN NAME MUST NOT MATCH. `Shape` resolves to a TYPE_ENUM symbol exactly as a
+// variant does, and it is a legal identifier in an annotation, so a rule keyed only on
+// "the symbol is an enum" would reject every type reference in the program.
+static EnumStmt* enum_variant_named_by_ident(Token tok, int* out_vi, Token* out_enum,
+                                             Token* out_variant) {
+    int sep = -1;
+    for (int i = 0; i + 1 < tok.length; i++)
+        if (tok.start[i] == ':' && tok.start[i+1] == ':') { sep = i; break; }
+    if (sep > 0) {
+        Token ename   = {TOKEN_IDENT, tok.start, sep, tok.line};
+        Token vname   = {TOKEN_IDENT, tok.start + sep + 2, tok.length - sep - 2, tok.line};
+        EnumStmt* ed = find_enum_definition(ename);
+        if (!ed || !ed->variants) return NULL;
+        for (int vi = 0; vi < ed->variant_count; vi++) {
+            Token v = ed->variants[vi];
+            if (v.length == vname.length && memcmp(v.start, vname.start, v.length) == 0) {
+                if (out_vi) *out_vi = vi;
+                if (out_enum) *out_enum = ename;
+                if (out_variant) *out_variant = vname;
+                return ed;
+            }
+        }
+        return NULL;
+    }
+    // Bare. An identifier that names the ENUM is a type reference, not a variant.
+    if (find_enum_definition(tok)) return NULL;
+    int vi = -1;
+    EnumStmt* ed = find_enum_for_bare_variant(tok, &vi);
+    if (!ed || vi < 0) return NULL;
+    if (out_vi) *out_vi = vi;
+    if (out_enum) *out_enum = ed->name;
+    if (out_variant) *out_variant = tok;
+    return ed;
+}
+
 // Does enum `from` reach enum `target` through a chain of enum-typed variant
 // payloads? Used to detect a MUTUALLY-recursive enum cycle
 // (enum A{AtoB(B)} enum B{BtoA(A)}), which codegen cannot yet represent: the
@@ -3337,6 +3464,17 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                 return NULL;
             }
             mark_used(scope, expr->token);
+            // #489: `Shape::Circle` and bare `Circle` as a VALUE. Both fold into this
+            // identifier path, and the `::` one was the worst spelling of the defect -
+            // it BUILT, and printed the constructor's address as a decimal at exit 0.
+            // See reject_payload_variant_as_value. Constructor calls do not reach here.
+            if (sym->type && sym->type->kind == TYPE_ENUM) {
+                int _vi = -1; Token _en, _vn;
+                EnumStmt* _ed = enum_variant_named_by_ident(expr->token, &_vi, &_en, &_vn);
+                // "::" when the author qualified it, "" when the name was bare.
+                if (_ed) reject_payload_variant_as_value(_en, _vn, _ed, _vi,
+                                                         _vn.start != expr->token.start ? "::" : "");
+            }
             expr->expr_type = sym->type;  // Store type in AST
             return sym->type;
         }
@@ -6916,6 +7054,49 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                     expr->field_access.is_enum_access = true;
                     // For data enums, return the enum type (it's a constructor)
                     if (object_type && object_type->kind == TYPE_ENUM) {
+                        // #489: a PAYLOAD-CARRYING variant named without arguments is
+                        // that constructor FUNCTION, not a value of the enum. The line
+                        // above returns the enum type regardless - its own comment says
+                        // "it's a constructor" - so `Shape.Circle` type-checked as a
+                        // `Shape` and codegen then emitted the function designator
+                        // `Shape_Circle` wherever a value was wanted:
+                        //
+                        //   enum Shape { Circle(float), Point }
+                        //   print(Shape.Circle.to_string())
+                        //     wyn check: no errors
+                        //     wyn build: passing 'Shape (double)' to parameter of
+                        //                incompatible type 'Shape'
+                        //
+                        // `wyn check` passing on a program that cannot build is the one
+                        // contract `check` exists to provide, and README.md published
+                        // that exact line as a feature.
+                        //
+                        // ONE rule here rather than one per position: every position the
+                        // issue lists - method receiver, call argument, comparison,
+                        // variable initialiser, return, interpolation - evaluates the
+                        // variant as an expression and so arrives at this branch. The
+                        // qualified CONSTRUCTOR CALL `Shape.Circle(1.0)` does not: it is
+                        // resolved in case EXPR_CALL (the "enum constructor calls"
+                        // branch), which looks `Shape_Circle` up itself and returns
+                        // without ever check_expr-ing its callee.
+                        //
+                        // A payload-FREE variant (`Shape.Point`) is a genuine value and
+                        // stays legal - that is the control arm, and it is why the rule
+                        // tests variant_type_counts rather than rejecting bare variants.
+                        // The message and the arity test live in one shared function
+                        // (above find_enum_for_bare_variant) that the EXPR_IDENT
+                        // spellings call too.
+                        EnumStmt* _ed = find_enum_definition(enum_name);
+                        if (_ed && _ed->variants) {
+                            for (int _vi = 0; _vi < _ed->variant_count; _vi++) {
+                                Token _v = _ed->variants[_vi];
+                                if (_v.length != member_name.length ||
+                                    memcmp(_v.start, member_name.start, _v.length) != 0)
+                                    continue;
+                                reject_payload_variant_as_value(enum_name, member_name, _ed, _vi, ".");
+                                break;
+                            }
+                        }
                         expr->expr_type = object_type;
                         return object_type;
                     }

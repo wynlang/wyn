@@ -693,6 +693,8 @@ test: wyn $(MBEDTLS_LIB) runtime/libwyn_rt.a
 	@WYN=./wyn bash tests/errors/run_http_fd_injection_test.sh
 	@echo "=== Running HTTP client status/error reachability gate ==="
 	@WYN=./wyn bash tests/errors/run_http_client_status_test.sh
+	@echo "=== Running enum payload-variant-as-value gate ==="
+	@WYN=./wyn bash tests/errors/run_enum_variant_value_test.sh
 	@echo "=== Running test-port hygiene gate (no test may bind a fixed port) ==="
 	@WYN=./wyn bash tests/errors/run_test_port_hygiene_test.sh
 	@echo "=== Running v1.21 ACCEPTANCE gate ==="
