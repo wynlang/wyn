@@ -360,6 +360,46 @@ static void cg_assign_rhs_with_target_family(Expr* assign) {
     current_assign_target_kind = _prev;
 }
 
+// #450: emit call argument `i`, with the CALLEE'S DECLARED PARAMETER naming the family
+// for a bare `Ok(x)` / `Err(x)` / `Some(x)` / `None`.
+//
+//     fn take(r: Result<int, string>) -> int { ... }
+//     take(Err("bad"))
+//
+// A bare constructor has no family of its own, and wyn_option_ctor_kind falls back to
+// naming one after the PAYLOAD when nothing sets a target - so this emitted
+// `ResultString_Err(...)` into a `ResultInt` parameter. The checker passed it and clang
+// rejected it, which reached the user as `internal codegen error` on ordinary code.
+// `take(Ok(5))` was unaffected because an int ok payload names ResultInt anyway.
+//
+// Scoped to the four bare constructor spellings on purpose: every other argument emits
+// exactly as before, so this cannot retype an argument that was already correct. The
+// struct-literal path (get_struct_field_option_family, further down this file) solves the
+// same problem for a field and is the precedent for the shape; wyn_option_ctor_kind
+// already prefers current_assign_target_kind, so nothing there needs to change.
+//
+// Save/restore rather than set-and-leave: an argument list can hold several
+// constructors - `pair(Ok(1), Err("x"))` - and a leaked context would name the second
+// one's family from the first one's parameter.
+static void cg_call_arg_with_param_family(Expr* call, int i) {
+    Expr* arg = call->call.args[i];
+    bool is_bare_ctor = arg && (arg->type == EXPR_OK || arg->type == EXPR_ERR ||
+                                arg->type == EXPR_SOME || arg->type == EXPR_NONE);
+    if (!is_bare_ctor || !call->call.callee || call->call.callee->type != EXPR_IDENT) {
+        codegen_expr(arg);
+        return;
+    }
+    extern const char* current_assign_target_kind;
+    extern int get_fn_param_optlike_family(const char*, int, char*, size_t);
+    const char* _prev = current_assign_target_kind;
+    char _fn[160]; token_to_cstr(_fn, sizeof(_fn), call->call.callee->token);
+    char _fam[128];
+    if (get_fn_param_optlike_family(_fn, i, _fam, sizeof(_fam)))
+        current_assign_target_kind = _fam;
+    codegen_expr(arg);
+    current_assign_target_kind = _prev;
+}
+
 static const char* wyn_option_ctor_kind(Expr* e, const char* kind) {
     extern const char* current_assign_target_kind;
     extern const char* current_fn_return_kind;
@@ -2785,7 +2825,7 @@ static void codegen_expr_inner(Expr* expr) {
                             }
                         }
                     }
-                    codegen_expr(expr->call.args[i]);
+                    cg_call_arg_with_param_family(expr, i);
                     arg_done: ;
                 }
                 // Fill in default arguments if fewer args provided (skip if named args handled it)

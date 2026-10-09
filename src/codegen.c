@@ -2007,6 +2007,68 @@ int get_struct_field_option_family(const char* struct_name, const char* field_na
     return 0;
 }
 
+// #450: the Option/Result family that function `fn_name`'s parameter `param_index` is
+// DECLARED with, or 0 if that parameter is not an Option/Result.
+//
+// Why this is needed. A bare `Ok(x)` / `Err(x)` / `Some(x)` has no type of its own - the
+// family is chosen for it, by wyn_option_ctor_kind, which prefers
+// current_assign_target_kind, then current_fn_return_kind, and only then falls back to
+// naming the family after THE PAYLOAD. In an argument position nothing used to set either
+// of the first two, so the payload won:
+//
+//     fn take(r: Result<int, string>) -> int { ... }
+//     take(Err("bad"))   // -> ResultString_Err(...) passed to a ResultInt parameter
+//
+// which the checker accepted and clang rejected, reaching the user as `internal codegen
+// error`. `take(Ok(5))` happened to work because an int ok payload names ResultInt
+// anyway - which is why the obvious repro says "fixed" and the Err arm is the real test.
+//
+// Same shape, and the same reason, as get_struct_field_option_family above: the AST
+// declaration in current_program is the authority, because the parameter ANNOTATION is
+// what the emitted C signature was built from (wyn_result_family_c_type is the one
+// function both the forward declaration and the definition use, so asking it here keeps
+// the call site in step with the signature by construction rather than by agreement).
+int get_fn_param_optlike_family(const char* fn_name, int param_index,
+                                char* out, size_t outsz) {
+    extern Program* current_program;
+    if (!current_program || !fn_name || !out || outsz == 0 || param_index < 0) return 0;
+    for (int i = 0; i < current_program->count; i++) {
+        Stmt* s = current_program->stmts[i];
+        if (s->type == STMT_EXPORT && s->export.stmt) s = s->export.stmt;
+        if (s->type != STMT_FN) continue;
+        if ((int)strlen(fn_name) != s->fn.name.length ||
+            memcmp(fn_name, s->fn.name.start, s->fn.name.length) != 0) continue;
+        if (param_index >= s->fn.param_count || !s->fn.param_types) return 0;
+        Expr* ann = s->fn.param_types[param_index];
+        if (!ann) return 0;
+        // `r: Result<T, E>` - parsed as a call on the identifier `Result`.
+        if (ann->type == EXPR_CALL && ann->call.callee &&
+            ann->call.callee->type == EXPR_IDENT &&
+            ann->call.callee->token.length == 6 &&
+            memcmp(ann->call.callee->token.start, "Result", 6) == 0) {
+            extern void wyn_result_family_c_type(Expr*, char*, size_t);
+            wyn_result_family_c_type(ann, out, outsz);
+            return 1;
+        }
+        // `o: T?` and the generic spelling `o: Option<T>`, as get_struct_field_option_family
+        // handles for a field.
+        Expr* inner = NULL;
+        if (ann->type == EXPR_OPTIONAL_TYPE) inner = ann->optional_type.inner_type;
+        else if (ann->type == EXPR_CALL && ann->call.callee &&
+                 ann->call.callee->type == EXPR_IDENT &&
+                 ann->call.callee->token.length == 6 &&
+                 memcmp(ann->call.callee->token.start, "Option", 6) == 0 &&
+                 ann->call.arg_count == 1) inner = ann->call.args[0];
+        if (inner && inner->type == EXPR_IDENT) {
+            char _tn[96]; token_to_cstr(_tn, sizeof(_tn), inner->token);
+            snprintf(out, outsz, "%s", wyn_option_family(_tn, NULL, NULL));
+            return 1;
+        }
+        return 0;
+    }
+    return 0;
+}
+
 // Does struct `struct_name` declare field `field_name` with a FUNCTION type
 // (`on_click: fn() -> void`)? Returns the field's type expression so the caller
 // can read the parameter/return types, or NULL.
