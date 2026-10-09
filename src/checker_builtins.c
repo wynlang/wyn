@@ -1214,6 +1214,22 @@ void init_checker() {
     // Http.respond_html(fd, status, html_string)
     reg_fn("Http_respond_html", builtin_void, 3, builtin_int, builtin_int, builtin_string);
     reg_fn("Http_set_header", builtin_void, 2, builtin_string, builtin_string);
+    // Http.status() / Http.error() take NO argument: they report the most recent
+    // Http.get/post/put/delete on this thread, which is the only status the string
+    // client API ever has (src/types.c lowers them to http_status/http_error).
+    //
+    // They used to be 1-arg accessors over net_advanced.c's HttpResponse*, a struct
+    // no Wyn expression can produce, so `Http.status(resp)` read a string's bytes AS
+    // that struct and returned 1347634514 - 0x50545448, the ASCII "HTTP" off the
+    // front of the response - at exit 0. `Http.header` is now registered NOWHERE and
+    // its C symbol is gone: once http_get() returns, the headers have been parsed and
+    // dropped, so there is nothing a reachable Http.header could read. See #508.
+    //
+    // reg_fn and not the {name, arity, ret} table below: that table sets
+    // is_variadic = true, which turns off the ARITY check as well as the parameter
+    // types, and `Http.status(resp)` has to be rejected rather than reaching codegen.
+    reg_fn("Http_status", builtin_int, 0);
+    reg_fn("Http_error", builtin_string, 0);
 
     // Url namespace
     reg_fn("Url_encode", builtin_string, 1, builtin_string);
@@ -1460,8 +1476,9 @@ void init_checker() {
         {"Db_error", 1, builtin_string},
         {"Db_last_insert_id", 1, builtin_int},
         {"Http_body", 1, builtin_string},
-        {"Http_header", 2, builtin_string},
-        {"Http_status", 1, builtin_int},
+        // Http_status / Http_error are NOT in this table - they are registered with
+        // reg_fn above, because this table sets is_variadic and so checks no arity.
+        // Http_header is registered nowhere: see the note above. (#508)
         {"Http_ctx_fd", 1, builtin_int},
         {"Http_set_timeout", 1, builtin_void},
         {"Http_close_server", 1, builtin_void},
