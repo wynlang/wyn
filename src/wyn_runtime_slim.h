@@ -203,9 +203,11 @@ void Http_respond(long long client_fd, long long status, const char* content_typ
 void Http_respond_json(long long client_fd, long long status, const char* json);
 void Http_close_client(long long client_fd);
 void Http_close_server(int fd);
-// Client-side response accessors - net_advanced.c:225-230, same spelling as
-// wyn_runtime.h:279-280. HttpResponse is forward-declared above.
-int Http_status(HttpResponse* resp);
+// Client-side response accessors. Http_status and Http_header are DELETED here and in
+// wyn_runtime.h - a declaration was what let `Http.status(resp)`/`Http.header(resp, n)`
+// type-check over an HttpResponse* no Wyn expression produces (#508). Http.status and
+// Http.error lower to the string API's zero-argument http_status/http_error, declared
+// below with the rest of that API.
 // Http_body is void*, not HttpResponse*: `Http.body` is also the spelling a reader
 // reaches for on an Http.accept REQUEST, and taking HttpResponse* meant it dereferenced
 // the request STRING and crashed on the first request (#507). It discriminates the two at
@@ -1375,7 +1377,6 @@ char* Crypto_sha1_base64(const char* data);
 HttpResponse* Http_post(const char* url, const char* body, const char* content_type);
 char* Http_read_request(long long client_fd_ll);
 char* Http_req_body(const char* raw);
-const char* Http_header(HttpResponse* resp, const char* name);
 long long Http_fd(const char* raw);
 long long Http_accept_fd(int server_fd);
 // Http_free takes void* so it can tell an Http.get RESPONSE from an Http.accept
