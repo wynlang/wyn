@@ -4490,7 +4490,16 @@ Type* check_expr(Expr* expr, SymbolTable* scope) {
                         Symbol* _g = find_symbol(global_scope, expr->call.callee->token);
                         while (_g && _g != best_match) _g = _g->next_overload;
                         if (_g == best_match && _g != NULL) {
-                            expr->call.selected_overload = (void*)best_match;
+                            // The two FACTS, not the pointer. Storing `best_match`
+                            // here was a use-after-free: add_symbol reallocs the
+                            // symbol ARRAY, so this Symbol* dangled as soon as any
+                            // later symbol was registered, and codegen emitted the
+                            // freed block's bytes as the callee's name. See
+                            // WynSelectedOverload in ast.h for the measured symptom.
+                            WynSelectedOverload* _sel = malloc(sizeof *_sel);
+                            _sel->mangled = best_match->mangled_name;
+                            _sel->multi   = (best_match->next_overload != NULL);
+                            expr->call.selected_overload = (void*)_sel;
                         }
                     }
                     {

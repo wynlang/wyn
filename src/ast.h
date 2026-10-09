@@ -78,12 +78,40 @@ typedef struct {
     bool is_not_in;  // op==TOKEN_IN: true means `not in` (negated membership)
 } BinaryExpr;
 
+// The checker's chosen overload, as the two FACTS codegen needs rather than as a
+// `Symbol*`. It used to be the pointer, and that was a use-after-free: `add_symbol`
+// grows the symbol table with `realloc(scope->symbols, ...)` on an array of Symbol
+// STRUCTS BY VALUE, so every Symbol* handed out earlier dangles as soon as one more
+// symbol is registered. Codegen then read `overload->mangled_name` out of the freed
+// block and emitted whatever bytes were there as the callee's name:
+//
+//     long long a = ({ ResultInt __try_1 = p\xAA5(x, 2); ... });   // was `divide`
+//
+// gcc called that "stray '\252' in program", and the count of corrupted names varied
+// between runs of the same input. The dangerous case is not this one: a garbage name
+// that happens to be a VALID C identifier compiles and calls the wrong function.
+//
+// `mangled` is safe to hold because generate_mangled_name() returns its own malloc'd
+// string - only the Symbol struct moves, never the characters. `multi` is captured at
+// selection time, when the overload chain for that name is already complete (all
+// top-level signatures are registered before any body is checked).
+//
+// NOTHING MAY STORE A Symbol* ACROSS PHASES. checker.c already guarded this field once,
+// for a different lifetime bug - a fn-typed local whose Symbol lived in a scope that was
+// gone by codegen - which is the same lesson from the other end.
+typedef struct {
+    const char* mangled;  // may be NULL: only overloaded names get a mangled spelling
+    bool multi;           // the name had more than one overload
+} WynSelectedOverload;
+
 typedef struct {
     Expr* callee;
     Expr** args;
     int arg_count;
     Token* arg_names;  // Named arguments: arg_names[i].length > 0 means named
-    void* selected_overload;  // T1.5.3: Selected function overload (void* to avoid circular dependency)
+    // T1.5.3: Selected function overload - a WynSelectedOverload* (void* to avoid a
+    // circular dependency), NOT a Symbol*. See WynSelectedOverload above.
+    void* selected_overload;
 } CallExpr;
 
 typedef struct {
