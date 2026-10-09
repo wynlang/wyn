@@ -221,11 +221,16 @@ HttpResponse* Http_post(const char* url, const char* body, const char* content_t
     return parse_http_response(buffer);
 }
 
-// Get response status
-int Http_status(HttpResponse* resp) {
-    return resp ? resp->status_code : 0;
-}
-
+// Http_status(HttpResponse*) IS GONE, and so is Http_header below. They were
+// UNREACHABLE: `Http.get` lowers to the lowercase string `http_get()`, so no Wyn
+// expression ever held an HttpResponse*. What they did instead was type-check against
+// the response STRING and read its bytes as that struct - Http.status returned
+// 1347634514 (0x50545448, the ASCII "HTTP") at exit 0, and Http.header SIGSEGV'd.
+// Deleting them is what makes the checker reject both calls, because it decides a
+// namespace method exists by asking whether the runtime header declares its symbol.
+// Http.status/Http.error now lower to the string API's zero-argument http_status()/
+// http_error(), which have tracked http_last_status/http_last_error all along. See #508.
+//
 // The body of either an Http.get/post RESPONSE or an Http.accept REQUEST.
 //
 // THE BUG (#507): this took an HttpResponse* and dereferenced it, while the Wyn name
@@ -284,28 +289,9 @@ const char* Http_body(void* p) {
     return resp->body ? resp->body : "";
 }
 
-// Get response header
-const char* Http_header(HttpResponse* resp, const char* name) {
-    if (!resp || !resp->headers) return "";
-    
-    char search[256];
-    snprintf(search, sizeof(search), "%s:", name);
-    
-    const char* found = strstr(resp->headers, search);
-    if (!found) return "";
-    
-    found += strlen(search);
-    while (*found == ' ') found++;
-    
-    static char value[512];
-    int i = 0;
-    while (*found && *found != '\r' && *found != '\n' && i < 511) {
-        value[i++] = *found++;
-    }
-    value[i] = '\0';
-    
-    return value;
-}
+// Http_header(HttpResponse*, const char*) IS GONE - see the note above Http_body.
+// It was the SIGSEGV half of #508: strstr over resp->headers, where resp was really
+// the response string, so the "headers pointer" was four bytes of the body.
 
 // Release either an Http.get/post RESPONSE or an Http.accept REQUEST.
 //

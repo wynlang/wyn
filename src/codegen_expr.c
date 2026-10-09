@@ -2631,12 +2631,17 @@ static void codegen_expr_inner(Expr* expr) {
                         }
                         // T1.5.3: Use mangled name only for actually overloaded functions
                         if (expr->call.selected_overload && !_callee_is_lambda_var) {
-                            Symbol* overload = (Symbol*)expr->call.selected_overload;
+                            // A WynSelectedOverload*, NOT a Symbol* - the Symbol* this
+                            // used to be was freed by add_symbol's realloc of the symbol
+                            // array, and the name emitted below came out of the freed
+                            // block. See WynSelectedOverload in ast.h.
+                            WynSelectedOverload* overload =
+                                (WynSelectedOverload*)expr->call.selected_overload;
                             // Only use mangled name if there are multiple overloads
                             // AND this is not an internal module call (see above).
-                            if (overload->mangled_name && overload->next_overload
+                            if (overload->mangled && overload->multi
                                 && !_resolves_to_internal_module_fn) {
-                                emit("%s", overload->mangled_name);
+                                emit("%s", overload->mangled);
                             } else {
                                 // Check if we're in a module and need to prefix
                                 // BUT: don't prefix if the callee is already module-qualified (contains ::)

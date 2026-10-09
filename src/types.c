@@ -1386,6 +1386,12 @@ static const WynNsRename wyn_ns_renames[] = {
     {"Http", "put",        "http_put"},
     {"Http", "delete",     "http_delete"},
     {"Http", "set_header", "http_set_header"},
+    // ...and so are its status and error, which belong to that same string API:
+    // they report the last request on this thread. Without these two lines they
+    // mangled to net_advanced.c's Http_status/Http_error over an HttpResponse*
+    // that no Wyn expression produces. See #508.
+    {"Http", "status",     "http_status"},
+    {"Http", "error",      "http_error"},
     // HashMap: the runtime spells the setters hashmap_insert_*, and `get` defaults
     // to the string flavour.
     {"HashMap", "get",        "hashmap_get_string"},

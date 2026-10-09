@@ -278,12 +278,16 @@ int Test_summary();
 typedef struct HttpResponse HttpResponse;
 // Http_get defined below
 HttpResponse* Http_post(const char* url, const char* body, const char* content_type);
-int Http_status(HttpResponse* resp);
+// Http_status and Http_header are DELETED, not declared-and-unused. The checker asks
+// this header whether a namespace call's C symbol exists, so a declaration here is
+// what made `Http.status(resp)` and `Http.header(resp, name)` type-check - over an
+// HttpResponse* that no Wyn expression can produce. Http.status/Http.error now lower
+// to the string API's zero-argument http_status()/http_error(); there is no reachable
+// Http.header, because http_get() drops the headers. See #508.
 // Http_body takes void* for the SAME reason Http_free does (see below): `Http.body` is
 // the spelling a reader reaches for on an Http.accept REQUEST as well as on a response,
 // and it used to dereference a request string as an HttpResponse* (#507).
 const char* Http_body(void* p);
-const char* Http_header(HttpResponse* resp, const char* name);
 // Http_free takes void* so it can tell an Http.get RESPONSE from an Http.accept
 // REQUEST at run time via the RC header magic - see net_advanced.c. It used to
 // take HttpResponse* and dereference a request string (#476).
