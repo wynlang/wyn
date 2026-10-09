@@ -691,6 +691,8 @@ test: wyn $(MBEDTLS_LIB) runtime/libwyn_rt.a
 	@WYN=./wyn bash tests/errors/run_http_two_requests_test.sh
 	@echo "=== Running HTTP response-descriptor injection gate ==="
 	@WYN=./wyn bash tests/errors/run_http_fd_injection_test.sh
+	@echo "=== Running generic concrete-return-type gate ==="
+	@WYN=./wyn bash tests/errors/run_generic_concrete_return_test.sh
 	@echo "=== Running test-port hygiene gate (no test may bind a fixed port) ==="
 	@WYN=./wyn bash tests/errors/run_test_port_hygiene_test.sh
 	@echo "=== Running v1.21 ACCEPTANCE gate ==="
