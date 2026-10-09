@@ -26,12 +26,17 @@
 # ResultString / ResultFloat / ResultBool / Result<Struct>) and a fix that handled only the
 # int family would pass the issue's own reproduction while leaving the rest broken.
 #
-# A KNOWN LIMITATION IS PINNED AT THE BOTTOM, deliberately, so this gate cannot be read as
-# proving more than it does: a BARE `Err("x")` written directly as a call argument still
-# fails, because a bare constructor takes its family from its payload when no context
-# names one - `Err("x")` names ResultString where the parameter is ResultInt. That is a
-# constructor-context gap in wyn_option_ctor_kind, not in the annotation, and it is filed
-# separately. Passing an Err that came from a typed source works and is asserted.
+# THE LIMITATION THIS GATE USED TO PIN IS NOW FIXED, and its arms are at the bottom (#450).
+# A BARE `Err("x")` written directly as a call argument used to fail, because a bare
+# constructor takes its family from its payload when no context names one - `Err("x")`
+# names ResultString where the parameter is ResultInt - and the result was `internal
+# codegen error` on ordinary user code. The call-argument path now sets
+# current_assign_target_kind from the callee's DECLARED parameter, the way the
+# struct-literal path already did per field.
+#
+# Read the #450 arms with one thing in mind: `take(Ok(5))` passed throughout, because an
+# int ok payload names ResultInt anyway. Only the Err arms, and the non-int ok families,
+# ever distinguished the bug from the fix.
 set -uo pipefail
 WYN="${WYN:-./wyn}"
 WYNABS=$(cd "$(dirname "$WYN")" && pwd)/$(basename "$WYN")
@@ -119,6 +124,50 @@ expect "return-type Result still works for every family" \
 expect "return-type Result<Struct, E> still works" \
   'struct Q { v: int }\nfn mk() -> Result<Q, string> { return Ok(Q { v: 3 }) }\nfn main() { print("${mk().unwrap().v}") }' \
   '3'
+
+# ------------------ #450: A BARE CONSTRUCTOR AS A CALL ARGUMENT TAKES THE PARAMETER'S FAMILY
+# Each of these was `internal codegen error` before the fix, except where noted. The
+# `Ok(...)` arms are controls: an int ok payload already named ResultInt, so an arm built
+# only on `take(Ok(5))` would have passed against the bug.
+expect "#450 the reported repro: a bare Err as a call argument" \
+  'fn take(r: Result<int, string>) -> int {\n    if r.is_ok() { return r.unwrap() }\n    return -1\n}\nfn main() { print("${take(Err("bad"))}") }' \
+  '-1'
+
+expect "#450 control: a bare Ok as a call argument (passed before the fix too)" \
+  'fn take(r: Result<int, string>) -> int {\n    if r.is_ok() { return r.unwrap() }\n    return -1\n}\nfn main() { print("${take(Ok(5))}") }' \
+  '5'
+
+# The ok payload here is NOT int, so the family is not ResultInt and the Ok arm is a real
+# test rather than a coincidence.
+expect "#450 bare Ok and Err into a Result<string, string> param" \
+  'fn f(r: Result<string, string>) -> string {\n    if r.is_ok() { return r.unwrap() }\n    return "ERR"\n}\nfn main() {\n    print("${f(Ok("yes"))}")\n    print("${f(Err("boom"))}")\n}' \
+  'yes
+ERR'
+
+expect "#450 bare Err into a Result<float, string> param" \
+  'fn f(r: Result<float, string>) -> float {\n    if r.is_ok() { return r.unwrap() }\n    return -1.5\n}\nfn main() { print("${f(Err("boom"))}") }' \
+  '-1.5'
+
+expect "#450 bare Err into a Result<bool, string> param" \
+  'fn f(r: Result<bool, string>) -> bool {\n    if r.is_ok() { return r.unwrap() }\n    return false\n}\nfn main() { print("${f(Err("boom"))}") }' \
+  'false'
+
+# TWO constructors of DIFFERENT families in ONE argument list. This is the arm that fails
+# if the target family is set and not restored: the second argument would be emitted with
+# the first one's family. 1 + (-1) = 0.
+expect "#450 two bare constructors in one call do not leak family to each other" \
+  'fn take(r: Result<int, string>) -> int {\n    if r.is_ok() { return r.unwrap() }\n    return -1\n}\nfn pair(a: Result<int, string>, b: Result<int, string>) -> int {\n    return take(a) + take(b)\n}\nfn main() { print("${pair(Ok(1), Err("x"))}") }' \
+  '0'
+
+expect "#450 a bare Err beside ordinary arguments, at a non-zero index" \
+  'fn f(n: int, r: Result<int, string>, s: string) -> string {\n    if r.is_ok() { return "${n} ${r.unwrap()} ${s}" }\n    return "${n} ERR ${s}"\n}\nfn main() { print("${f(1, Err("x"), "z")}") }' \
+  '1 ERR z'
+
+# The Option half of the same mechanism: a bare Some whose payload is not an int.
+expect "#450 bare Some/None into a string? param" \
+  'fn f(o: string?) -> string {\n    if o.is_some() { return o.unwrap() }\n    return "NONE"\n}\nfn main() {\n    print("${f(Some("hi"))}")\n    print("${f(None)}")\n}' \
+  'hi
+NONE'
 
 echo "--- $PASS pass, $FAIL fail"
 [ "$FAIL" -eq 0 ] || exit 1
