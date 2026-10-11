@@ -778,6 +778,30 @@ bool wyn_is_generic_function_call(Token function_name) {
 }
 
 // Simple type inference for generic function calls
+// The Type a CONCRETE primitive type name denotes, or NULL if the name is not one of
+// the four primitives (a type parameter, a struct, an enum, a container spelling).
+//
+// This exists because wyn_infer_generic_call_type resolved a generic function's return
+// type ONLY when it was a type parameter (`-> T`) or an array of one (`-> [T]`), and
+// otherwise fell through to "the first argument's inferred type". A DECLARED CONCRETE
+// return type is neither of those, so it was being thrown away and the call was typed as
+// its own argument:
+//
+//     fn f<T>(v: T) -> int { return 1 }
+//     var r = f(true)    print("${r}")   ->  "true"   (expected 1) at exit 0
+//     var r = f("a")     print("${r}")   ->  SIGSEGV  (an int rendered as a char*)
+//     var r = f(P{x:1})  print("${r}")   ->  internal codegen error
+//     var r = f(5)       print("${r}")   ->  1        (correct only because int == int)
+//
+// `wyn check` passed all of them.
+static Type* wyn_concrete_primitive_type(Token t) {
+    if (t.length == 3 && memcmp(t.start, "int", 3) == 0)    return make_type(TYPE_INT);
+    if (t.length == 5 && memcmp(t.start, "float", 5) == 0)  return make_type(TYPE_FLOAT);
+    if (t.length == 6 && memcmp(t.start, "string", 6) == 0) return make_type(TYPE_STRING);
+    if (t.length == 4 && memcmp(t.start, "bool", 4) == 0)   return make_type(TYPE_BOOL);
+    return NULL;
+}
+
 Type* wyn_infer_generic_call_type(Token function_name, Expr** args, int arg_count) {
     GenericFunction* generic_fn = wyn_find_generic_function(function_name);
     if (!generic_fn) {
@@ -834,6 +858,12 @@ Type* wyn_infer_generic_call_type(Token function_name, Expr** args, int arg_coun
                     break;
                 }
             }
+            // `-> int` / `-> float` / `-> string` / `-> bool`: a DECLARED CONCRETE return
+            // type, which is not a type parameter and so matched nothing above. Without
+            // this the function fell through to the first-argument fallback below and the
+            // call was typed as its own argument - see wyn_concrete_primitive_type for the
+            // measured symptoms (a wrong value at exit 0, and a segfault).
+            if (!return_type) return_type = wyn_concrete_primitive_type(rt->token);
         }
         // `-> [T]` (or `[concrete]`) -> an array whose element is the resolved T.
         else if (rt->type == EXPR_ARRAY && rt->array.count == 1 &&
@@ -847,6 +877,11 @@ Type* wyn_infer_generic_call_type(Token function_name, Expr** args, int arg_coun
                     elem = param_map[p]; break;
                 }
             }
+            // `-> [int]` / `-> [string]` / ...: the element is a concrete primitive, not a
+            // type parameter, so the loop above matched nothing. It used to default to
+            // TYPE_INT, which is right for `[int]` by luck and wrong for every other
+            // element type.
+            if (!elem) elem = wyn_concrete_primitive_type(en);
             arr->array_type.element_type = elem ? elem : make_type(TYPE_INT);
             return_type = arr;
         }
