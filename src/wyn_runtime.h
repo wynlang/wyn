@@ -2429,7 +2429,22 @@ void wyn_http_clear_headers() {
 }
 
 int wyn_http_status() { return http_last_status; }
-char* wyn_http_error() { return http_last_error[0] ? http_last_error : NULL; }
+// EMPTY STRING, NOT NULL, when there is no error - and the same for last_error_get()
+// below. These are the stdlib's error channels and they are read FROM WYN, where a
+// NULL char* has no spelling: `print("${Http.error()}")` on a request that SUCCEEDED
+// printed `(null)`, because that is what glibc's %s does with a null pointer. Three
+// things were wrong with that:
+//
+//   - `(null)` is the value a user sees on the SUCCESS path, so the obvious test
+//     `if Http.error() != "" { ... }` was false exactly when it should have been;
+//   - %s with a null pointer is UNDEFINED BEHAVIOUR - glibc and macOS happen to print
+//     `(null)`, and a platform that does not is a crash on the success path;
+//   - docs/stdlib/api-reference.md published "or `""` if it did not [fail]", which was
+//     simply not true of the code.
+//
+// "" means no error, a non-empty string is the reason. Nothing in the tree tested
+// these for NULL, so no caller changes with this.
+char* wyn_http_error() { return http_last_error; }
 // Bare-builtin aliases: the checker registers http_status/http_error/
 // http_clear_headers (documented builtins), but only the wyn_-prefixed
 // implementations existed - calls compiled clean in Wyn then died at the C
@@ -2437,7 +2452,12 @@ char* wyn_http_error() { return http_last_error[0] ? http_last_error : NULL; }
 static inline int http_status(void) { return wyn_http_status(); }
 static inline char* http_error(void) { return wyn_http_error(); }
 static inline void http_clear_headers(void) { wyn_http_clear_headers(); }
-char* last_error_get() { return last_error[0] ? last_error : NULL; }
+// The File channel. Reachable from Wyn as `File.error()` since #477 - src/types.c maps
+// the namespace spelling here, because `last_error_get` is not a name any reader of the
+// File docs would guess, which is why the gate that pins this channel could record that
+// it had ZERO callers in the repo, the site and the sample apps. "" for no error, same
+// contract as wyn_http_error above and for the same reasons.
+char* last_error_get() { return last_error; }
 
 char* url_encode(const char* str) {
     char* result = wyn_str_alloc(strlen(str) * 3 + 1);

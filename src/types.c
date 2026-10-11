@@ -1392,6 +1392,12 @@ static const WynNsRename wyn_ns_renames[] = {
     // that no Wyn expression produces. See #508.
     {"Http", "status",     "http_status"},
     {"Http", "error",      "http_error"},
+    // #477: the File channel. The runtime has recorded a reason for every failed File
+    // operation for some time, but only under the name `last_error_get`, which no reader
+    // of the File docs would guess - the gate that pins the channel records that it had
+    // ZERO callers in the repo, the site and the sample apps. `File.error()` is the
+    // spelling people reach for; it returns "" when nothing failed.
+    {"File", "error",      "last_error_get"},
     // HashMap: the runtime spells the setters hashmap_insert_*, and `get` defaults
     // to the string flavour.
     {"HashMap", "get",        "hashmap_get_string"},

@@ -1230,6 +1230,11 @@ void init_checker() {
     // types, and `Http.status(resp)` has to be rejected rather than reaching codegen.
     reg_fn("Http_status", builtin_int, 0);
     reg_fn("Http_error", builtin_string, 0);
+    // #477: File.error() - the reason the last File operation failed, "" if none.
+    // reg_fn, not the permissive {name, arity, ret} table, for the same reason as
+    // Http_status above: that table sets is_variadic and so checks no arity, and
+    // `File.error(path)` has to be rejected rather than reaching codegen.
+    reg_fn("File_error", builtin_string, 0);
 
     // Url namespace
     reg_fn("Url_encode", builtin_string, 1, builtin_string);
